@@ -467,6 +467,39 @@ dialog#note-conflict h2 {
   color: var(--muted);
 }
 
+/* Edit task dialog — same shape as label-modal. Field rows reuse .add-fields + .modal-actions. */
+dialog#edit-task-modal {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem;
+  min-width: 22rem;
+  max-width: min(36rem, 94vw);
+  color: var(--fg);
+}
+
+dialog#edit-task-modal::backdrop {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+#edit-task-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+#edit-task-form h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+#edit-task-form > label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 /* Settings toggle — fixed top-right, shows [S] (server) or [L] (local) as a mode badge. */
 .settings-btn {
   position: absolute;

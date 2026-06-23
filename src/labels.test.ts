@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { composeText, parseLabelInput } from "./labels";
+import { bareDescription, composeText, parseLabelInput } from "./labels";
 
 describe("composeText", () => {
   it("puts the priority first and appends label sigils and due tag", () => {
@@ -16,6 +16,24 @@ describe("composeText", () => {
 
   it("emits project before context", () => {
     expect(composeText({ priority: "", description: "x", project: "p", context: "c", due: "" })).toBe("x +p @c");
+  });
+});
+
+describe("bareDescription", () => {
+  it("strips project, context, and tag tokens leaving the human text", () => {
+    expect(bareDescription("buy milk +groceries @store due:2026-06-30", ["groceries"], ["store"], { due: "2026-06-30" })).toBe("buy milk");
+  });
+
+  it("strips all projects when there are multiple", () => {
+    expect(bareDescription("call bank +money +work", ["money", "work"], [], {})).toBe("call bank");
+  });
+
+  it("returns description unchanged when there are no structured fields", () => {
+    expect(bareDescription("plain task", [], [], {})).toBe("plain task");
+  });
+
+  it("returns empty string when description is only label tokens", () => {
+    expect(bareDescription("+groceries @store", ["groceries"], ["store"], {})).toBe("");
   });
 });
 

@@ -13,6 +13,7 @@ import {
   updateTask,
   type Task,
 } from "../api";
+import EditTaskModal from "./EditTaskModal";
 import { sortTasks, STATUSES, type Status } from "../config";
 import AddForm from "./AddForm";
 import FilterBar from "./FilterBar";
@@ -32,6 +33,7 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [serverLabels, setServerLabels] = useState<Labels>({ project: [], context: [] });
   const [error, setError] = useState("");
+  const [editTask, setEditTask] = useState<Task | null>(null);
 
   // Fetch the list with the current filters. Status + the two label filters become query args
   // (sort is applied client-side at render). Mirrors app.js refresh() + buildQuery().
@@ -126,18 +128,15 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
     }
   }
 
-  async function onEdit(task: Task) {
-    const next = window.prompt("Edit task (todo.txt syntax):", task.raw);
-    if (next === null) return;
-    const text = next.trim();
-    if (!text) return;
-    try {
-      await updateTask(task.id, text);
-      await refresh();
-      await loadLabels();
-    } catch (err) {
-      setError(errMsg(err));
-    }
+  function onEdit(task: Task) {
+    setEditTask(task);
+  }
+
+  async function onEditSave(id: number, text: string) {
+    await updateTask(id, text); // throws on error → caught by EditTaskModal
+    setEditTask(null);
+    await refresh();
+    await loadLabels();
   }
 
   const sorted = sortTasks(tasks, sort);
@@ -173,6 +172,13 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
           {error}
         </p>
       </div>
+
+      <EditTaskModal
+        task={editTask}
+        serverLabels={serverLabels}
+        onSave={onEditSave}
+        onClose={() => setEditTask(null)}
+      />
     </section>
   );
 });

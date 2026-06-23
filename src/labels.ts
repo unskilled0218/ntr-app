@@ -27,6 +27,22 @@ export function composeText(f: ComposeFields): string {
   return parts.join(" ").trim();
 }
 
+// Strip the structured tokens already parsed into projects/contexts/tags from the raw
+// description text, leaving only the human-readable task text. Strips exact tokens so
+// URLs and other +/@/: characters outside parsed fields are left intact.
+export function bareDescription(
+  description: string,
+  projects: string[],
+  contexts: string[],
+  tags: Record<string, string>,
+): string {
+  let desc = description;
+  for (const p of projects) desc = desc.replace(`+${p}`, "");
+  for (const c of contexts) desc = desc.replace(`@${c}`, "");
+  for (const [k, v] of Object.entries(tags)) desc = desc.replace(`${k}:${v}`, "");
+  return desc.trim().replace(/\s+/g, " ");
+}
+
 // Validate a label name typed in the modal. Returns { name } on success or { error } on
 // rejection. Strips leading +/@ sigils a user may type, then forbids whitespace and any +/@/:
 // in the bare name (a key:value name would compose into a tag, not a label).
