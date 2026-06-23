@@ -5,9 +5,10 @@
 // `staged` does).
 
 import { useState } from "react";
-import { ADD_VALUE, EMPTY_LABEL, KINDS, type Kind } from "../config";
+import { EMPTY_LABEL, type Kind } from "../config";
 import { composeText } from "../labels";
 import LabelModal from "./LabelModal";
+import LabelSelect from "./LabelSelect";
 
 interface Props {
   serverLabels: { project: string[]; context: string[] };
@@ -28,20 +29,6 @@ export default function AddForm({ serverLabels, onAdd }: Props) {
     context: [],
   });
   const [modalKind, setModalKind] = useState<Kind | null>(null);
-
-  // The option list for a label select: server labels ∪ session-staged, sorted. A select shows
-  // only its None + add-entry until a label of that kind exists.
-  const options = (kind: Kind) => [...new Set([...serverLabels[kind], ...staged[kind]])].sort();
-
-  // A label select changed: the add-entry opens the modal (selection unchanged, so the prior pick
-  // is naturally preserved); anything else is a normal pick.
-  const onSelect = (kind: Kind, value: string, set: (v: string) => void) => {
-    if (value === ADD_VALUE) {
-      setModalKind(kind);
-      return;
-    }
-    set(value);
-  };
 
   // Modal confirmed: stage the new label, select it for its kind, close the modal.
   const onConfirm = (kind: Kind, name: string) => {
@@ -65,22 +52,6 @@ export default function AddForm({ serverLabels, onAdd }: Props) {
       setContext("");
     }
   }
-
-  const labelSelect = (kind: Kind, value: string, set: (v: string) => void) => (
-    <select
-      aria-label={KINDS[kind].singular[0].toUpperCase() + KINDS[kind].singular.slice(1)}
-      value={value}
-      onChange={(e) => onSelect(kind, e.currentTarget.value, set)}
-    >
-      <option value={ADD_VALUE}>+ Add {KINDS[kind].singular}...</option>
-      <option value="">{EMPTY_LABEL}</option>
-      {options(kind).map((name) => (
-        <option key={name} value={name}>
-          {name}
-        </option>
-      ))}
-    </select>
-  );
 
   return (
     <form id="add-form" autoComplete="off" onSubmit={submit}>
@@ -113,11 +84,25 @@ export default function AddForm({ serverLabels, onAdd }: Props) {
         </label>
         <label>
           Projects
-          {labelSelect("project", project, setProject)}
+          <LabelSelect
+            kind="project"
+            value={project}
+            serverLabels={serverLabels.project}
+            staged={staged.project}
+            onChange={setProject}
+            onAdd={() => setModalKind("project")}
+          />
         </label>
         <label>
           Contexts
-          {labelSelect("context", context, setContext)}
+          <LabelSelect
+            kind="context"
+            value={context}
+            serverLabels={serverLabels.context}
+            staged={staged.context}
+            onChange={setContext}
+            onAdd={() => setModalKind("context")}
+          />
         </label>
       </div>
       <LabelModal kind={modalKind} onConfirm={onConfirm} onClose={() => setModalKind(null)} />
