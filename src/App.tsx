@@ -1,25 +1,29 @@
-// Top-level layout: the two panes, the bottom nav, the mobile view state + swipe, and the live
-// `change` subscription that drives reconcile. Ported from the <main>/nav shell + the mobile
+// Top-level layout: the two panes, the bottom nav, the mobile view state + swipe, the live
+// `change` subscription, and the settings modal. Ported from the <main>/nav shell + the mobile
 // view-switching and SSE wiring of web/app.js. The button/swipe order both derive from VIEWS.
 
 import { useEffect, useRef, useState } from "react";
 import "./style.css";
 import { CHANGE_NOTE, CHANGE_TASKS, onChange } from "./api";
+import { getServerUrl } from "./settings";
 import { SWIPE_MIN, VIEWS, type View } from "./config";
 import NotePane, { type NotePaneHandle } from "./components/NotePane";
 import TodoPane, { type TodoPaneHandle } from "./components/TodoPane";
+import SettingsModal from "./components/SettingsModal";
 
 export default function App() {
   const [view, setView] = useState<View>("note");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Incrementing this key re-wires the onChange subscription to whichever transport is now active.
+  const [connectionKey, setConnectionKey] = useState(0);
   const noteRef = useRef<NotePaneHandle>(null);
   const todoRef = useRef<TodoPaneHandle>(null);
   const navRef = useRef<HTMLElement>(null);
   const swipeStartX = useRef<number | null>(null);
   const swipeStartY = useRef<number | null>(null);
 
-  // The live stream: a `change` event re-fetches tasks or reconciles the note, mirroring app.js's
-  // EventSource handler. The watcher (src-tauri) is the only emitter; it covers out-of-band file
-  // edits. A command's own mutation is reflected by the initiating pane's own refresh.
+  // The live stream: a `change` event re-fetches tasks or reconciles the note. Re-wired whenever
+  // connectionKey changes (i.e., after settings close) so the new transport is picked up.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
@@ -34,7 +38,15 @@ export default function App() {
       cancelled = true;
       unlisten?.();
     };
-  }, []);
+  }, [connectionKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function onSettingsClose() {
+    setSettingsOpen(false);
+    setConnectionKey((k) => k + 1); // re-wire onChange subscription
+    // Explicit reload: mode may have changed, so both panes need fresh data.
+    todoRef.current?.onTasksChanged();
+    noteRef.current?.onNoteChange();
+  }
 
   // "Are we in the mobile single-pane layout?" — read CSS's own decision (the bottom bar is
   // display:none on desktop, shown on mobile) instead of re-encoding the 720px breakpoint here.
@@ -61,8 +73,19 @@ export default function App() {
     if (next >= 0 && next < VIEWS.length) setView(VIEWS[next]);
   }
 
+  const serverUrl = getServerUrl();
+
   return (
     <main data-view={view}>
+      <button
+        type="button"
+        className="settings-btn"
+        aria-label="Connection settings"
+        onClick={() => setSettingsOpen(true)}
+      >
+        {serverUrl ? "[S]" : "[L]"}
+      </button>
+
       <div className="panes" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         <NotePane ref={noteRef} />
         <TodoPane ref={todoRef} />
@@ -85,6 +108,8 @@ export default function App() {
           </button>
         ))}
       </nav>
+
+      <SettingsModal open={settingsOpen} onClose={onSettingsClose} />
     </main>
   );
 }
