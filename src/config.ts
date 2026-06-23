@@ -24,6 +24,10 @@ export const ADD_VALUE = "+add";
 // is the real no-selection state; this is only its label, kept in one place.
 export const EMPTY_LABEL = "None";
 
+// Priority letters offered by the add/edit pickers. A–C covers the common cases; tasks with
+// higher priorities set via raw todo.txt are preserved and displayed but not offered as picker options.
+export const PRIORITIES = ["A", "B", "C"] as const;
+
 // How long after the last keystroke the note auto-saves. One named source, not a magic number.
 export const NOTE_SAVE_DELAY_MS = 800;
 
