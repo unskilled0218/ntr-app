@@ -14,7 +14,7 @@ import SettingsModal from "./components/SettingsModal";
 export default function App() {
   const [view, setView] = useState<View>("note");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // Incrementing this key re-wires the onChange subscription to whichever transport is now active.
+  // Bumped on settings close to force the onChange useEffect to re-subscribe with the new transport.
   const [connectionKey, setConnectionKey] = useState(0);
   const noteRef = useRef<NotePaneHandle>(null);
   const todoRef = useRef<TodoPaneHandle>(null);
@@ -38,7 +38,7 @@ export default function App() {
       cancelled = true;
       unlisten?.();
     };
-  }, [connectionKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [connectionKey]); // onChange is module-stable; refs excluded by React convention
 
   function onSettingsClose() {
     setSettingsOpen(false);
