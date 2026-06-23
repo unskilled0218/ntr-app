@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 import {
   completeTask,
   createTask,
@@ -8,9 +9,13 @@ import {
   listTasks,
   onChange,
   putNote,
+  syncFromServer,
   uncompleteTask,
   updateTask,
 } from "./api";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
 // --- errMsg (transport-independent) ---
 
@@ -41,6 +46,16 @@ const TASK = {
   raw: "test",
 };
 
+function mkRes(body: unknown, status = 200): Response {
+  const bodyInit =
+    body === null
+      ? null
+      : typeof body === "string"
+        ? body
+        : JSON.stringify(body);
+  return new Response(bodyInit, { status });
+}
+
 function makeFetch(body: unknown, status = 200): ReturnType<typeof vi.fn> {
   // 204/205 must have a null body; other statuses serialise the payload.
   const bodyInit = body === null || status === 204 || status === 205
@@ -48,6 +63,15 @@ function makeFetch(body: unknown, status = 200): ReturnType<typeof vi.fn> {
     : typeof body === "string" ? body : JSON.stringify(body);
   const res = new Response(bodyInit, { status });
   const mock = vi.fn().mockResolvedValue(res);
+  vi.stubGlobal("fetch", mock);
+  return mock;
+}
+
+// Creates fresh Response objects for successive fetch calls (avoids "body already read" errors).
+// Each spec is [body, status?]; to pass an array as the body wrap it: [[item1, item2]].
+function makeFetchSeq(...specs: Array<[body: unknown, status?: number]>): ReturnType<typeof vi.fn> {
+  const mock = vi.fn();
+  specs.forEach(([body, status]) => mock.mockResolvedValueOnce(mkRes(body, status)));
   vi.stubGlobal("fetch", mock);
   return mock;
 }
@@ -193,5 +217,124 @@ describe("HTTP error mapping", () => {
     makeFetch(null, 500);
     const err = await listTasks({}).catch((e: unknown) => e);
     expect(errMsg(err)).toContain("500");
+  });
+});
+
+// --- Server mode — local backup ---
+// Each mutating function must also persist data locally via Tauri invoke after
+// the server write succeeds. Failures in the local backup must not propagate.
+
+describe("server mode — local backup", () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  // Second spec in each makeFetchSeq call is the /api/tasks backup response — must be
+  // an array body, so wrapped as [[tasks]] to distinguish from the tuple shape [body, status].
+
+  it("putNote calls invoke put_note with the same text after the server write", async () => {
+    makeFetchSeq([null, 204]);
+    await putNote("hello backup");
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_note", { text: "hello backup" });
+  });
+
+  it("createTask calls invoke put_raw with joined raw lines after the server write", async () => {
+    makeFetchSeq([TASK], [[TASK]]);
+    await createTask("buy milk");
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
+  });
+
+  it("createTask backup fetch uses exact /api/tasks URL with no query string", async () => {
+    const mock = makeFetchSeq([TASK], [[TASK]]);
+    await createTask("x");
+    const backupUrl = (mock.mock.calls[1] as [string])[0];
+    expect(backupUrl).toBe(`${SERVER}/api/tasks`);
+    expect(backupUrl).not.toContain("?");
+  });
+
+  it("updateTask calls invoke put_raw after the server write", async () => {
+    makeFetchSeq([TASK], [[TASK]]);
+    await updateTask(1, "updated");
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
+  });
+
+  it("completeTask calls invoke put_raw after the server write", async () => {
+    makeFetchSeq([TASK], [[TASK]]);
+    await completeTask(1);
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
+  });
+
+  it("uncompleteTask calls invoke put_raw after the server write", async () => {
+    makeFetchSeq([TASK], [[TASK]]);
+    await uncompleteTask(1);
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
+  });
+
+  it("deleteTask calls invoke put_raw after the server write", async () => {
+    makeFetchSeq([null, 204], [[TASK]]);
+    await deleteTask(1);
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
+  });
+
+  it("local task backup failure does not reject the primary promise", async () => {
+    makeFetchSeq([TASK], [[TASK]]);
+    vi.mocked(invoke).mockRejectedValue(new Error("disk full"));
+    const result = await createTask("x");
+    expect(result).toEqual(TASK);
+  });
+
+  it("local note backup failure does not reject the primary promise", async () => {
+    makeFetchSeq([null, 204]);
+    vi.mocked(invoke).mockRejectedValue(new Error("disk full"));
+    await expect(putNote("x")).resolves.toBeUndefined();
+  });
+
+  it("backup produces empty string for an empty task list", async () => {
+    makeFetchSeq([TASK], [[]]);
+    await createTask("x");
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: "" });
+  });
+});
+
+// --- syncFromServer ---
+
+describe("syncFromServer", () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("is a no-op in local mode (no fetch calls)", async () => {
+    localStorage.removeItem("ntr.serverUrl");
+    const mock = vi.fn();
+    vi.stubGlobal("fetch", mock);
+    await syncFromServer();
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it("fetches note from server and saves locally", async () => {
+    makeFetch("hello note");
+    await syncFromServer();
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_note", { text: "hello note" });
+  });
+
+  it("fetches all tasks from server and saves locally via put_raw", async () => {
+    makeFetchSeq(["note text"], [[TASK]]);
+    await syncFromServer();
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
+  });
+
+  it("task sync proceeds even when note fetch returns 404", async () => {
+    makeFetchSeq([null, 404], [[TASK]]);
+    await syncFromServer();
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("put_note", expect.anything());
   });
 });

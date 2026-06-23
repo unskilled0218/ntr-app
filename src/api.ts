@@ -47,6 +47,26 @@ async function httpJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await httpFetch(path, init)).json() as Promise<T>;
 }
 
+// --- Local backup helpers (server mode only, best-effort) ---
+
+async function backupNoteLocally(text: string): Promise<void> {
+  try {
+    await invoke("put_note", { text });
+  } catch (e) {
+    console.warn("local note backup failed:", e);
+  }
+}
+
+async function backupTasksLocally(): Promise<void> {
+  try {
+    const tasks = await httpJson<Task[]>("/api/tasks");
+    const raw = tasks.map((t) => t.raw).join("\n") + (tasks.length ? "\n" : "");
+    await invoke("put_raw", { text: raw });
+  } catch (e) {
+    console.warn("local task backup failed:", e);
+  }
+}
+
 // --- Exported API ---
 
 export function listTasks(filter: TaskFilter): Promise<Task[]> {
@@ -68,45 +88,55 @@ export function listTasks(filter: TaskFilter): Promise<Task[]> {
   });
 }
 
-export function createTask(text: string): Promise<Task> {
+export async function createTask(text: string): Promise<Task> {
   if (getServerUrl()) {
-    return httpJson<Task>("/api/tasks", {
+    const task = await httpJson<Task>("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
+    await backupTasksLocally();
+    return task;
   }
   return invoke("create_task", { text });
 }
 
-export function updateTask(id: number, text: string): Promise<Task> {
+export async function updateTask(id: number, text: string): Promise<Task> {
   if (getServerUrl()) {
-    return httpJson<Task>(`/api/tasks/${id}`, {
+    const task = await httpJson<Task>(`/api/tasks/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
+    await backupTasksLocally();
+    return task;
   }
   return invoke("update_task", { id, text });
 }
 
-export function completeTask(id: number): Promise<Task> {
+export async function completeTask(id: number): Promise<Task> {
   if (getServerUrl()) {
-    return httpJson<Task>(`/api/tasks/${id}/complete`, { method: "POST" });
+    const task = await httpJson<Task>(`/api/tasks/${id}/complete`, { method: "POST" });
+    await backupTasksLocally();
+    return task;
   }
   return invoke("complete_task", { id });
 }
 
-export function uncompleteTask(id: number): Promise<Task> {
+export async function uncompleteTask(id: number): Promise<Task> {
   if (getServerUrl()) {
-    return httpJson<Task>(`/api/tasks/${id}/uncomplete`, { method: "POST" });
+    const task = await httpJson<Task>(`/api/tasks/${id}/uncomplete`, { method: "POST" });
+    await backupTasksLocally();
+    return task;
   }
   return invoke("uncomplete_task", { id });
 }
 
-export function deleteTask(id: number): Promise<void> {
+export async function deleteTask(id: number): Promise<void> {
   if (getServerUrl()) {
-    return httpFetch(`/api/tasks/${id}`, { method: "DELETE" }).then(() => undefined);
+    await httpFetch(`/api/tasks/${id}`, { method: "DELETE" });
+    await backupTasksLocally();
+    return;
   }
   return invoke("delete_task", { id });
 }
@@ -118,13 +148,15 @@ export function getNote(): Promise<string> {
   return invoke("get_note");
 }
 
-export function putNote(text: string): Promise<void> {
+export async function putNote(text: string): Promise<void> {
   if (getServerUrl()) {
-    return httpFetch("/api/note", {
+    await httpFetch("/api/note", {
       method: "PUT",
       headers: { "Content-Type": "text/plain" },
       body: text,
-    }).then(() => undefined);
+    });
+    await backupNoteLocally(text);
+    return;
   }
   return invoke("put_note", { text });
 }
@@ -140,6 +172,26 @@ export function onChange(handler: (kind: string) => void): Promise<UnlistenFn> {
     return Promise.resolve(() => es.close());
   }
   return listen<string>(CHANGE_EVENT, (e) => handler(e.payload));
+}
+
+// Fetch the server's current note and all tasks and persist them to the local
+// files. Called on app open and after connecting to a server so the local backup
+// is current even for changes made by other clients. No-op in local mode.
+export async function syncFromServer(): Promise<void> {
+  if (!getServerUrl()) return;
+  try {
+    const note = await httpFetch("/api/note").then((r) => r.text());
+    await invoke("put_note", { text: note });
+  } catch (e) {
+    console.warn("startup note sync failed:", e);
+  }
+  try {
+    const tasks = await httpJson<Task[]>("/api/tasks");
+    const raw = tasks.map((t) => t.raw).join("\n") + (tasks.length ? "\n" : "");
+    await invoke("put_raw", { text: raw });
+  } catch (e) {
+    console.warn("startup task sync failed:", e);
+  }
 }
 
 export function getDataDir(): Promise<string> {
