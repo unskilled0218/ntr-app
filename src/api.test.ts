@@ -9,6 +9,7 @@ import {
   listTasks,
   onChange,
   putNote,
+  syncFromServer,
   uncompleteTask,
   updateTask,
 } from "./api";
@@ -45,6 +46,16 @@ const TASK = {
   raw: "test",
 };
 
+function mkRes(body: unknown, status = 200): Response {
+  const bodyInit =
+    body === null
+      ? null
+      : typeof body === "string"
+        ? body
+        : JSON.stringify(body);
+  return new Response(bodyInit, { status });
+}
+
 function makeFetch(body: unknown, status = 200): ReturnType<typeof vi.fn> {
   // 204/205 must have a null body; other statuses serialise the payload.
   const bodyInit = body === null || status === 204 || status === 205
@@ -52,6 +63,15 @@ function makeFetch(body: unknown, status = 200): ReturnType<typeof vi.fn> {
     : typeof body === "string" ? body : JSON.stringify(body);
   const res = new Response(bodyInit, { status });
   const mock = vi.fn().mockResolvedValue(res);
+  vi.stubGlobal("fetch", mock);
+  return mock;
+}
+
+// Creates fresh Response objects for successive fetch calls (avoids "body already read" errors).
+// Each spec is [body, status?]; to pass an array as the body wrap it: [[item1, item2]].
+function makeFetchSeq(...specs: Array<[body: unknown, status?: number]>): ReturnType<typeof vi.fn> {
+  const mock = vi.fn();
+  specs.forEach(([body, status]) => mock.mockResolvedValueOnce(mkRes(body, status)));
   vi.stubGlobal("fetch", mock);
   return mock;
 }
@@ -205,23 +225,6 @@ describe("HTTP error mapping", () => {
 // the server write succeeds. Failures in the local backup must not propagate.
 
 describe("server mode — local backup", () => {
-  function mkRes(body: unknown, status = 200): Response {
-    const bodyInit =
-      body === null
-        ? null
-        : typeof body === "string"
-          ? body
-          : JSON.stringify(body);
-    return new Response(bodyInit, { status });
-  }
-
-  function makeFetchSeq(...specs: Array<[body: unknown, status?: number]>): ReturnType<typeof vi.fn> {
-    const mock = vi.fn();
-    specs.forEach(([body, status]) => mock.mockResolvedValueOnce(mkRes(body, status)));
-    vi.stubGlobal("fetch", mock);
-    return mock;
-  }
-
   beforeEach(() => {
     vi.mocked(invoke).mockResolvedValue(undefined);
   });
@@ -294,5 +297,44 @@ describe("server mode — local backup", () => {
     makeFetchSeq([TASK], [[]]);
     await createTask("x");
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: "" });
+  });
+});
+
+// --- syncFromServer ---
+
+describe("syncFromServer", () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("is a no-op in local mode (no fetch calls)", async () => {
+    localStorage.removeItem("ntr.serverUrl");
+    const mock = vi.fn();
+    vi.stubGlobal("fetch", mock);
+    await syncFromServer();
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it("fetches note from server and saves locally", async () => {
+    makeFetch("hello note");
+    await syncFromServer();
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_note", { text: "hello note" });
+  });
+
+  it("fetches all tasks from server and saves locally via put_raw", async () => {
+    makeFetchSeq(["note text"], [[TASK]]);
+    await syncFromServer();
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
+  });
+
+  it("task sync proceeds even when note fetch returns 404", async () => {
+    makeFetchSeq([null, 404], [[TASK]]);
+    await syncFromServer();
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("put_note", expect.anything());
   });
 });

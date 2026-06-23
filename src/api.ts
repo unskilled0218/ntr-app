@@ -174,6 +174,26 @@ export function onChange(handler: (kind: string) => void): Promise<UnlistenFn> {
   return listen<string>(CHANGE_EVENT, (e) => handler(e.payload));
 }
 
+// Fetch the server's current note and all tasks and persist them to the local
+// files. Called on app open and after connecting to a server so the local backup
+// is current even for changes made by other clients. No-op in local mode.
+export async function syncFromServer(): Promise<void> {
+  if (!getServerUrl()) return;
+  try {
+    const note = await httpFetch("/api/note").then((r) => r.text());
+    await invoke("put_note", { text: note });
+  } catch (e) {
+    console.warn("startup note sync failed:", e);
+  }
+  try {
+    const tasks = await httpJson<Task[]>("/api/tasks");
+    const raw = tasks.map((t) => t.raw).join("\n") + (tasks.length ? "\n" : "");
+    await invoke("put_raw", { text: raw });
+  } catch (e) {
+    console.warn("startup task sync failed:", e);
+  }
+}
+
 export function getDataDir(): Promise<string> {
   return invoke("get_data_dir");
 }
