@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { errMsg, type Task } from "../api";
-import { EMPTY_LABEL, type Kind } from "../config";
+import { EMPTY_LABEL, PRIORITIES, type Kind } from "../config";
 import { bareDescription, composeText } from "../labels";
 import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
@@ -15,8 +15,6 @@ interface Props {
   onSave(id: number, text: string): Promise<void>;
   onClose(): void;
 }
-
-const PRIORITIES = ["A", "B", "C"];
 
 export default function EditTaskModal({ task, serverLabels, onSave, onClose }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);

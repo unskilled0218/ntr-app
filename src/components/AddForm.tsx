@@ -5,7 +5,7 @@
 // `staged` does).
 
 import { useState } from "react";
-import { EMPTY_LABEL, type Kind } from "../config";
+import { EMPTY_LABEL, PRIORITIES, type Kind } from "../config";
 import { composeText } from "../labels";
 import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
@@ -15,8 +15,6 @@ interface Props {
   // Returns true on success (so the form resets) or false on error (kept for correction).
   onAdd: (text: string) => Promise<boolean>;
 }
-
-const PRIORITIES = ["A", "B", "C"];
 
 export default function AddForm({ serverLabels, onAdd }: Props) {
   const [description, setDescription] = useState("");
