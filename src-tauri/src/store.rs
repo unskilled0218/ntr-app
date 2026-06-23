@@ -174,6 +174,19 @@ impl Store {
     self.save(entries, self.next_id)
   }
 
+  /// The path this store currently reads and writes.
+  pub fn path(&self) -> &Path {
+    &self.path
+  }
+
+  /// Switch to a new file path by reloading from it. The "missing = empty"
+  /// semantics and ID counter reset are identical to a fresh `load`. Any task
+  /// IDs held by callers before this call are invalidated.
+  pub fn set_path(&mut self, new_path: PathBuf) -> io::Result<()> {
+    *self = Store::load(new_path)?;
+    Ok(())
+  }
+
   /// The whole store rendered as todo.txt text.
   pub fn raw(&self) -> String {
     render(&self.entries)
@@ -384,5 +397,31 @@ mod tests {
     text.push('\n');
     fs::write(&path, text).unwrap();
     assert!(!s.reload_from_disk().unwrap());
+  }
+
+  #[test]
+  fn set_path_to_empty_path_gives_empty_store() {
+    let mut s = temp_store("setempty-src");
+    s.add("task a", true, today()).unwrap();
+
+    let mut new_path = std::env::temp_dir();
+    new_path.push(format!("ntr-store-setempty-dst-{}.txt", std::process::id()));
+    let _ = fs::remove_file(&new_path);
+
+    s.set_path(new_path).unwrap();
+    assert_eq!(s.list(&Filter::default()).len(), 0);
+  }
+
+  #[test]
+  fn set_path_loads_existing_content() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("ntr-store-setpath-{}.txt", std::process::id()));
+    fs::write(&path, "(A) pre-existing\n").unwrap();
+
+    let mut s = temp_store("setpath-src");
+    s.set_path(path).unwrap();
+    let all = s.list(&Filter::default());
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].task.priority, Some('A'));
   }
 }

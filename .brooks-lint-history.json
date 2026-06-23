@@ -1,4 +1,10 @@
 [
   { "date": "2026-06-23", "mode": "PR Review", "score": 88, "findings": { "critical": 0, "warning": 1, "suggestion": 3 }, "scope": "tasks/01-tauri-react-client/plan.md (round 1)" },
   { "date": "2026-06-23", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/01-tauri-react-client/plan.md (round 2)" }
+,
+  { "date": "2026-06-23", "mode": "PR Review", "score": 81, "findings": { "critical": 0, "warning": 2, "suggestion": 1 }, "scope": "tasks/05-custom-data-dir/plan.md (round 1)" },
+  { "date": "2026-06-23", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/05-custom-data-dir/plan.md (round 2)" },
+  { "date": "2026-06-23", "mode": "PR Review", "score": 89, "findings": { "critical": 0, "warning": 2, "suggestion": 1 }, "scope": "05-custom-data-dir code (round 1)" },
+  { "date": "2026-06-23", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "05-custom-data-dir review-plan.md" },
+  { "date": "2026-06-23", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "05-custom-data-dir code (round 2)" }
 ]

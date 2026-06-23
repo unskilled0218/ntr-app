@@ -546,6 +546,12 @@ dialog#settings-modal::backdrop {
   color: var(--muted);
 }
 
+.settings-hint {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
 #settings-form label {
   display: flex;
   flex-direction: column;
