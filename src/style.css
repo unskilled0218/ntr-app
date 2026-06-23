@@ -27,6 +27,7 @@ body {
 }
 
 main {
+  position: relative; /* anchor for the absolute-positioned settings button */
   max-width: 1100px;
   margin: 0 auto;
   padding: 2rem 1rem;
@@ -463,5 +464,59 @@ dialog#note-conflict h2 {
 }
 
 #empty {
+  color: var(--muted);
+}
+
+/* Settings toggle — fixed top-right, shows [S] (server) or [L] (local) as a mode badge. */
+.settings-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.75rem;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.75rem;
+  font-family: ui-monospace, monospace;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+  z-index: 10;
+}
+
+/* Settings dialog — same shape as the label-modal for visual consistency. */
+dialog#settings-modal {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem;
+  min-width: 22rem;
+  color: var(--fg);
+}
+
+dialog#settings-modal::backdrop {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+#settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+#settings-form h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.settings-current {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+#settings-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
   color: var(--muted);
 }
