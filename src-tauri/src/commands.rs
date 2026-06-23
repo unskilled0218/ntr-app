@@ -10,6 +10,8 @@ use crate::paths::{self, ADD_CREATION_DATE};
 use crate::state::AppState;
 use crate::store::{Filter, StoreError};
 use chrono::{Local, NaiveDate};
+use std::io;
+use std::path::Path;
 use tauri::{AppHandle, State};
 
 /// Today in the local timezone, matching the server's `today()`.
@@ -29,6 +31,48 @@ fn store_err(e: StoreError) -> String {
 /// The poisoned-lock message, mirroring the server's `lock_err`.
 fn lock_err<E>(_: E) -> String {
   "store lock poisoned".to_string()
+}
+
+/// Undo file moves made by `set_data_dir` on error. Best-effort: individual
+/// failures are ignored so the original error is not masked.
+fn rollback_moves(
+  moved_todo: bool,
+  new_todo: &Path,
+  old_todo: &Path,
+  moved_note: bool,
+  new_note: &Path,
+  old_note: &Path,
+) {
+  if moved_todo {
+    let _ = move_file(new_todo, old_todo);
+  }
+  if moved_note {
+    let _ = move_file(new_note, old_note);
+  }
+}
+
+/// Move `from` to `to`, overwriting `to` if it exists. The caller is the one
+/// who has decided to overwrite: the user explicitly requested a path change,
+/// so their current data takes precedence over any pre-existing file at the
+/// destination.
+///
+/// On the same filesystem `fs::rename` is atomic. Across filesystems (EXDEV)
+/// we fall back to copy + delete; the window between the two is not atomic,
+/// but for a user-triggered settings action this is acceptable.
+///
+/// Known limitation: if a forward move succeeds and its rollback in the caller
+/// also fails (e.g. the file is removed by a concurrent process in the ~10 ms
+/// between the two calls), the file is lost. The probability is negligible for
+/// an interactive settings operation.
+fn move_file(from: &Path, to: &Path) -> io::Result<()> {
+  match std::fs::rename(from, to) {
+    Ok(()) => Ok(()),
+    Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
+      std::fs::copy(from, to)?;
+      std::fs::remove_file(from)
+    }
+    Err(e) => Err(e),
+  }
 }
 
 #[tauri::command]
@@ -133,8 +177,9 @@ pub fn get_data_dir(app: AppHandle) -> Result<String, String> {
 }
 
 /// Set the directory used for todo.txt and Note.md. Pass an empty string to
-/// revert to the default app-data directory. The stores are reloaded from the
-/// new location immediately; any task IDs held by the frontend are invalidated.
+/// revert to the default app-data directory. Existing files are moved to the
+/// new location; stores are then reloaded from there. Any task IDs held by
+/// the frontend are invalidated.
 #[tauri::command]
 pub fn set_data_dir(
   app: AppHandle,
@@ -154,28 +199,54 @@ pub fn set_data_dir(
     p
   };
 
-  // Switch both stores before persisting config. Capture old paths so we can
-  // roll the store back if the note switch fails — preventing a session where
-  // todo.txt and Note.md are sourced from different directories.
+  // Both files always share the same parent directory by construction
+  // (see paths::data_files). Derive the note's old path from the store's path
+  // so we avoid adding a path() getter to NoteStore for a single caller.
   let old_todo = {
     let store = state.store.lock().map_err(lock_err)?;
     store.path().to_path_buf()
   };
+  let old_note = old_todo
+    .parent()
+    .ok_or("data directory has no parent")?
+    .join(paths::NOTE_FILE);
 
+  let new_todo = new_dir.join(paths::TODO_FILE);
+  let new_note = new_dir.join(paths::NOTE_FILE);
+
+  // Move files before switching stores. Only move when the path actually
+  // changes and the source file exists; absent files are a no-op (stores
+  // already treat missing files as empty).
+  let moved_todo = old_todo != new_todo && old_todo.exists();
+  let moved_note = old_note != new_note && old_note.exists();
+
+  if moved_todo {
+    move_file(&old_todo, &new_todo).map_err(|e| e.to_string())?;
+  }
+  if moved_note {
+    if let Err(e) = move_file(&old_note, &new_note) {
+      rollback_moves(moved_todo, &new_todo, &old_todo, false, &new_note, &old_note);
+      return Err(e.to_string());
+    }
+  }
+
+  // Switch both stores to read from the new paths. Rollback file moves on
+  // store-switch failure so the session stays consistent.
   {
     let mut store = state.store.lock().map_err(lock_err)?;
-    store
-      .set_path(new_dir.join(paths::TODO_FILE))
-      .map_err(|e| e.to_string())?;
+    if let Err(e) = store.set_path(new_todo.clone()) {
+      rollback_moves(moved_todo, &new_todo, &old_todo, moved_note, &new_note, &old_note);
+      return Err(e.to_string());
+    }
   }
 
   {
     let mut note = state.note.lock().map_err(lock_err)?;
-    if let Err(e) = note.set_path(new_dir.join(paths::NOTE_FILE)) {
-      // Best-effort rollback: put the store back on its old path.
+    if let Err(e) = note.set_path(new_note.clone()) {
       if let Ok(mut store) = state.store.lock() {
-        let _ = store.set_path(old_todo);
+        let _ = store.set_path(old_todo.clone());
       }
+      rollback_moves(moved_todo, &new_todo, &old_todo, moved_note, &new_note, &old_note);
       return Err(e.to_string());
     }
   }
@@ -186,4 +257,42 @@ pub fn set_data_dir(
     Some(new_dir.as_path())
   };
   paths::save_custom_data_dir(&app, custom).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::fs;
+
+  fn temp_path(tag: &str) -> std::path::PathBuf {
+    let mut p = std::env::temp_dir();
+    p.push(format!("ntr-cmd-{}-{}", tag, std::process::id()));
+    p
+  }
+
+  #[test]
+  fn move_file_moves_content_and_removes_source() {
+    let src = temp_path("mv-src.txt");
+    let dst = temp_path("mv-dst.txt");
+    fs::write(&src, "hello").unwrap();
+    let _ = fs::remove_file(&dst);
+
+    move_file(&src, &dst).unwrap();
+
+    assert_eq!(fs::read_to_string(&dst).unwrap(), "hello");
+    assert!(!src.exists());
+  }
+
+  #[test]
+  fn move_file_overwrites_existing_destination() {
+    let src = temp_path("mv-ow-src.txt");
+    let dst = temp_path("mv-ow-dst.txt");
+    fs::write(&src, "new").unwrap();
+    fs::write(&dst, "old").unwrap();
+
+    move_file(&src, &dst).unwrap();
+
+    assert_eq!(fs::read_to_string(&dst).unwrap(), "new");
+    assert!(!src.exists());
+  }
 }
