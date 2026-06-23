@@ -1,0 +1,4 @@
+[
+  { "date": "2026-06-23", "mode": "PR Review", "score": 88, "findings": { "critical": 0, "warning": 1, "suggestion": 3 }, "scope": "tasks/01-tauri-react-client/plan.md (round 1)" },
+  { "date": "2026-06-23", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/01-tauri-react-client/plan.md (round 2)" }
+]
