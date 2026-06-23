@@ -76,3 +76,10 @@ export function putNote(text: string): Promise<void> {
 export function onChange(handler: (kind: string) => void): Promise<UnlistenFn> {
   return listen<string>(CHANGE_EVENT, (e) => handler(e.payload));
 }
+
+// Turn any thrown value into a message. IPC rejections arrive as plain strings (the Rust
+// commands return Result<_, String>); JS failures arrive as Error. The one home for that
+// decision, next to the boundary that produces them.
+export function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}

@@ -8,7 +8,7 @@
 // If React ever rendered children here it would clobber the caret and the live markup.
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { getNote, putNote } from "../api";
+import { errMsg, getNote, putNote } from "../api";
 import { NOTE_SAVE_DELAY_MS } from "../config";
 import { getCaret, readNoteText, setEditorText } from "../lib/caret";
 import { classifyNoteEvent } from "../lib/noteSync";
@@ -63,7 +63,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
       setNoteStatus("Saved", false);
       if (noteDirty()) scheduleNoteSave(); // typed during the PUT — persist the newest too
     } catch (err) {
-      setNoteStatus(`Could not save note: ${(err as Error).message ?? err}`, true);
+      setNoteStatus(`Could not save note: ${errMsg(err)}`, true);
     } finally {
       savingNote.current = false;
     }
@@ -87,7 +87,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     try {
       adoptNote(await getNote());
     } catch (err) {
-      setNoteStatus(`Could not load note: ${(err as Error).message ?? err}`, true);
+      setNoteStatus(`Could not load note: ${errMsg(err)}`, true);
     }
   }
 

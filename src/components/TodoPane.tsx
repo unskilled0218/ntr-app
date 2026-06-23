@@ -6,6 +6,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } fro
 import {
   completeTask,
   deleteTask as apiDeleteTask,
+  errMsg,
   listTasks,
   createTask,
   uncompleteTask,
@@ -44,19 +45,22 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
       };
       setTasks(await listTasks(filter));
     } catch (err) {
-      setError(`Could not load tasks: ${(err as Error).message ?? err}`);
+      setError(`Could not load tasks: ${errMsg(err)}`);
     }
   }, [status, project, context]);
 
   // Rebuild the label sets from the labels currently in the store; drop a filter selection whose
   // label has disappeared (so the dropdown and the query never disagree). Mirrors app.js
   // loadLabels() + populateFilterSelect()'s "keep across reloads while it still exists" rule.
+  // Stable (no project/context deps): a vanished filter is dropped via the functional setState
+  // updater, which reads the latest value without closing over it — so this is created once and
+  // is a correct dependency for the effect and the imperative handle below.
   const loadLabels = useCallback(async () => {
     let all: Task[];
     try {
       all = await listTasks({});
     } catch (err) {
-      setError(`Could not load label suggestions: ${(err as Error).message ?? err}`);
+      setError(`Could not load label suggestions: ${errMsg(err)}`);
       return;
     }
     const projects = new Set<string>();
@@ -66,27 +70,30 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
       for (const c of t.contexts) contexts.add(c);
     }
     setServerLabels({ project: [...projects], context: [...contexts] });
-    if (project && !projects.has(project)) setProject("");
-    if (context && !contexts.has(context)) setContext("");
-  }, [project, context]);
+    setProject((p) => (p && !projects.has(p) ? "" : p));
+    setContext((c) => (c && !contexts.has(c) ? "" : c));
+  }, []);
 
-  // Refetch whenever a filter changes (sort changes only re-render, below).
+  // Two reload paths only: a filter change refetches the list (refresh changes with the filters);
+  // and the initial mount loads the labels. Live `change` events go through the imperative handle.
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  // Initial label load (and after mutations, via the handlers below).
   useEffect(() => {
     loadLabels();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadLabels]);
 
-  useImperativeHandle(ref, () => ({
-    onTasksChanged: () => {
-      refresh();
-      loadLabels();
-    },
-  }));
+  useImperativeHandle(
+    ref,
+    () => ({
+      onTasksChanged: () => {
+        refresh();
+        loadLabels();
+      },
+    }),
+    [refresh, loadLabels],
+  );
 
   async function onAdd(text: string): Promise<boolean> {
     try {
@@ -95,7 +102,7 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
       await loadLabels();
       return true;
     } catch (err) {
-      setError((err as Error).message ?? String(err));
+      setError(errMsg(err));
       return false;
     }
   }
@@ -105,7 +112,7 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
       await (task.completed ? uncompleteTask(task.id) : completeTask(task.id));
       await refresh();
     } catch (err) {
-      setError((err as Error).message ?? String(err));
+      setError(errMsg(err));
       await refresh();
     }
   }
@@ -115,7 +122,7 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
       await apiDeleteTask(task.id);
       await refresh();
     } catch (err) {
-      setError((err as Error).message ?? String(err));
+      setError(errMsg(err));
     }
   }
 
@@ -129,7 +136,7 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
       await refresh();
       await loadLabels();
     } catch (err) {
-      setError((err as Error).message ?? String(err));
+      setError(errMsg(err));
     }
   }
 
