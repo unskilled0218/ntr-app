@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import "./style.css";
-import { CHANGE_NOTE, CHANGE_TASKS, onChange } from "./api";
+import { CHANGE_NOTE, CHANGE_TASKS, onChange, syncFromServer } from "./api";
 import { getServerUrl } from "./settings";
 import { SWIPE_MIN, VIEWS, type View } from "./config";
 import NotePane, { type NotePaneHandle } from "./components/NotePane";
@@ -21,6 +21,12 @@ export default function App() {
   const navRef = useRef<HTMLElement>(null);
   const swipeStartX = useRef<number | null>(null);
   const swipeStartY = useRef<number | null>(null);
+
+  // On mount and after every server-mode change: pull the latest data from the server and
+  // persist it locally so the local backup is current before the user makes any edits.
+  useEffect(() => {
+    syncFromServer();
+  }, [connectionKey]);
 
   // The live stream: a `change` event re-fetches tasks or reconciles the note. Re-wired whenever
   // connectionKey changes (i.e., after settings close) so the new transport is picked up.
