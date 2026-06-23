@@ -39,6 +39,13 @@ impl NoteStore {
     &self.content
   }
 
+  /// Switch to a new file path by reloading from it. Semantics are identical
+  /// to a fresh `load`: missing file = empty content.
+  pub fn set_path(&mut self, new_path: PathBuf) -> io::Result<()> {
+    *self = NoteStore::load(new_path)?;
+    Ok(())
+  }
+
   /// Replace the whole note. Persists atomically, then swaps into memory.
   pub fn replace(&mut self, content: &str) -> io::Result<()> {
     atomicfile::write(&self.path, content)?;
@@ -119,5 +126,27 @@ mod tests {
     assert_eq!(note.content(), "# theirs\n");
     // Re-reading the same content reports no change.
     assert!(!note.reload_from_disk().unwrap());
+  }
+
+  #[test]
+  fn set_path_to_absent_path_gives_empty_content() {
+    let src = temp_path("setempty-src");
+    let mut note = NoteStore::load(&src).unwrap();
+    note.replace("old content\n").unwrap();
+
+    let dst = temp_path("setempty-dst");
+    note.set_path(dst).unwrap();
+    assert_eq!(note.content(), "");
+  }
+
+  #[test]
+  fn set_path_loads_existing_content() {
+    let dst = temp_path("setpath-dst");
+    fs::write(&dst, "# existing note\n").unwrap();
+
+    let src = temp_path("setpath-src");
+    let mut note = NoteStore::load(&src).unwrap();
+    note.set_path(dst).unwrap();
+    assert_eq!(note.content(), "# existing note\n");
   }
 }

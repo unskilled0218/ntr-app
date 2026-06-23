@@ -142,6 +142,14 @@ export function onChange(handler: (kind: string) => void): Promise<UnlistenFn> {
   return listen<string>(CHANGE_EVENT, (e) => handler(e.payload));
 }
 
+export function getDataDir(): Promise<string> {
+  return invoke("get_data_dir");
+}
+
+export function setDataDir(dir: string): Promise<void> {
+  return invoke("set_data_dir", { dir });
+}
+
 // Turn any thrown value into a message. IPC rejections arrive as plain strings (the Rust
 // commands return Result<_, String>); JS failures arrive as Error. The one home for that
 // decision, next to the boundary that produces them.
