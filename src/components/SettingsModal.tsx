@@ -14,7 +14,6 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [dirInput, setDirInput] = useState("");
   const [dirError, setDirError] = useState("");
   const current = getServerUrl();
-  const isLocal = !current;
 
   useEffect(() => {
     const el = dialogRef.current;
@@ -23,9 +22,7 @@ export default function SettingsModal({ open, onClose }: Props) {
       setInput(getServerUrl());
       setError("");
       setDirError("");
-      if (isLocal) {
-        getDataDir().then(setDirInput).catch(() => {});
-      }
+      getDataDir().then(setDirInput).catch(() => {});
       el.showModal();
     } else {
       el.close();
@@ -91,35 +88,32 @@ export default function SettingsModal({ open, onClose }: Props) {
           </button>
         </div>
 
-        {isLocal && (
-          <>
-            <h2>Data directory</h2>
-            <p className="settings-hint">
-              Directory where todo.txt and Note.md are stored.
-            </p>
-            <label>
-              Path
-              <input
-                type="text"
-                value={dirInput}
-                placeholder="/path/to/your/notes"
-                onChange={(e) => {
-                  setDirInput(e.target.value);
-                  setDirError("");
-                }}
-              />
-            </label>
-            {dirError && <p className="modal-error">{dirError}</p>}
-            <div className="modal-actions">
-              <button type="button" onClick={() => applyDir("")}>
-                Reset to default
-              </button>
-              <button type="button" className="primary" onClick={() => applyDir(dirInput.trim())}>
-                Save path
-              </button>
-            </div>
-          </>
-        )}
+
+        <h2>Data directory</h2>
+        <p className="settings-hint">
+          Directory where todo.txt and Note.md are stored locally.
+        </p>
+        <label>
+          Path
+          <input
+            type="text"
+            value={dirInput}
+            placeholder="/path/to/your/notes"
+            onChange={(e) => {
+              setDirInput(e.target.value);
+              setDirError("");
+            }}
+          />
+        </label>
+        {dirError && <p className="modal-error">{dirError}</p>}
+        <div className="modal-actions">
+          <button type="button" onClick={() => applyDir("")}>
+            Reset to default
+          </button>
+          <button type="button" className="primary" onClick={() => applyDir(dirInput.trim())}>
+            Save path
+          </button>
+        </div>
       </form>
     </dialog>
   );
