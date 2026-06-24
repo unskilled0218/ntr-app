@@ -20,12 +20,6 @@ export const KIND_LIST: Kind[] = ["project", "context"];
 // validator-forbidden token (`+`) as defence-in-depth.
 export const ADD_VALUE = "+add";
 
-// The "remove" entry value appended to a filter select when a concrete label is selected, so
-// removal lives inside the dropdown instead of a separate button. Recognised by exact value;
-// a real label can never collide because label names forbid whitespace (parseLabelInput) and
-// this value contains one.
-export const REMOVE_VALUE = "remove label";
-
 // Visible text of the empty / no-selection option shared by the add-form dropdowns. value=""
 // is the real no-selection state; this is only its label, kept in one place.
 export const EMPTY_LABEL = "None";
@@ -33,6 +27,13 @@ export const EMPTY_LABEL = "None";
 // Priority letters offered by the add/edit pickers. A–C covers the common cases; tasks with
 // higher priorities set via raw todo.txt are preserved and displayed but not offered as picker options.
 export const PRIORITIES = ["A", "B", "C"] as const;
+
+// The Priority picker's options, with the no-selection "None" first. Defined once here so the
+// add form and the edit modal offer the identical list instead of each rebuilding it (DRY).
+export const PRIORITY_OPTIONS = [
+  { value: "", label: EMPTY_LABEL },
+  ...PRIORITIES.map((p) => ({ value: p as string, label: p as string })),
+];
 
 // How long after the last keystroke the note auto-saves. One named source, not a magic number.
 export const NOTE_SAVE_DELAY_MS = 800;

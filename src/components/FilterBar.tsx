@@ -1,13 +1,13 @@
-// The Status / Project / Context / Sort dropdowns. Status + the two label filters drive the
-// backend query (TodoPane refetches); Sort is client-side (re-render only). Ported from the
-// #filters block of index.html + app.js.
+// The Status / Project / Context / Sort choosers. Status + the two label filters drive the
+// backend query (TodoPane refetches); Sort is client-side (re-render only). Each chooser is a
+// SelectField (a trigger button that opens a modal list), ported from the #filters block.
 //
-// The Project/Context selects double as the remove control: when a concrete label is selected,
-// a trailing "Remove +name" option is offered, and choosing it calls onRemove instead of
-// changing the filter (REMOVE_VALUE can never be a real label, see config.ts). onRemove only
-// opens the confirm dialog in TodoPane, so an accidental keyboard-arrow selection is harmless.
+// The Project/Context pickers mark each concrete label row `removable` and pass onRemove, so each
+// label item carries a Remove button on its right; onRemove only opens the confirm dialog in
+// TodoPane, so removal is still the deliberate, confirmed task-12 flow.
 
-import { KINDS, REMOVE_VALUE, SORTS, STATUSES, type Kind, type Status } from "../config";
+import { KINDS, SORTS, STATUSES, type Kind, type Status } from "../config";
+import SelectField, { type FieldOption } from "./SelectField";
 
 interface Props {
   status: Status;
@@ -20,6 +20,24 @@ interface Props {
   onContext: (c: string) => void;
   onSort: (s: string) => void;
   onRemove: (kind: Kind, name: string) => void;
+}
+
+const STATUS_OPTIONS: FieldOption[] = Object.entries(STATUSES).map(([value, s]) => ({
+  value,
+  label: s.label,
+}));
+
+const SORT_OPTIONS: FieldOption[] = Object.entries(SORTS).map(([value, s]) => ({
+  value,
+  label: s.label,
+}));
+
+// "All <kind>s" first, then each concrete label as a removable row.
+function labelOptions(kind: Kind, names: string[]): FieldOption[] {
+  return [
+    { value: "", label: `All ${KINDS[kind].singular}s` },
+    ...[...names].sort().map((name) => ({ value: name, label: name, removable: true })),
+  ];
 }
 
 export default function FilterBar({
@@ -38,77 +56,36 @@ export default function FilterBar({
     <div id="filters">
       <label>
         Status
-        <select
-          aria-label="Status filter"
+        <SelectField
+          ariaLabel="Status filter"
           value={status}
-          onChange={(e) => onStatus(e.currentTarget.value as Status)}
-        >
-          {Object.entries(STATUSES).map(([value, s]) => (
-            <option key={value} value={value}>
-              {s.label}
-            </option>
-          ))}
-        </select>
+          options={STATUS_OPTIONS}
+          onChange={(v) => onStatus(v as Status)}
+        />
       </label>
       <label>
         Project
-        <select
-          aria-label="Project filter"
+        <SelectField
+          ariaLabel="Project filter"
           value={project}
-          onChange={(e) => {
-            const v = e.currentTarget.value;
-            if (v === REMOVE_VALUE) onRemove("project", project);
-            else onProject(v);
-          }}
-        >
-          <option value="">All {KINDS.project.singular}s</option>
-          {[...serverLabels.project].sort().map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-          {project && (
-            <option value={REMOVE_VALUE}>
-              Remove {KINDS.project.prefix}
-              {project}
-            </option>
-          )}
-        </select>
+          options={labelOptions("project", serverLabels.project)}
+          onChange={onProject}
+          onRemove={(name) => onRemove("project", name)}
+        />
       </label>
       <label>
         Context
-        <select
-          aria-label="Context filter"
+        <SelectField
+          ariaLabel="Context filter"
           value={context}
-          onChange={(e) => {
-            const v = e.currentTarget.value;
-            if (v === REMOVE_VALUE) onRemove("context", context);
-            else onContext(v);
-          }}
-        >
-          <option value="">All {KINDS.context.singular}s</option>
-          {[...serverLabels.context].sort().map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-          {context && (
-            <option value={REMOVE_VALUE}>
-              Remove {KINDS.context.prefix}
-              {context}
-            </option>
-          )}
-        </select>
+          options={labelOptions("context", serverLabels.context)}
+          onChange={onContext}
+          onRemove={(name) => onRemove("context", name)}
+        />
       </label>
       <label>
         Sort
-        <select aria-label="Sort order" value={sort} onChange={(e) => onSort(e.currentTarget.value)}>
-          {Object.entries(SORTS).map(([key, s]) => (
-            <option key={key} value={key}>
-              {s.label}
-            </option>
-          ))}
-        </select>
+        <SelectField ariaLabel="Sort order" value={sort} options={SORT_OPTIONS} onChange={onSort} />
       </label>
     </div>
   );

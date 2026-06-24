@@ -35,17 +35,13 @@ describe("EditTaskModal", () => {
     const desc = screen.getByRole("textbox", { name: /description/i }) as HTMLInputElement;
     expect(desc.value).toBe("call bank");
 
-    const priority = screen.getByRole("combobox", { name: /priority/i }) as HTMLSelectElement;
-    expect(priority.value).toBe("A");
-
     const due = screen.getByLabelText(/due date/i) as HTMLInputElement;
     expect(due.value).toBe("2026-06-30");
 
-    const project = screen.getByRole("combobox", { name: /project/i }) as HTMLSelectElement;
-    expect(project.value).toBe("work");
-
-    const context = screen.getByRole("combobox", { name: /context/i }) as HTMLSelectElement;
-    expect(context.value).toBe("phone");
+    // The picker triggers show the pre-populated selection as their label.
+    expect(screen.getByRole("button", { name: /^priority$/i }).textContent).toBe("A");
+    expect(screen.getByRole("button", { name: /^project$/i }).textContent).toBe("work");
+    expect(screen.getByRole("button", { name: /^context$/i }).textContent).toBe("phone");
   });
 
   it("calls onSave with the composed text on submit", async () => {

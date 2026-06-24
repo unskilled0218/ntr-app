@@ -2,7 +2,8 @@ import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import FilterBar from "./FilterBar";
-import { REMOVE_VALUE } from "../config";
+
+// The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
 
 const SERVER_LABELS = { project: ["work", "home"], context: ["phone", "store"] };
 
@@ -29,46 +30,46 @@ function renderBar(overrides: Partial<ComponentProps<typeof FilterBar>> = {}) {
   return { onRemove, onProject, onContext };
 }
 
+const openDialog = () => within(document.querySelector("dialog.select-modal[open]") as HTMLElement);
+
+function openPicker(name: RegExp) {
+  fireEvent.click(screen.getByRole("button", { name }));
+  return openDialog();
+}
+
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(() => { cleanup(); });
 
-describe("FilterBar remove option", () => {
-  it("offers no Remove button (the action moved inside the dropdown)", () => {
-    renderBar({ project: "work", context: "phone" });
-    expect(screen.queryByRole("button", { name: /remove/i })).toBeNull();
+describe("FilterBar pickers", () => {
+  it("lists the project labels and calls onProject when one is chosen", () => {
+    const { onProject } = renderBar();
+    const picker = openPicker(/project filter/i);
+    expect(picker.getByRole("button", { name: "work" })).toBeTruthy();
+    expect(picker.getByRole("button", { name: "home" })).toBeTruthy();
+    fireEvent.click(picker.getByRole("button", { name: "home" }));
+    expect(onProject).toHaveBeenCalledWith("home");
   });
 
-  it("hides the Remove option while the filter is 'All' (no specific label)", () => {
-    renderBar({ project: "", context: "" });
-    const projectSelect = screen.getByRole("combobox", { name: /project filter/i });
-    const contextSelect = screen.getByRole("combobox", { name: /context filter/i });
-    expect(within(projectSelect).queryByRole("option", { name: /remove/i })).toBeNull();
-    expect(within(contextSelect).queryByRole("option", { name: /remove/i })).toBeNull();
-  });
-
-  it("offers a Remove option for the selected project and dispatches onRemove (not onProject)", () => {
-    const { onRemove, onProject } = renderBar({ project: "work" });
-    const projectSelect = screen.getByRole("combobox", { name: /project filter/i });
-    expect(within(projectSelect).getByRole("option", { name: /remove \+work/i })).toBeTruthy();
-    fireEvent.change(projectSelect, { target: { value: REMOVE_VALUE } });
+  it("offers a Remove button on each label row and calls onRemove with the kind and name", () => {
+    const { onRemove } = renderBar();
+    const picker = openPicker(/project filter/i);
+    // The "All projects" row is not removable.
+    expect(picker.queryByRole("button", { name: /remove all projects/i })).toBeNull();
+    fireEvent.click(picker.getByRole("button", { name: /remove work/i }));
     expect(onRemove).toHaveBeenCalledWith("project", "work");
-    expect(onProject).not.toHaveBeenCalled();
   });
 
-  it("dispatches onRemove for the selected context", () => {
-    const { onRemove } = renderBar({ context: "phone" });
-    const contextSelect = screen.getByRole("combobox", { name: /context filter/i });
-    expect(within(contextSelect).getByRole("option", { name: /remove @phone/i })).toBeTruthy();
-    fireEvent.change(contextSelect, { target: { value: REMOVE_VALUE } });
+  it("removes a context label from the context picker", () => {
+    const { onRemove } = renderBar();
+    const picker = openPicker(/context filter/i);
+    fireEvent.click(picker.getByRole("button", { name: /remove phone/i }));
     expect(onRemove).toHaveBeenCalledWith("context", "phone");
   });
 
-  it("still treats a normal selection as a filter change, not a removal", () => {
-    const { onRemove, onProject } = renderBar({ project: "work" });
-    fireEvent.change(screen.getByRole("combobox", { name: /project filter/i }), {
-      target: { value: "home" },
-    });
-    expect(onProject).toHaveBeenCalledWith("home");
-    expect(onRemove).not.toHaveBeenCalled();
+  it("does not offer Remove on the Status or Sort pickers", () => {
+    renderBar();
+    expect(openPicker(/status filter/i).queryByRole("button", { name: /remove/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(openPicker(/sort order/i).queryByRole("button", { name: /remove/i })).toBeNull();
   });
 });
