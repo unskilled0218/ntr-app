@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "app",
+  "productName": "ntr",
   "version": "0.1.0",
   "identifier": "com.my.ntr",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "app",
+        "title": "ntr",
         "width": 800,
         "height": 600
       }
