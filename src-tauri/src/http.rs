@@ -124,10 +124,7 @@ fn sse_tokens(buf: &mut String) -> Vec<String> {
 async fn run_sse(app: AppHandle, client: reqwest::Client, url: String) {
   let res = match client.get(&url).send().await {
     Ok(r) => r,
-    Err(e) => {
-      eprintln!("sse connect failed: {e}");
-      return;
-    }
+    Err(_) => return, // best-effort, like the file-watcher; reconnect via re-subscribe
   };
   let mut stream = res.bytes_stream();
   let mut buf = String::new();
