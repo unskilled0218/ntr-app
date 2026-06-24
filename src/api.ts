@@ -5,7 +5,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { getConflictStrategy, getServerUrl } from "./settings";
+import { getAllowInvalidCert, getConflictStrategy, getServerUrl } from "./settings";
 import { classifyConflict } from "./lib/conflict";
 
 // Task shape — exactly the backend's TaskDto (src-tauri/src/dto.rs), itself the server's shape.
@@ -37,30 +37,61 @@ export const CHANGE_TASKS = "tasks";
 export const CHANGE_NOTE = "note";
 
 // --- HTTP helpers (server mode only) ---
+//
+// Server-mode requests go through the Rust `server_fetch` command, not a webview `fetch`. A
+// native request is not subject to CORS and can be told (via the allow-invalid-cert setting) to
+// accept a self-signed certificate, so the app reaches an HTTPS reverse proxy like
+// https://ntr.lan that the webview's own fetch cannot. See src-tauri/src/http.rs.
 
-async function httpFetch(path: string, init?: RequestInit): Promise<Response> {
-  const res = await fetch(getServerUrl() + path, init);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res;
+interface HttpResponse {
+  status: number;
+  ok: boolean;
+  status_text: string;
+  body: string;
 }
 
-async function httpJson<T>(path: string, init?: RequestInit): Promise<T> {
-  return (await httpFetch(path, init)).json() as Promise<T>;
+// The single server-mode request primitive. Throws on a non-2xx status to preserve the old
+// httpFetch contract — callers and tests rely on the thrown "<status> <statusText>" message.
+async function serverFetch(
+  path: string,
+  method = "GET",
+  body?: string,
+  contentType?: string,
+): Promise<string> {
+  const res = await invoke<HttpResponse>("server_fetch", {
+    req: {
+      url: getServerUrl() + path,
+      method,
+      body: body ?? null,
+      contentType: contentType ?? null,
+      allowInvalidCert: getAllowInvalidCert(),
+    },
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.status_text}`.trim());
+  return res.body;
+}
+
+async function httpJson<T>(path: string, init?: { method?: string; body?: string }): Promise<T> {
+  // A JSON body is the only case that needs a Content-Type; bodyless GETs send none (matching
+  // the old behaviour, where GETs carried no headers).
+  const body = await serverFetch(
+    path,
+    init?.method ?? "GET",
+    init?.body,
+    init?.body != null ? "application/json" : undefined,
+  );
+  return JSON.parse(body) as T;
 }
 
 // The note and todo.txt endpoints exchange plain text. These two helpers are the
 // single home for "GET/PUT text at a server path", shared by the user-write path
 // (getNote/putNote) and the conflict path (CONFLICT_IO) so they cannot drift.
 function httpText(path: string): Promise<string> {
-  return httpFetch(path).then((r) => r.text());
+  return serverFetch(path);
 }
 
 function httpPutText(path: string, text: string): Promise<void> {
-  return httpFetch(path, {
-    method: "PUT",
-    headers: { "Content-Type": "text/plain" },
-    body: text,
-  }).then(() => {});
+  return serverFetch(path, "PUT", text, "text/plain").then(() => {});
 }
 
 // --- Local backup helpers (server mode only, best-effort) ---
@@ -109,7 +140,6 @@ export async function createTask(text: string): Promise<Task> {
   if (getServerUrl()) {
     const task = await httpJson<Task>("/api/tasks", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
     await backupTasksLocally();
@@ -122,7 +152,6 @@ export async function updateTask(id: number, text: string): Promise<Task> {
   if (getServerUrl()) {
     const task = await httpJson<Task>(`/api/tasks/${id}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
     await backupTasksLocally();
@@ -151,7 +180,7 @@ export async function uncompleteTask(id: number): Promise<Task> {
 
 export async function deleteTask(id: number): Promise<void> {
   if (getServerUrl()) {
-    await httpFetch(`/api/tasks/${id}`, { method: "DELETE" });
+    await serverFetch(`/api/tasks/${id}`, "DELETE");
     await backupTasksLocally();
     return;
   }
@@ -174,15 +203,22 @@ export async function putNote(text: string): Promise<void> {
   return invoke("put_note", { text });
 }
 
-// Subscribe to the backend's `change` stream. In local mode the callback receives the payload
-// token via Tauri's `listen`; in server mode it uses an SSE EventSource on /api/events.
-// Returns the unlisten/close function.
-export function onChange(handler: (kind: string) => void): Promise<UnlistenFn> {
-  const url = getServerUrl();
-  if (url) {
-    const es = new EventSource(url + "/api/events");
-    es.addEventListener("change", (e) => handler((e as MessageEvent).data));
-    return Promise.resolve(() => es.close());
+// Subscribe to the backend's `change` stream. Both modes now deliver tokens through Tauri's
+// `listen(CHANGE_EVENT)`: in local mode the file-watcher emits it; in server mode the Rust SSE
+// bridge (server_connect) subscribes to /api/events and re-emits the same event, so the webview
+// never opens an EventSource that a self-signed-cert HTTPS proxy would reject. Returns an
+// unlisten that also tears the bridge down.
+export async function onChange(handler: (kind: string) => void): Promise<UnlistenFn> {
+  if (getServerUrl()) {
+    await invoke("server_connect", {
+      url: getServerUrl() + "/api/events",
+      allowInvalidCert: getAllowInvalidCert(),
+    });
+    const unlisten = await listen<string>(CHANGE_EVENT, (e) => handler(e.payload));
+    return () => {
+      unlisten();
+      invoke("server_disconnect").catch(() => {});
+    };
   }
   return listen<string>(CHANGE_EVENT, (e) => handler(e.payload));
 }

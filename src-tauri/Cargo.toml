@@ -24,4 +24,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tokio = { version = "1", features = ["time"] }
+# Native HTTP for server mode: reaches HTTPS reverse proxies (e.g. https://ntr.lan) with
+# self-signed certs and is not subject to webview CORS. `default-tls` links the system OpenSSL
+# (present in this image) so no extra C-build tooling is needed; `stream` gives
+# Response::bytes_stream() for the SSE bridge.
+reqwest = { version = "0.13", default-features = false, features = ["stream", "default-tls"] }
+futures-util = "0.3"
 

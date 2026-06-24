@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   completeTask,
   createTask,
@@ -31,6 +32,10 @@ describe("errMsg", () => {
 });
 
 // --- Server mode ---
+// Server-mode requests now go through the Rust `server_fetch` command (not a webview fetch),
+// and the local backups go through `invoke` too — so a single `invoke` mock dispatches both:
+// `server_fetch` dequeues the next queued HttpResponse; `get_note`/`get_raw` return the local
+// copy; every other command (put_note/put_raw/server_connect/...) resolves to undefined.
 
 const SERVER = "http://test-server";
 
@@ -47,34 +52,44 @@ const TASK = {
   raw: "test",
 };
 
-function mkRes(body: unknown, status = 200): Response {
-  const bodyInit =
-    body === null
-      ? null
-      : typeof body === "string"
-        ? body
-        : JSON.stringify(body);
-  return new Response(bodyInit, { status });
+const REASON: Record<number, string> = {
+  200: "OK",
+  204: "No Content",
+  404: "Not Found",
+  500: "Internal Server Error",
+};
+
+// Build the HttpResponse shape the Rust command returns. 204/null bodies serialise to "".
+function httpResp(body: unknown, status = 200) {
+  const serialised =
+    body === null || body === undefined || status === 204
+      ? ""
+      : typeof body === "string" ? body : JSON.stringify(body);
+  return { status, ok: status >= 200 && status < 300, status_text: REASON[status] ?? "", body: serialised };
 }
 
-function makeFetch(body: unknown, status = 200): ReturnType<typeof vi.fn> {
-  // 204/205 must have a null body; other statuses serialise the payload.
-  const bodyInit = body === null || status === 204 || status === 205
-    ? null
-    : typeof body === "string" ? body : JSON.stringify(body);
-  const res = new Response(bodyInit, { status });
-  const mock = vi.fn().mockResolvedValue(res);
-  vi.stubGlobal("fetch", mock);
+// Wire the invoke mock: `serverResponses` are dequeued in order for successive `server_fetch`
+// calls; `local` supplies get_note/get_raw. Each spec is [body, status?].
+function mockServer(
+  serverResponses: Array<[body: unknown, status?: number]> = [],
+  local: { note?: string; raw?: string } = {},
+): ReturnType<typeof vi.fn> {
+  const queue = serverResponses.map(([b, s]) => httpResp(b, s));
+  let i = 0;
+  const mock = vi.mocked(invoke);
+  mock.mockImplementation((cmd: string) => {
+    if (cmd === "server_fetch") return Promise.resolve(queue[i++]);
+    if (cmd === "get_note") return Promise.resolve(local.note ?? "");
+    if (cmd === "get_raw") return Promise.resolve(local.raw ?? "");
+    return Promise.resolve(undefined);
+  });
   return mock;
 }
 
-// Creates fresh Response objects for successive fetch calls (avoids "body already read" errors).
-// Each spec is [body, status?]; to pass an array as the body wrap it: [[item1, item2]].
-function makeFetchSeq(...specs: Array<[body: unknown, status?: number]>): ReturnType<typeof vi.fn> {
-  const mock = vi.fn();
-  specs.forEach(([body, status]) => mock.mockResolvedValueOnce(mkRes(body, status)));
-  vi.stubGlobal("fetch", mock);
-  return mock;
+// The `req` of the nth `server_fetch` invoke call.
+function reqOf(call: number): { url: string; method: string; body: string | null; contentType: string | null; allowInvalidCert: boolean } {
+  const calls = vi.mocked(invoke).mock.calls.filter((c) => c[0] === "server_fetch");
+  return (calls[call][1] as { req: ReturnType<typeof reqOf> }).req;
 }
 
 beforeEach(() => {
@@ -83,21 +98,34 @@ beforeEach(() => {
 
 afterEach(() => {
   localStorage.clear();
-  vi.unstubAllGlobals();
+  vi.mocked(invoke).mockReset();
 });
 
 describe("listTasks (server mode)", () => {
-  it("calls GET /api/tasks with no params when filter is empty", async () => {
-    const mock = makeFetch([TASK]);
+  it("calls GET /api/tasks with no params, no body, and the cert flag", async () => {
+    mockServer([[[TASK]]]);
     const result = await listTasks({});
     expect(result).toEqual([TASK]);
-    expect(mock).toHaveBeenCalledWith(`${SERVER}/api/tasks`, undefined);
+    expect(reqOf(0)).toEqual({
+      url: `${SERVER}/api/tasks`,
+      method: "GET",
+      body: null,
+      contentType: null,
+      allowInvalidCert: false,
+    });
+  });
+
+  it("passes allowInvalidCert: true when the setting is on", async () => {
+    localStorage.setItem("ntr.allowInvalidCert", "1");
+    mockServer([[[]]]);
+    await listTasks({});
+    expect(reqOf(0).allowInvalidCert).toBe(true);
   });
 
   it("appends only non-null filter params", async () => {
-    const mock = makeFetch([]);
+    mockServer([[[]]]);
     await listTasks({ completed: false, project: "work", context: null, priority: null });
-    const url = (mock.mock.calls[0] as [string])[0];
+    const url = reqOf(0).url;
     expect(url).toContain("completed=false");
     expect(url).toContain("project=work");
     expect(url).not.toContain("context=");
@@ -106,196 +134,193 @@ describe("listTasks (server mode)", () => {
 });
 
 describe("createTask (server mode)", () => {
-  it("calls POST /api/tasks with JSON body", async () => {
-    const mock = makeFetch(TASK);
+  it("calls POST /api/tasks with a JSON body and Content-Type", async () => {
+    mockServer([[TASK], [TASK.raw + "\n"]]);
     const result = await createTask("buy milk");
     expect(result).toEqual(TASK);
-    expect(mock).toHaveBeenCalledWith(`${SERVER}/api/tasks`, expect.objectContaining({
+    expect(reqOf(0)).toMatchObject({
+      url: `${SERVER}/api/tasks`,
       method: "POST",
       body: JSON.stringify({ text: "buy milk" }),
-    }));
+      contentType: "application/json",
+    });
   });
 });
 
 describe("updateTask (server mode)", () => {
-  it("calls PUT /api/tasks/{id} with JSON body", async () => {
-    const mock = makeFetch(TASK);
+  it("calls PUT /api/tasks/{id} with a JSON body", async () => {
+    mockServer([[TASK], [TASK.raw + "\n"]]);
     await updateTask(1, "updated");
-    expect(mock).toHaveBeenCalledWith(`${SERVER}/api/tasks/1`, expect.objectContaining({
+    expect(reqOf(0)).toMatchObject({
+      url: `${SERVER}/api/tasks/1`,
       method: "PUT",
       body: JSON.stringify({ text: "updated" }),
-    }));
+      contentType: "application/json",
+    });
   });
 });
 
 describe("completeTask (server mode)", () => {
-  it("calls POST /api/tasks/{id}/complete", async () => {
-    const mock = makeFetch(TASK);
+  it("calls POST /api/tasks/{id}/complete with no body", async () => {
+    mockServer([[TASK], [TASK.raw + "\n"]]);
     await completeTask(1);
-    expect(mock).toHaveBeenCalledWith(`${SERVER}/api/tasks/1/complete`, expect.objectContaining({ method: "POST" }));
+    expect(reqOf(0)).toMatchObject({ url: `${SERVER}/api/tasks/1/complete`, method: "POST", body: null });
   });
 });
 
 describe("uncompleteTask (server mode)", () => {
   it("calls POST /api/tasks/{id}/uncomplete", async () => {
-    const mock = makeFetch(TASK);
+    mockServer([[TASK], [TASK.raw + "\n"]]);
     await uncompleteTask(1);
-    expect(mock).toHaveBeenCalledWith(`${SERVER}/api/tasks/1/uncomplete`, expect.objectContaining({ method: "POST" }));
+    expect(reqOf(0)).toMatchObject({ url: `${SERVER}/api/tasks/1/uncomplete`, method: "POST" });
   });
 });
 
 describe("deleteTask (server mode)", () => {
   it("calls DELETE /api/tasks/{id}", async () => {
-    const mock = makeFetch(null, 204);
+    mockServer([[null, 204], [TASK.raw + "\n"]]);
     await deleteTask(1);
-    expect(mock).toHaveBeenCalledWith(`${SERVER}/api/tasks/1`, expect.objectContaining({ method: "DELETE" }));
+    expect(reqOf(0)).toMatchObject({ url: `${SERVER}/api/tasks/1`, method: "DELETE" });
   });
 });
 
 describe("getNote (server mode)", () => {
   it("calls GET /api/note and returns text", async () => {
-    const mock = makeFetch("hello note");
+    mockServer([["hello note"]]);
     const result = await getNote();
     expect(result).toBe("hello note");
-    expect(mock).toHaveBeenCalledWith(`${SERVER}/api/note`, undefined);
+    expect(reqOf(0)).toMatchObject({ url: `${SERVER}/api/note`, method: "GET" });
   });
 });
 
 describe("putNote (server mode)", () => {
-  it("calls PUT /api/note with plain-text body and Content-Type header", async () => {
-    const mock = makeFetch(null, 204);
+  it("calls PUT /api/note with a plain-text body and Content-Type", async () => {
+    mockServer([[null, 204]]);
     await putNote("my note text");
-    expect(mock).toHaveBeenCalledWith(`${SERVER}/api/note`, expect.objectContaining({
+    expect(reqOf(0)).toMatchObject({
+      url: `${SERVER}/api/note`,
       method: "PUT",
-      headers: { "Content-Type": "text/plain" },
       body: "my note text",
-    }));
+      contentType: "text/plain",
+    });
   });
 });
 
 describe("onChange (server mode)", () => {
-  class MockEventSource {
-    url: string;
-    private handlers = new Map<string, Array<(e: Event) => void>>();
-    closed = false;
-    constructor(url: string) { this.url = url; }
-    addEventListener(type: string, handler: (e: Event) => void) {
-      this.handlers.set(type, [...(this.handlers.get(type) ?? []), handler]);
-    }
-    close() { this.closed = true; }
-    emit(type: string, data: string) {
-      const e = new MessageEvent(type, { data });
-      (this.handlers.get(type) ?? []).forEach((h) => h(e));
-    }
-  }
-
-  it("creates EventSource at the correct URL and fires handler on 'change' event", async () => {
-    let instance!: MockEventSource;
-    vi.stubGlobal("EventSource", class extends MockEventSource {
-      constructor(url: string) { super(url); instance = this; }
+  it("starts the SSE bridge, fires the handler on a change event, and tears down on unlisten", async () => {
+    let captured: ((e: { payload: string }) => void) | undefined;
+    const unlistenSpy = vi.fn();
+    vi.mocked(listen).mockImplementation((_event, handler) => {
+      captured = handler as (e: { payload: string }) => void;
+      return Promise.resolve(unlistenSpy);
     });
+    mockServer();
 
     const received: string[] = [];
     const unlisten = await onChange((kind) => received.push(kind));
 
-    expect(instance.url).toBe(`${SERVER}/api/events`);
-    instance.emit("change", "tasks");
-    instance.emit("change", "note");
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("server_connect", {
+      url: `${SERVER}/api/events`,
+      allowInvalidCert: false,
+    });
+    captured!({ payload: "tasks" });
+    captured!({ payload: "note" });
     expect(received).toEqual(["tasks", "note"]);
 
     unlisten();
-    expect(instance.closed).toBe(true);
+    expect(unlistenSpy).toHaveBeenCalled();
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("server_disconnect");
   });
 });
 
 describe("HTTP error mapping", () => {
-  it("throws a message containing the status code on a non-2xx response", async () => {
-    makeFetch(null, 404);
-    await expect(listTasks({})).rejects.toThrow("404");
+  it("throws a message with the status code and reason on a non-2xx response", async () => {
+    mockServer([[null, 404]]);
+    await expect(listTasks({})).rejects.toThrow("404 Not Found");
   });
 
   it("errMsg extracts the message from the thrown Error", async () => {
-    makeFetch(null, 500);
+    mockServer([[null, 500]]);
     const err = await listTasks({}).catch((e: unknown) => e);
     expect(errMsg(err)).toContain("500");
   });
 });
 
 // --- Server mode — local backup ---
-// Each mutating function must also persist data locally via Tauri invoke after
-// the server write succeeds. Failures in the local backup must not propagate.
+// Each mutating function must also persist data locally via Tauri invoke after the server
+// write succeeds. Failures in the local backup must not propagate.
 
 describe("server mode — local backup", () => {
-  beforeEach(() => {
-    vi.mocked(invoke).mockResolvedValue(undefined);
-  });
-
-  afterEach(() => {
-    vi.mocked(invoke).mockReset();
-  });
-
-  // Second spec in each makeFetchSeq call is the task backup's GET /api/raw response —
+  // Second server response in each mockServer call is the task backup's GET /api/raw —
   // the server store's todo.txt render returned verbatim as text.
 
   it("putNote calls invoke put_note with the same text after the server write", async () => {
-    makeFetchSeq([null, 204]);
+    mockServer([[null, 204]]);
     await putNote("hello backup");
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_note", { text: "hello backup" });
   });
 
   it("createTask calls invoke put_raw with the server's raw todo.txt after the write", async () => {
-    makeFetchSeq([TASK], [TASK.raw + "\n"]);
+    mockServer([[TASK], [TASK.raw + "\n"]]);
     await createTask("buy milk");
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
   });
 
-  it("createTask backup fetch uses exact /api/raw URL with no query string", async () => {
-    const mock = makeFetchSeq([TASK], [TASK.raw + "\n"]);
+  it("createTask backup request uses exact /api/raw URL with no query string", async () => {
+    mockServer([[TASK], [TASK.raw + "\n"]]);
     await createTask("x");
-    const backupUrl = (mock.mock.calls[1] as [string])[0];
+    const backupUrl = reqOf(1).url;
     expect(backupUrl).toBe(`${SERVER}/api/raw`);
     expect(backupUrl).not.toContain("?");
   });
 
   it("updateTask calls invoke put_raw after the server write", async () => {
-    makeFetchSeq([TASK], [TASK.raw + "\n"]);
+    mockServer([[TASK], [TASK.raw + "\n"]]);
     await updateTask(1, "updated");
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
   });
 
   it("completeTask calls invoke put_raw after the server write", async () => {
-    makeFetchSeq([TASK], [TASK.raw + "\n"]);
+    mockServer([[TASK], [TASK.raw + "\n"]]);
     await completeTask(1);
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
   });
 
   it("uncompleteTask calls invoke put_raw after the server write", async () => {
-    makeFetchSeq([TASK], [TASK.raw + "\n"]);
+    mockServer([[TASK], [TASK.raw + "\n"]]);
     await uncompleteTask(1);
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
   });
 
   it("deleteTask calls invoke put_raw after the server write", async () => {
-    makeFetchSeq([null, 204], [TASK.raw + "\n"]);
+    mockServer([[null, 204], [TASK.raw + "\n"]]);
     await deleteTask(1);
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
   });
 
   it("local task backup failure does not reject the primary promise", async () => {
-    makeFetchSeq([TASK], [TASK.raw + "\n"]);
-    vi.mocked(invoke).mockRejectedValue(new Error("disk full"));
+    // server_fetch succeeds; the put_raw backup throws.
+    let n = 0;
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "server_fetch") return Promise.resolve(httpResp(n++ === 0 ? TASK : TASK.raw + "\n"));
+      if (cmd === "put_raw") return Promise.reject(new Error("disk full"));
+      return Promise.resolve(undefined);
+    });
     const result = await createTask("x");
     expect(result).toEqual(TASK);
   });
 
   it("local note backup failure does not reject the primary promise", async () => {
-    makeFetchSeq([null, 204]);
-    vi.mocked(invoke).mockRejectedValue(new Error("disk full"));
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "server_fetch") return Promise.resolve(httpResp(null, 204));
+      if (cmd === "put_note") return Promise.reject(new Error("disk full"));
+      return Promise.resolve(undefined);
+    });
     await expect(putNote("x")).resolves.toBeUndefined();
   });
 
   it("backup writes an empty string when the server task file is empty", async () => {
-    makeFetchSeq([TASK], [""]);
+    mockServer([[TASK], [""]]);
     await createTask("x");
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: "" });
   });
@@ -307,45 +332,28 @@ describe("server mode — local backup", () => {
 // and either auto-applies it or returns it for the UI to prompt.
 
 describe("reconcileWithServer", () => {
-  // Dispatch local reads by command name; writes (put_note/put_raw) resolve to undefined.
-  function mockLocal({ note = "", raw = "" }: { note?: string; raw?: string }) {
-    vi.mocked(invoke).mockImplementation((cmd: string) => {
-      if (cmd === "get_note") return Promise.resolve(note);
-      if (cmd === "get_raw") return Promise.resolve(raw);
-      return Promise.resolve(undefined);
-    });
-  }
-
-  afterEach(() => {
-    vi.mocked(invoke).mockReset();
-  });
-
-  it("is a no-op in local mode (returns [], no fetch calls)", async () => {
+  it("is a no-op in local mode (returns [], no server_fetch)", async () => {
     localStorage.removeItem("ntr.serverUrl");
-    const mock = vi.fn();
-    vi.stubGlobal("fetch", mock);
+    mockServer();
     expect(await reconcileWithServer()).toEqual([]);
-    expect(mock).not.toHaveBeenCalled();
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("server_fetch", expect.anything());
   });
 
   it("returns no conflicts and writes nothing when both copies match", async () => {
-    mockLocal({ note: "same note", raw: "same raw" });
-    makeFetchSeq(["same note"], ["same raw"]);
+    mockServer([["same note"], ["same raw"]], { note: "same note", raw: "same raw" });
     expect(await reconcileWithServer()).toEqual([]);
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("put_note", expect.anything());
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("put_raw", expect.anything());
   });
 
   it("adopts the server copy silently when the local copy is empty", async () => {
-    mockLocal({ note: "", raw: "" });
-    makeFetchSeq(["server hello"], [""]); // note differs (local empty), tasks in-sync
+    mockServer([["server hello"], [""]], { note: "", raw: "" }); // note differs (local empty), tasks in-sync
     expect(await reconcileWithServer()).toEqual([]);
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_note", { text: "server hello" });
   });
 
   it("returns a conflict (and writes nothing) under the default 'ask' strategy", async () => {
-    mockLocal({ note: "local note", raw: "" });
-    makeFetchSeq(["server note"], [""]);
+    mockServer([["server note"], [""]], { note: "local note", raw: "" });
     expect(await reconcileWithServer()).toEqual([
       { resource: "note", local: "local note", server: "server note" },
     ]);
@@ -354,28 +362,23 @@ describe("reconcileWithServer", () => {
 
   it("auto-applies the server copy when the strategy is 'server'", async () => {
     localStorage.setItem("ntr.conflictStrategy", "server");
-    mockLocal({ note: "local note", raw: "" });
-    makeFetchSeq(["server note"], [""]);
+    mockServer([["server note"], [""]], { note: "local note", raw: "" });
     expect(await reconcileWithServer()).toEqual([]);
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_note", { text: "server note" });
   });
 
   it("auto-pushes the local copy to the server when the strategy is 'local'", async () => {
     localStorage.setItem("ntr.conflictStrategy", "local");
-    mockLocal({ note: "local note", raw: "" });
     // GET /api/note, then PUT /api/note (push), then GET /api/raw (in-sync).
-    const mock = makeFetchSeq(["server note"], [null, 204], [""]);
+    mockServer([["server note"], [null, 204], [""]], { note: "local note", raw: "" });
     expect(await reconcileWithServer()).toEqual([]);
-    expect(mock).toHaveBeenCalledWith(`${SERVER}/api/note`, expect.objectContaining({
-      method: "PUT",
-      body: "local note",
-    }));
+    expect(reqOf(1)).toMatchObject({ url: `${SERVER}/api/note`, method: "PUT", body: "local note" });
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("put_note", expect.anything());
   });
 
   it("isolates a per-resource failure: a failed note read still yields the task conflict", async () => {
-    mockLocal({ note: "local note", raw: "local raw" });
-    makeFetchSeq([null, 404], ["server raw"]); // note GET 404, tasks GET ok and differs
+    // note GET 404 (rejects inside the note iteration), tasks GET ok and differs.
+    mockServer([[null, 404], ["server raw"]], { note: "local note", raw: "local raw" });
     expect(await reconcileWithServer()).toEqual([
       { resource: "tasks", local: "local raw", server: "server raw" },
     ]);
@@ -383,22 +386,15 @@ describe("reconcileWithServer", () => {
 });
 
 describe("resolveConflict", () => {
-  afterEach(() => {
-    vi.mocked(invoke).mockReset();
-  });
-
   it("'server' writes the server copy to the local file", async () => {
-    vi.mocked(invoke).mockResolvedValue(undefined);
+    mockServer();
     await resolveConflict({ resource: "tasks", local: "L", server: "S" }, "server");
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: "S" });
   });
 
   it("'local' pushes the local copy to the server", async () => {
-    const mock = makeFetch(null, 204);
+    mockServer([[null, 204]]);
     await resolveConflict({ resource: "tasks", local: "L", server: "S" }, "local");
-    expect(mock).toHaveBeenCalledWith(`${SERVER}/api/raw`, expect.objectContaining({
-      method: "PUT",
-      body: "L",
-    }));
+    expect(reqOf(0)).toMatchObject({ url: `${SERVER}/api/raw`, method: "PUT", body: "L" });
   });
 });
