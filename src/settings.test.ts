@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { getServerUrl, setServerUrl } from "./settings";
+import {
+  getConflictStrategy,
+  getServerUrl,
+  setConflictStrategy,
+  setServerUrl,
+} from "./settings";
 
 afterEach(() => {
   localStorage.clear();
@@ -27,5 +32,32 @@ describe("setServerUrl", () => {
     setServerUrl("");
     expect(localStorage.getItem("ntr.serverUrl")).toBeNull();
     expect(getServerUrl()).toBe("");
+  });
+});
+
+describe("getConflictStrategy", () => {
+  it("defaults to 'ask' when nothing is stored", () => {
+    expect(getConflictStrategy()).toBe("ask");
+  });
+
+  it("falls back to 'ask' for an unrecognised stored value", () => {
+    localStorage.setItem("ntr.conflictStrategy", "bogus");
+    expect(getConflictStrategy()).toBe("ask");
+  });
+
+  it("round-trips 'server' and 'local'", () => {
+    setConflictStrategy("server");
+    expect(getConflictStrategy()).toBe("server");
+    setConflictStrategy("local");
+    expect(getConflictStrategy()).toBe("local");
+  });
+});
+
+describe("setConflictStrategy", () => {
+  it("removes the key for 'ask' (the default is the absence of the key)", () => {
+    setConflictStrategy("server");
+    setConflictStrategy("ask");
+    expect(localStorage.getItem("ntr.conflictStrategy")).toBeNull();
+    expect(getConflictStrategy()).toBe("ask");
   });
 });

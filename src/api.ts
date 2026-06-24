@@ -5,7 +5,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { getServerUrl } from "./settings";
+import { getConflictStrategy, getServerUrl } from "./settings";
+import { classifyConflict } from "./lib/conflict";
 
 // Task shape — exactly the backend's TaskDto (src-tauri/src/dto.rs), itself the server's shape.
 export interface Task {
@@ -45,6 +46,21 @@ async function httpFetch(path: string, init?: RequestInit): Promise<Response> {
 
 async function httpJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await httpFetch(path, init)).json() as Promise<T>;
+}
+
+// The note and todo.txt endpoints exchange plain text. These two helpers are the
+// single home for "GET/PUT text at a server path", shared by the user-write path
+// (getNote/putNote) and the conflict path (CONFLICT_IO) so they cannot drift.
+function httpText(path: string): Promise<string> {
+  return httpFetch(path).then((r) => r.text());
+}
+
+function httpPutText(path: string, text: string): Promise<void> {
+  return httpFetch(path, {
+    method: "PUT",
+    headers: { "Content-Type": "text/plain" },
+    body: text,
+  }).then(() => {});
 }
 
 // --- Local backup helpers (server mode only, best-effort) ---
@@ -143,18 +159,14 @@ export async function deleteTask(id: number): Promise<void> {
 
 export function getNote(): Promise<string> {
   if (getServerUrl()) {
-    return httpFetch("/api/note").then((r) => r.text());
+    return httpText("/api/note");
   }
   return invoke("get_note");
 }
 
 export async function putNote(text: string): Promise<void> {
   if (getServerUrl()) {
-    await httpFetch("/api/note", {
-      method: "PUT",
-      headers: { "Content-Type": "text/plain" },
-      body: text,
-    });
+    await httpPutText("/api/note", text);
     await backupNoteLocally(text);
     return;
   }
@@ -174,24 +186,86 @@ export function onChange(handler: (kind: string) => void): Promise<UnlistenFn> {
   return listen<string>(CHANGE_EVENT, (e) => handler(e.payload));
 }
 
-// Fetch the server's current note and all tasks and persist them to the local
-// files. Called on app open and after connecting to a server so the local backup
-// is current even for changes made by other clients. No-op in local mode.
-export async function syncFromServer(): Promise<void> {
-  if (!getServerUrl()) return;
-  try {
-    const note = await httpFetch("/api/note").then((r) => r.text());
-    await invoke("put_note", { text: note });
-  } catch (e) {
-    console.warn("startup note sync failed:", e);
+// --- Server/local conflict reconciliation ---
+
+export type ConflictResource = "note" | "tasks";
+export type ConflictChoice = "server" | "local";
+
+export interface Conflict {
+  resource: ConflictResource;
+  local: string;
+  server: string;
+}
+
+// The four operations each resource needs on both sides of the reconcile. One
+// table is the single source of truth for "where do the local and server copies
+// of the note / todo.txt live", shared by reconcileWithServer and resolveConflict.
+interface ResourceIO {
+  readLocal(): Promise<string>;
+  readServer(): Promise<string>;
+  writeLocal(text: string): Promise<void>;
+  writeServer(text: string): Promise<void>;
+}
+
+const CONFLICT_IO: Record<ConflictResource, ResourceIO> = {
+  note: {
+    readLocal: () => invoke("get_note"),
+    readServer: () => httpText("/api/note"),
+    writeLocal: (text) => invoke("put_note", { text }),
+    writeServer: (text) => httpPutText("/api/note", text),
+  },
+  tasks: {
+    // /api/raw is the server store's own todo.txt render, byte-for-byte the format
+    // local get_raw returns — so equal content compares equal, no join/newline logic.
+    readLocal: () => invoke("get_raw"),
+    readServer: () => httpText("/api/raw"),
+    writeLocal: (text) => invoke("put_raw", { text }),
+    writeServer: (text) => httpPutText("/api/raw", text),
+  },
+};
+
+// "server" writes the server copy down to the local file; "local" pushes the
+// local copy up to the server. Either way both sides end up identical.
+function applyChoice(c: Conflict, choice: ConflictChoice): Promise<void> {
+  const io = CONFLICT_IO[c.resource];
+  return choice === "server" ? io.writeLocal(c.server) : io.writeServer(c.local);
+}
+
+// Reconcile the local todo.txt / Note.md with a server's copies. Called on app
+// open and after connecting. For each resource: identical copies are left alone;
+// a difference with an empty local copy adopts the server silently; a real
+// difference is resolved per the configured strategy ("server"/"local" auto-apply,
+// "ask" is returned for the UI to prompt). Best-effort: a failure on one resource
+// is logged and does not block the other. No-op (returns []) in local mode.
+export async function reconcileWithServer(): Promise<Conflict[]> {
+  if (!getServerUrl()) return [];
+  const strategy = getConflictStrategy();
+  const conflicts: Conflict[] = [];
+  for (const resource of ["note", "tasks"] as ConflictResource[]) {
+    try {
+      const io = CONFLICT_IO[resource];
+      const [local, server] = await Promise.all([io.readLocal(), io.readServer()]);
+      const verdict = classifyConflict(local, server);
+      if (verdict === "in-sync") continue;
+      const conflict: Conflict = { resource, local, server };
+      if (verdict === "adopt-server") {
+        await applyChoice(conflict, "server");
+      } else if (strategy === "ask") {
+        conflicts.push(conflict);
+      } else {
+        await applyChoice(conflict, strategy); // narrowed to "server" | "local"
+      }
+    } catch (e) {
+      console.warn(`reconcile ${resource} failed:`, e);
+    }
   }
-  try {
-    const tasks = await httpJson<Task[]>("/api/tasks");
-    const raw = tasks.map((t) => t.raw).join("\n") + (tasks.length ? "\n" : "");
-    await invoke("put_raw", { text: raw });
-  } catch (e) {
-    console.warn("startup task sync failed:", e);
-  }
+  return conflicts;
+}
+
+// Apply the user's dialog choice for one conflict. "server" overwrites the local
+// file with the server copy; "local" pushes the local copy to the server.
+export function resolveConflict(c: Conflict, choice: ConflictChoice): Promise<void> {
+  return applyChoice(c, choice);
 }
 
 export function getDataDir(): Promise<string> {
