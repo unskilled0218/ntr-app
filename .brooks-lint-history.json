@@ -23,5 +23,6 @@
   { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/12-remove-project-context/plan.md (round 2)" },
   { "date": "2026-06-24", "mode": "PR Review", "score": 94, "findings": { "critical": 0, "warning": 1, "suggestion": 1 }, "scope": "12-remove-project-context code (round 1)" },
   { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "12-remove-project-context review-plan.md" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 2 }, "scope": "tasks/13-move-remove-into-dropdown/plan.md (round 1)" }
+  { "date": "2026-06-24", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 2 }, "scope": "tasks/13-move-remove-into-dropdown/plan.md (round 1)" },
+  { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "13-move-remove-into-dropdown code (round 1)" }
 ]
