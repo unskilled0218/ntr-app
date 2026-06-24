@@ -234,8 +234,8 @@ describe("server mode — local backup", () => {
     vi.mocked(invoke).mockReset();
   });
 
-  // Second spec in each makeFetchSeq call is the /api/tasks backup response — must be
-  // an array body, so wrapped as [[tasks]] to distinguish from the tuple shape [body, status].
+  // Second spec in each makeFetchSeq call is the task backup's GET /api/raw response —
+  // the server store's todo.txt render returned verbatim as text.
 
   it("putNote calls invoke put_note with the same text after the server write", async () => {
     makeFetchSeq([null, 204]);
@@ -243,46 +243,46 @@ describe("server mode — local backup", () => {
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_note", { text: "hello backup" });
   });
 
-  it("createTask calls invoke put_raw with joined raw lines after the server write", async () => {
-    makeFetchSeq([TASK], [[TASK]]);
+  it("createTask calls invoke put_raw with the server's raw todo.txt after the write", async () => {
+    makeFetchSeq([TASK], [TASK.raw + "\n"]);
     await createTask("buy milk");
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
   });
 
-  it("createTask backup fetch uses exact /api/tasks URL with no query string", async () => {
-    const mock = makeFetchSeq([TASK], [[TASK]]);
+  it("createTask backup fetch uses exact /api/raw URL with no query string", async () => {
+    const mock = makeFetchSeq([TASK], [TASK.raw + "\n"]);
     await createTask("x");
     const backupUrl = (mock.mock.calls[1] as [string])[0];
-    expect(backupUrl).toBe(`${SERVER}/api/tasks`);
+    expect(backupUrl).toBe(`${SERVER}/api/raw`);
     expect(backupUrl).not.toContain("?");
   });
 
   it("updateTask calls invoke put_raw after the server write", async () => {
-    makeFetchSeq([TASK], [[TASK]]);
+    makeFetchSeq([TASK], [TASK.raw + "\n"]);
     await updateTask(1, "updated");
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
   });
 
   it("completeTask calls invoke put_raw after the server write", async () => {
-    makeFetchSeq([TASK], [[TASK]]);
+    makeFetchSeq([TASK], [TASK.raw + "\n"]);
     await completeTask(1);
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
   });
 
   it("uncompleteTask calls invoke put_raw after the server write", async () => {
-    makeFetchSeq([TASK], [[TASK]]);
+    makeFetchSeq([TASK], [TASK.raw + "\n"]);
     await uncompleteTask(1);
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
   });
 
   it("deleteTask calls invoke put_raw after the server write", async () => {
-    makeFetchSeq([null, 204], [[TASK]]);
+    makeFetchSeq([null, 204], [TASK.raw + "\n"]);
     await deleteTask(1);
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
   });
 
   it("local task backup failure does not reject the primary promise", async () => {
-    makeFetchSeq([TASK], [[TASK]]);
+    makeFetchSeq([TASK], [TASK.raw + "\n"]);
     vi.mocked(invoke).mockRejectedValue(new Error("disk full"));
     const result = await createTask("x");
     expect(result).toEqual(TASK);
@@ -294,8 +294,8 @@ describe("server mode — local backup", () => {
     await expect(putNote("x")).resolves.toBeUndefined();
   });
 
-  it("backup produces empty string for an empty task list", async () => {
-    makeFetchSeq([TASK], [[]]);
+  it("backup writes an empty string when the server task file is empty", async () => {
+    makeFetchSeq([TASK], [""]);
     await createTask("x");
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: "" });
   });

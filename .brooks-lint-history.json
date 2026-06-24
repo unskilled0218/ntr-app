@@ -11,5 +11,7 @@
   { "date": "2026-06-23", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/06-move-files-on-path-change/plan.md (round 2)" },
   { "date": "2026-06-23", "mode": "PR Review", "score": 96, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "06-move-files-on-path-change code (round 1)" },
   { "date": "2026-06-24", "mode": "PR Review", "score": 88, "findings": { "critical": 0, "warning": 2, "suggestion": 2 }, "scope": "tasks/09-server-local-conflict/plan.md (round 1)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/09-server-local-conflict/plan.md (round 2)" }
+  { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/09-server-local-conflict/plan.md (round 2)" },
+  { "date": "2026-06-24", "mode": "PR Review", "score": 94, "findings": { "critical": 0, "warning": 1, "suggestion": 1 }, "scope": "09-server-local-conflict code (round 1)" },
+  { "date": "2026-06-24", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "09-server-local-conflict review-plan.md" }
 ]

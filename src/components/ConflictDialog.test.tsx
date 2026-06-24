@@ -18,14 +18,14 @@ const NOTE_CONFLICT: Conflict = { resource: "note", local: "my local note", serv
 describe("ConflictDialog", () => {
   it("shows the resource title and both versions", () => {
     render(<ConflictDialog conflict={NOTE_CONFLICT} onChoose={vi.fn()} onDismiss={vi.fn()} />);
-    expect(screen.getByText("Note differ from the server")).toBeTruthy();
+    expect(screen.getByText("Note out of sync with the server")).toBeTruthy();
     expect(screen.getByText("my local note")).toBeTruthy();
     expect(screen.getByText("the server note")).toBeTruthy();
   });
 
   it("labels a tasks conflict as Tasks", () => {
     render(<ConflictDialog conflict={{ resource: "tasks", local: "a", server: "b" }} onChoose={vi.fn()} onDismiss={vi.fn()} />);
-    expect(screen.getByText("Tasks differ from the server")).toBeTruthy();
+    expect(screen.getByText("Tasks out of sync with the server")).toBeTruthy();
   });
 
   it("calls onChoose('server') when Use server is clicked", () => {

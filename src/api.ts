@@ -75,8 +75,9 @@ async function backupNoteLocally(text: string): Promise<void> {
 
 async function backupTasksLocally(): Promise<void> {
   try {
-    const tasks = await httpJson<Task[]>("/api/tasks");
-    const raw = tasks.map((t) => t.raw).join("\n") + (tasks.length ? "\n" : "");
+    // /api/raw is the server store's own todo.txt render — the single canonical
+    // "server tasks as text" source, also used by the conflict reconcile path.
+    const raw = await httpText("/api/raw");
     await invoke("put_raw", { text: raw });
   } catch (e) {
     console.warn("local task backup failed:", e);
