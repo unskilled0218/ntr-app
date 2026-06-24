@@ -7,10 +7,18 @@
 use crate::note::NoteStore;
 use crate::store::Store;
 use std::sync::Mutex;
+use tauri::async_runtime::JoinHandle;
 
 pub struct AppState {
   pub store: Mutex<Store>,
   pub note: Mutex<NoteStore>,
+  /// Cached server-mode HTTP client + the cert policy it was built with. A reqwest client owns
+  /// a connection pool and is meant to be reused, not rebuilt per call; the `bool` is the cache
+  /// key — rebuilt only when `allow_invalid_cert` flips. `None` until the first server request.
+  pub http_client: Mutex<Option<(bool, reqwest::Client)>>,
+  /// The live SSE bridge task (server mode). `server_connect` spawns it; `server_disconnect`
+  /// (and a re-connect) aborts it. `None` when in local mode or not yet connected.
+  pub sse_task: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl AppState {
@@ -18,6 +26,8 @@ impl AppState {
     AppState {
       store: Mutex::new(store),
       note: Mutex::new(note),
+      http_client: Mutex::new(None),
+      sse_task: Mutex::new(None),
     }
   }
 }

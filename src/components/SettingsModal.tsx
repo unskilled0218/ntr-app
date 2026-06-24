@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { getDataDir, setDataDir } from "../api";
 import {
+  getAllowInvalidCert,
   getConflictStrategy,
   getServerUrl,
+  setAllowInvalidCert,
   setConflictStrategy,
   setServerUrl,
   type ConflictStrategy,
@@ -20,6 +22,7 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [dirInput, setDirInput] = useState("");
   const [dirError, setDirError] = useState("");
   const [strategy, setStrategy] = useState<ConflictStrategy>("ask");
+  const [allowInvalidCert, setAllowInvalidCertState] = useState(false);
   const current = getServerUrl();
 
   useEffect(() => {
@@ -30,6 +33,7 @@ export default function SettingsModal({ open, onClose }: Props) {
       setError("");
       setDirError("");
       setStrategy(getConflictStrategy());
+      setAllowInvalidCertState(getAllowInvalidCert());
       getDataDir().then(setDirInput).catch(() => {});
       el.showModal();
     } else {
@@ -87,6 +91,20 @@ export default function SettingsModal({ open, onClose }: Props) {
           />
         </label>
         {error && <p className="modal-error">{error}</p>}
+        <label className="settings-checkbox">
+          <input
+            type="checkbox"
+            checked={allowInvalidCert}
+            onChange={(e) => {
+              setAllowInvalidCertState(e.target.checked);
+              setAllowInvalidCert(e.target.checked);
+            }}
+          />
+          Allow self-signed certificates
+        </label>
+        <p className="settings-hint">
+          Only for a private HTTPS server such as https://ntr.lan. Leave off otherwise.
+        </p>
         <div className="modal-actions">
           <button type="button" onClick={onUseLocal}>
             Use local files
