@@ -4,6 +4,7 @@
 mod atomicfile;
 mod commands;
 mod dto;
+mod http;
 mod note;
 mod paths;
 mod state;
@@ -45,6 +46,9 @@ pub fn run() {
       commands::put_note,
       commands::get_data_dir,
       commands::set_data_dir,
+      http::server_fetch,
+      http::server_connect,
+      http::server_disconnect,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

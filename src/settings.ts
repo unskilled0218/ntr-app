@@ -1,5 +1,6 @@
 const KEY = "ntr.serverUrl";
 const STRATEGY_KEY = "ntr.conflictStrategy";
+const ALLOW_INVALID_CERT_KEY = "ntr.allowInvalidCert";
 
 export function getServerUrl(): string {
   return localStorage.getItem(KEY) ?? "";
@@ -7,6 +8,20 @@ export function getServerUrl(): string {
 
 export function setServerUrl(url: string): void {
   url ? localStorage.setItem(KEY, url) : localStorage.removeItem(KEY);
+}
+
+// Whether server-mode HTTP accepts a self-signed / untrusted TLS certificate. Off by default
+// (absent key), opt-in for a local HTTPS server behind a reverse proxy (e.g. https://ntr.lan).
+// Disabling TLS validation is a real downgrade, so it is represented like setServerUrl: the
+// "1" value only exists when the user has explicitly turned it on.
+export function getAllowInvalidCert(): boolean {
+  return localStorage.getItem(ALLOW_INVALID_CERT_KEY) === "1";
+}
+
+export function setAllowInvalidCert(allow: boolean): void {
+  allow
+    ? localStorage.setItem(ALLOW_INVALID_CERT_KEY, "1")
+    : localStorage.removeItem(ALLOW_INVALID_CERT_KEY);
 }
 
 // How a server/local divergence is resolved on reconcile. "ask" prompts the user

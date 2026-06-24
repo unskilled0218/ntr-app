@@ -559,3 +559,13 @@ dialog#settings-modal::backdrop {
   font-size: 0.8rem;
   color: var(--muted);
 }
+
+#settings-form label.settings-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+#settings-form label.settings-checkbox input {
+  width: auto;
+}
