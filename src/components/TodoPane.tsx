@@ -14,9 +14,11 @@ import {
   type Task,
 } from "../api";
 import EditTaskModal from "./EditTaskModal";
-import { sortTasks, STATUSES, type Status } from "../config";
+import { sortTasks, STATUSES, type Kind, type Status } from "../config";
+import { planLabelRemoval } from "../labels";
 import AddForm from "./AddForm";
 import FilterBar from "./FilterBar";
+import RemoveLabelDialog from "./RemoveLabelDialog";
 import TaskItem from "./TaskItem";
 
 export interface TodoPaneHandle {
@@ -34,6 +36,7 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
   const [serverLabels, setServerLabels] = useState<Labels>({ project: [], context: [] });
   const [error, setError] = useState("");
   const [editTask, setEditTask] = useState<Task | null>(null);
+  const [removing, setRemoving] = useState<{ kind: Kind; name: string } | null>(null);
 
   // Fetch the list with the current filters. Status + the two label filters become query args
   // (sort is applied client-side at render). Mirrors app.js refresh() + buildQuery().
@@ -132,6 +135,26 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
     setEditTask(task);
   }
 
+  // Remove a project/context from the whole store: strip its token from every task that carries
+  // it. Fetch the full list (not the filtered view) so removal spans every task, including
+  // completed ones; update each affected task sequentially (the file-backed, one-writer model);
+  // then reload. loadLabels then drops the now-unused name and clears a filter that selected it.
+  async function confirmRemove() {
+    if (!removing) return;
+    const { kind, name } = removing;
+    setRemoving(null);
+    try {
+      const all = await listTasks({});
+      for (const u of planLabelRemoval(all, kind, name)) await updateTask(u.id, u.text);
+      await refresh();
+      await loadLabels();
+    } catch (err) {
+      setError(errMsg(err));
+      await refresh(); // reflect whatever landed before the failure (matches onToggle)
+      await loadLabels();
+    }
+  }
+
   async function onEditSave(id: number, text: string) {
     await updateTask(id, text); // throws on error → caught by EditTaskModal
     setEditTask(null);
@@ -157,6 +180,7 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
         onProject={setProject}
         onContext={setContext}
         onSort={setSort}
+        onRemove={(kind, name) => setRemoving({ kind, name })}
       />
 
       <div className="task-list">
@@ -179,6 +203,8 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
         onSave={onEditSave}
         onClose={() => setEditTask(null)}
       />
+
+      <RemoveLabelDialog target={removing} onConfirm={confirmRemove} onCancel={() => setRemoving(null)} />
     </section>
   );
 });

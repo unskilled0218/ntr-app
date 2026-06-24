@@ -2,7 +2,7 @@
 // backend query (TodoPane refetches); Sort is client-side (re-render only). Ported from the
 // #filters block of index.html + app.js.
 
-import { KINDS, SORTS, STATUSES, type Status } from "../config";
+import { KINDS, SORTS, STATUSES, type Kind, type Status } from "../config";
 
 interface Props {
   status: Status;
@@ -14,6 +14,7 @@ interface Props {
   onProject: (p: string) => void;
   onContext: (c: string) => void;
   onSort: (s: string) => void;
+  onRemove: (kind: Kind, name: string) => void;
 }
 
 export default function FilterBar({
@@ -26,6 +27,7 @@ export default function FilterBar({
   onProject,
   onContext,
   onSort,
+  onRemove,
 }: Props) {
   return (
     <div id="filters">
@@ -53,6 +55,14 @@ export default function FilterBar({
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          aria-label={`Remove ${KINDS.project.singular}`}
+          disabled={!project}
+          onClick={() => onRemove("project", project)}
+        >
+          Remove
+        </button>
       </label>
       <label>
         Context
@@ -64,6 +74,14 @@ export default function FilterBar({
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          aria-label={`Remove ${KINDS.context.singular}`}
+          disabled={!context}
+          onClick={() => onRemove("context", context)}
+        >
+          Remove
+        </button>
       </label>
       <label>
         Sort

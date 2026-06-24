@@ -1,7 +1,8 @@
-// Pure helpers for the add form and the label modal, ported from web/app.js. No DOM, no side
-// effects, so they are trivially unit-testable (the behaviours most likely to regress subtly).
+// Pure helpers for the add form, the label modal, and label removal, ported from web/app.js. No
+// DOM, no side effects, so they are trivially unit-testable (the behaviours most likely to
+// regress subtly). Depends only on config — never on the transport shim (api.ts).
 
-import { KIND_LIST, KINDS } from "./config";
+import { KIND_LIST, KINDS, type Kind } from "./config";
 
 // Fields the add form contributes to a todo.txt line.
 export interface ComposeFields {
@@ -52,4 +53,38 @@ export function parseLabelInput(raw: string): { name: string } | { error: string
   if (/\s/.test(name)) return { error: "No spaces allowed in a project or context." };
   if (/[+@:]/.test(name)) return { error: "A project or context cannot contain + @ or :" };
   return { name };
+}
+
+// Remove the single whitespace-delimited token `prefix+name` from a raw todo.txt line, preserving
+// every other token (the priority, an x/completion prefix, dates, a due: tag, and other labels)
+// and collapsing the gap. Whole-token equality is deliberate — NOT bareDescription's substring
+// replace — so removing +work never touches +workshop, and the word homework (not a +token) is
+// left alone. Also normalizes internal whitespace on a rewritten line (canonical single spacing);
+// untouched lines are never visited.
+export function removeLabel(raw: string, kind: Kind, name: string): string {
+  const token = KINDS[kind].prefix + name;
+  return raw
+    .split(/\s+/)
+    .filter((t) => t !== token)
+    .join(" ")
+    .trim();
+}
+
+// The fields planLabelRemoval reads — a structural subset of api.Task, declared here so this pure
+// module needs no dependency on the transport shim (an Interface Segregation fit: it asks for
+// exactly the four fields it uses).
+type Tagged = { id: number; projects: string[]; contexts: string[]; raw: string };
+
+// The pure removal decision: for every task that actually carries `name` (by its parsed
+// projects/contexts, not a raw substring), the id and the rewritten line with the token stripped.
+// api.Task is structurally assignable to Tagged, so callers pass their Task[] unchanged.
+export function planLabelRemoval(
+  tasks: Tagged[],
+  kind: Kind,
+  name: string,
+): { id: number; text: string }[] {
+  const field = kind === "project" ? "projects" : "contexts";
+  return tasks
+    .filter((t) => t[field].includes(name))
+    .map((t) => ({ id: t.id, text: removeLabel(t.raw, kind, name) }));
 }
