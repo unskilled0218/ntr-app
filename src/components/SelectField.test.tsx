@@ -27,6 +27,8 @@ describe("SelectField", () => {
     expect(document.querySelector("dialog.select-modal[open]")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /project filter/i }));
+    // The dialog carries the field's accessible name (matches the visible title).
+    expect(screen.getByRole("dialog", { name: /project filter/i })).toBeTruthy();
     const dialog = openDialog();
     expect(dialog.getByRole("button", { name: "All projects" })).toBeTruthy();
     expect(dialog.getByRole("button", { name: "work" })).toBeTruthy();

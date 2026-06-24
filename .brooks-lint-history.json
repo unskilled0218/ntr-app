@@ -25,5 +25,7 @@
   { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "12-remove-project-context review-plan.md" },
   { "date": "2026-06-24", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 2 }, "scope": "tasks/13-move-remove-into-dropdown/plan.md (round 1)" },
   { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "13-move-remove-into-dropdown code (round 1)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 2 }, "scope": "tasks/14-dropdowns-to-modals/plan.md (round 1)" }
+  { "date": "2026-06-24", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 2 }, "scope": "tasks/14-dropdowns-to-modals/plan.md (round 1)" },
+  { "date": "2026-06-24", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 2 }, "scope": "14-dropdowns-to-modals code (round 1)" },
+  { "date": "2026-06-24", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/14-dropdowns-to-modals/review-plan.md" }
 ]
