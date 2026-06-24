@@ -9,7 +9,8 @@ import {
   listTasks,
   onChange,
   putNote,
-  syncFromServer,
+  reconcileWithServer,
+  resolveConflict,
   uncompleteTask,
   updateTask,
 } from "./api";
@@ -300,41 +301,104 @@ describe("server mode — local backup", () => {
   });
 });
 
-// --- syncFromServer ---
+// --- reconcileWithServer + resolveConflict ---
+// reconcile reads the local copy (get_note / get_raw) and the server copy
+// (GET /api/note then GET /api/raw, in that order), classifies the divergence,
+// and either auto-applies it or returns it for the UI to prompt.
 
-describe("syncFromServer", () => {
-  beforeEach(() => {
-    vi.mocked(invoke).mockResolvedValue(undefined);
-  });
+describe("reconcileWithServer", () => {
+  // Dispatch local reads by command name; writes (put_note/put_raw) resolve to undefined.
+  function mockLocal({ note = "", raw = "" }: { note?: string; raw?: string }) {
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "get_note") return Promise.resolve(note);
+      if (cmd === "get_raw") return Promise.resolve(raw);
+      return Promise.resolve(undefined);
+    });
+  }
 
   afterEach(() => {
     vi.mocked(invoke).mockReset();
   });
 
-  it("is a no-op in local mode (no fetch calls)", async () => {
+  it("is a no-op in local mode (returns [], no fetch calls)", async () => {
     localStorage.removeItem("ntr.serverUrl");
     const mock = vi.fn();
     vi.stubGlobal("fetch", mock);
-    await syncFromServer();
+    expect(await reconcileWithServer()).toEqual([]);
     expect(mock).not.toHaveBeenCalled();
   });
 
-  it("fetches note from server and saves locally", async () => {
-    makeFetch("hello note");
-    await syncFromServer();
-    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_note", { text: "hello note" });
-  });
-
-  it("fetches all tasks from server and saves locally via put_raw", async () => {
-    makeFetchSeq(["note text"], [[TASK]]);
-    await syncFromServer();
-    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
-  });
-
-  it("task sync proceeds even when note fetch returns 404", async () => {
-    makeFetchSeq([null, 404], [[TASK]]);
-    await syncFromServer();
-    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
+  it("returns no conflicts and writes nothing when both copies match", async () => {
+    mockLocal({ note: "same note", raw: "same raw" });
+    makeFetchSeq(["same note"], ["same raw"]);
+    expect(await reconcileWithServer()).toEqual([]);
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("put_note", expect.anything());
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("put_raw", expect.anything());
+  });
+
+  it("adopts the server copy silently when the local copy is empty", async () => {
+    mockLocal({ note: "", raw: "" });
+    makeFetchSeq(["server hello"], [""]); // note differs (local empty), tasks in-sync
+    expect(await reconcileWithServer()).toEqual([]);
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_note", { text: "server hello" });
+  });
+
+  it("returns a conflict (and writes nothing) under the default 'ask' strategy", async () => {
+    mockLocal({ note: "local note", raw: "" });
+    makeFetchSeq(["server note"], [""]);
+    expect(await reconcileWithServer()).toEqual([
+      { resource: "note", local: "local note", server: "server note" },
+    ]);
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("put_note", expect.anything());
+  });
+
+  it("auto-applies the server copy when the strategy is 'server'", async () => {
+    localStorage.setItem("ntr.conflictStrategy", "server");
+    mockLocal({ note: "local note", raw: "" });
+    makeFetchSeq(["server note"], [""]);
+    expect(await reconcileWithServer()).toEqual([]);
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_note", { text: "server note" });
+  });
+
+  it("auto-pushes the local copy to the server when the strategy is 'local'", async () => {
+    localStorage.setItem("ntr.conflictStrategy", "local");
+    mockLocal({ note: "local note", raw: "" });
+    // GET /api/note, then PUT /api/note (push), then GET /api/raw (in-sync).
+    const mock = makeFetchSeq(["server note"], [null, 204], [""]);
+    expect(await reconcileWithServer()).toEqual([]);
+    expect(mock).toHaveBeenCalledWith(`${SERVER}/api/note`, expect.objectContaining({
+      method: "PUT",
+      body: "local note",
+    }));
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("put_note", expect.anything());
+  });
+
+  it("isolates a per-resource failure: a failed note read still yields the task conflict", async () => {
+    mockLocal({ note: "local note", raw: "local raw" });
+    makeFetchSeq([null, 404], ["server raw"]); // note GET 404, tasks GET ok and differs
+    expect(await reconcileWithServer()).toEqual([
+      { resource: "tasks", local: "local raw", server: "server raw" },
+    ]);
+  });
+});
+
+describe("resolveConflict", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("'server' writes the server copy to the local file", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    await resolveConflict({ resource: "tasks", local: "L", server: "S" }, "server");
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_raw", { text: "S" });
+  });
+
+  it("'local' pushes the local copy to the server", async () => {
+    const mock = makeFetch(null, 204);
+    await resolveConflict({ resource: "tasks", local: "L", server: "S" }, "local");
+    expect(mock).toHaveBeenCalledWith(`${SERVER}/api/raw`, expect.objectContaining({
+      method: "PUT",
+      body: "L",
+    }));
   });
 });

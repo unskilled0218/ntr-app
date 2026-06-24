@@ -4,29 +4,67 @@
 
 import { useEffect, useRef, useState } from "react";
 import "./style.css";
-import { CHANGE_NOTE, CHANGE_TASKS, onChange, syncFromServer } from "./api";
+import {
+  CHANGE_NOTE,
+  CHANGE_TASKS,
+  onChange,
+  reconcileWithServer,
+  resolveConflict,
+  type Conflict,
+  type ConflictChoice,
+} from "./api";
 import { getServerUrl } from "./settings";
 import { SWIPE_MIN, VIEWS, type View } from "./config";
 import NotePane, { type NotePaneHandle } from "./components/NotePane";
 import TodoPane, { type TodoPaneHandle } from "./components/TodoPane";
 import SettingsModal from "./components/SettingsModal";
+import ConflictDialog from "./components/ConflictDialog";
 
 export default function App() {
   const [view, setView] = useState<View>("note");
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Bumped on settings close to force the onChange useEffect to re-subscribe with the new transport.
   const [connectionKey, setConnectionKey] = useState(0);
+  // Outstanding server/local divergences awaiting a user choice, handled one at a time.
+  const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const noteRef = useRef<NotePaneHandle>(null);
   const todoRef = useRef<TodoPaneHandle>(null);
   const navRef = useRef<HTMLElement>(null);
   const swipeStartX = useRef<number | null>(null);
   const swipeStartY = useRef<number | null>(null);
 
-  // On mount and after every server-mode change: pull the latest data from the server and
-  // persist it locally so the local backup is current before the user makes any edits.
+  // On mount and after every server-mode change: reconcile local files with the server.
+  // Auto-resolved divergences are written through; the rest (strategy "ask") queue for the
+  // ConflictDialog below. Guarded against a late resolve after the transport changed again.
   useEffect(() => {
-    syncFromServer();
+    let cancelled = false;
+    reconcileWithServer().then((found) => {
+      if (!cancelled) setConflicts(found);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [connectionKey]);
+
+  function refreshPanes() {
+    todoRef.current?.onTasksChanged();
+    noteRef.current?.onNoteChange();
+  }
+
+  // Resolve the head conflict (choice) or dismiss it (null), then advance the queue.
+  // Refresh is tied to a write actually landing, not to queue position.
+  async function endConflict(choice: ConflictChoice | null) {
+    const [head, ...rest] = conflicts;
+    if (choice && head) {
+      try {
+        await resolveConflict(head, choice);
+        refreshPanes();
+      } catch (e) {
+        console.warn("conflict resolution failed:", e);
+      }
+    }
+    setConflicts(rest);
+  }
 
   // The live stream: a `change` event re-fetches tasks or reconciles the note. Re-wired whenever
   // connectionKey changes (i.e., after settings close) so the new transport is picked up.
@@ -116,6 +154,11 @@ export default function App() {
       </nav>
 
       <SettingsModal open={settingsOpen} onClose={onSettingsClose} />
+      <ConflictDialog
+        conflict={conflicts[0] ?? null}
+        onChoose={endConflict}
+        onDismiss={() => endConflict(null)}
+      />
     </main>
   );
 }

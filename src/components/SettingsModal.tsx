@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { getDataDir, setDataDir } from "../api";
-import { getServerUrl, setServerUrl } from "../settings";
+import {
+  getConflictStrategy,
+  getServerUrl,
+  setConflictStrategy,
+  setServerUrl,
+  type ConflictStrategy,
+} from "../settings";
 
 interface Props {
   open: boolean;
@@ -13,6 +19,7 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [error, setError] = useState("");
   const [dirInput, setDirInput] = useState("");
   const [dirError, setDirError] = useState("");
+  const [strategy, setStrategy] = useState<ConflictStrategy>("ask");
   const current = getServerUrl();
 
   useEffect(() => {
@@ -22,6 +29,7 @@ export default function SettingsModal({ open, onClose }: Props) {
       setInput(getServerUrl());
       setError("");
       setDirError("");
+      setStrategy(getConflictStrategy());
       getDataDir().then(setDirInput).catch(() => {});
       el.showModal();
     } else {
@@ -114,6 +122,27 @@ export default function SettingsModal({ open, onClose }: Props) {
             Save path
           </button>
         </div>
+
+
+        <h2>Conflict resolution</h2>
+        <p className="settings-hint">
+          When the local files differ from the server on connect.
+        </p>
+        <label>
+          On conflict
+          <select
+            value={strategy}
+            onChange={(e) => {
+              const s = e.target.value as ConflictStrategy;
+              setStrategy(s);
+              setConflictStrategy(s);
+            }}
+          >
+            <option value="ask">Ask every time</option>
+            <option value="server">Always use server</option>
+            <option value="local">Always use local</option>
+          </select>
+        </label>
       </form>
     </dialog>
   );
