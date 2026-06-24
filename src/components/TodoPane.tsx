@@ -149,9 +149,12 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
       await refresh();
       await loadLabels();
     } catch (err) {
-      setError(errMsg(err));
-      await refresh(); // reflect whatever landed before the failure (matches onToggle)
+      // Reload first to reflect whatever landed before the failure, then set the error LAST:
+      // refresh() clears the error at its start, so setting it after the reload keeps the
+      // message visible (unlike onToggle, where the trailing refresh would wipe it).
+      await refresh();
       await loadLabels();
+      setError(errMsg(err));
     }
   }
 
