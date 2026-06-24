@@ -20,6 +20,12 @@ export const KIND_LIST: Kind[] = ["project", "context"];
 // validator-forbidden token (`+`) as defence-in-depth.
 export const ADD_VALUE = "+add";
 
+// The "remove" entry value appended to a filter select when a concrete label is selected, so
+// removal lives inside the dropdown instead of a separate button. Recognised by exact value;
+// a real label can never collide because label names forbid whitespace (parseLabelInput) and
+// this value contains one.
+export const REMOVE_VALUE = "remove label";
+
 // Visible text of the empty / no-selection option shared by the add-form dropdowns. value=""
 // is the real no-selection state; this is only its label, kept in one place.
 export const EMPTY_LABEL = "None";

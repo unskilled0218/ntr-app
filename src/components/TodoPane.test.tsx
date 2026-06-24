@@ -17,6 +17,7 @@ vi.mock("../api", () => ({
 }));
 
 import { listTasks, updateTask } from "../api";
+import { REMOVE_VALUE } from "../config";
 
 // The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
 
@@ -56,9 +57,9 @@ describe("TodoPane removal glue", () => {
     const filter = (await screen.findByRole("combobox", { name: /project filter/i })) as HTMLSelectElement;
     await waitFor(() => expect(within(filter).queryByRole("option", { name: "work" })).toBeTruthy());
 
-    // Select "work" so the Remove button enables, then open the confirm dialog.
+    // Select "work" so the in-dropdown Remove option appears, then choose it to open the dialog.
     fireEvent.change(filter, { target: { value: "work" } });
-    fireEvent.click(screen.getByRole("button", { name: /remove project/i }));
+    fireEvent.change(filter, { target: { value: REMOVE_VALUE } });
 
     // Confirm in the dialog.
     const dialog = within(document.getElementById("remove-label-dialog") as HTMLElement);
@@ -83,7 +84,7 @@ describe("TodoPane removal glue", () => {
     await waitFor(() => expect(within(filter).queryByRole("option", { name: "work" })).toBeTruthy());
 
     fireEvent.change(filter, { target: { value: "work" } });
-    fireEvent.click(screen.getByRole("button", { name: /remove project/i }));
+    fireEvent.change(filter, { target: { value: REMOVE_VALUE } });
 
     const dialog = within(document.getElementById("remove-label-dialog") as HTMLElement);
     const callsBefore = vi.mocked(listTasks).mock.calls.length;
