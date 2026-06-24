@@ -17,7 +17,15 @@ vi.mock("../api", () => ({
 }));
 
 import { listTasks, updateTask } from "../api";
-import { REMOVE_VALUE } from "../config";
+
+// Open the Project filter picker and click a label row's Remove button, returning once the
+// confirm dialog can be acted on. The picker lists labels once the mount loadLabels resolves.
+async function openRemove(name: string) {
+  fireEvent.click(await screen.findByRole("button", { name: /project filter/i }));
+  const picker = () => within(document.querySelector("dialog.select-modal[open]") as HTMLElement);
+  const removeBtn = await waitFor(() => picker().getByRole("button", { name: new RegExp(`remove ${name}`, "i") }));
+  fireEvent.click(removeBtn);
+}
 
 // The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
 
@@ -53,13 +61,8 @@ describe("TodoPane removal glue", () => {
   it("removing a project updates every task that carries it and reloads", async () => {
     render(<TodoPane />);
 
-    // Wait for the mount load to populate the Project filter with the derived "work" option.
-    const filter = (await screen.findByRole("combobox", { name: /project filter/i })) as HTMLSelectElement;
-    await waitFor(() => expect(within(filter).queryByRole("option", { name: "work" })).toBeTruthy());
-
-    // Select "work" so the in-dropdown Remove option appears, then choose it to open the dialog.
-    fireEvent.change(filter, { target: { value: "work" } });
-    fireEvent.change(filter, { target: { value: REMOVE_VALUE } });
+    // Open the Project filter picker and click the "work" row's Remove button.
+    await openRemove("work");
 
     // Confirm in the dialog.
     const dialog = within(document.getElementById("remove-label-dialog") as HTMLElement);
@@ -80,11 +83,7 @@ describe("TodoPane removal glue", () => {
     vi.mocked(updateTask).mockRejectedValueOnce(new Error("network error"));
     render(<TodoPane />);
 
-    const filter = (await screen.findByRole("combobox", { name: /project filter/i })) as HTMLSelectElement;
-    await waitFor(() => expect(within(filter).queryByRole("option", { name: "work" })).toBeTruthy());
-
-    fireEvent.change(filter, { target: { value: "work" } });
-    fireEvent.change(filter, { target: { value: REMOVE_VALUE } });
+    await openRemove("work");
 
     const dialog = within(document.getElementById("remove-label-dialog") as HTMLElement);
     const callsBefore = vi.mocked(listTasks).mock.calls.length;

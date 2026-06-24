@@ -9,6 +9,14 @@ import {
   setServerUrl,
   type ConflictStrategy,
 } from "../settings";
+import SelectField, { type FieldOption } from "./SelectField";
+
+// The conflict-resolution strategies, in display order. value is the stored ConflictStrategy.
+const STRATEGY_OPTIONS: FieldOption[] = [
+  { value: "ask", label: "Ask every time" },
+  { value: "server", label: "Always use server" },
+  { value: "local", label: "Always use local" },
+];
 
 interface Props {
   open: boolean;
@@ -148,18 +156,16 @@ export default function SettingsModal({ open, onClose }: Props) {
         </p>
         <label>
           On conflict
-          <select
+          <SelectField
+            ariaLabel="On conflict"
             value={strategy}
-            onChange={(e) => {
-              const s = e.target.value as ConflictStrategy;
+            options={STRATEGY_OPTIONS}
+            onChange={(v) => {
+              const s = v as ConflictStrategy;
               setStrategy(s);
               setConflictStrategy(s);
             }}
-          >
-            <option value="ask">Ask every time</option>
-            <option value="server">Always use server</option>
-            <option value="local">Always use local</option>
-          </select>
+          />
         </label>
       </form>
     </dialog>

@@ -4,10 +4,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { errMsg, type Task } from "../api";
-import { EMPTY_LABEL, PRIORITIES, type Kind } from "../config";
+import { PRIORITY_OPTIONS, type Kind } from "../config";
 import { bareDescription, composeText } from "../labels";
 import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
+import SelectField from "./SelectField";
 
 interface Props {
   task: Task | null;
@@ -83,12 +84,7 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
         <div className="add-fields">
           <label>
             Priority
-            <select aria-label="Priority" value={priority} onChange={(e) => setPriority(e.currentTarget.value)}>
-              <option value="">{EMPTY_LABEL}</option>
-              {PRIORITIES.map((p) => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
+            <SelectField ariaLabel="Priority" value={priority} options={PRIORITY_OPTIONS} onChange={setPriority} />
           </label>
           <label>
             Due

@@ -252,8 +252,7 @@ form#add-form {
   color: var(--muted);
 }
 
-.add-fields select,
-#filters select,
+.select-field,
 .add-fields input[type="date"] {
   padding: 0.4rem 0.5rem;
   border: 1px solid var(--border);
@@ -261,6 +260,22 @@ form#add-form {
   font: inherit;
   background: #fff;
   color: var(--fg);
+}
+
+/* The select trigger: looks like the old select box, with a ▾ affordance and left-aligned text. */
+.select-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 8rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.select-field::after {
+  content: "▾";
+  color: var(--muted);
 }
 
 input[type="text"] {
@@ -353,7 +368,8 @@ li.task.completed .text {
   font-size: 0.85rem;
 }
 
-dialog#label-modal {
+dialog#label-modal,
+dialog.select-modal {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 1.25rem;
@@ -361,8 +377,50 @@ dialog#label-modal {
   color: var(--fg);
 }
 
-dialog#label-modal::backdrop {
+dialog#label-modal::backdrop,
+dialog.select-modal::backdrop {
   background: rgba(0, 0, 0, 0.35);
+}
+
+/* Select modal: a title, a list of option rows, and a Cancel action. */
+.select-modal-title {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
+}
+
+.picker-list {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.picker-option {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+/* The main choice button fills the row; the selected one is highlighted. */
+.picker-choice {
+  flex: 1;
+  text-align: left;
+}
+
+.picker-choice[aria-current="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Remove sits on the right of a label row. */
+.picker-remove {
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 #label-form {

@@ -9,13 +9,15 @@ const EMPTY_LABELS = { project: [], context: [] };
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(() => { cleanup(); });
 
-// Open the label modal for `kind` and confirm `name` through it. Scoped to #label-modal because
-// the add form has its own "Add" submit button with the same text.
+// The accessible name SelectField gives the label picker trigger ("Project" / "Context").
+const triggerName = (kind: "project" | "context") => (kind === "project" ? /^project$/i : /^context$/i);
+
+// Open the label picker for `kind`, choose its "+ Add..." row to open the label modal, and confirm
+// `name` through it. Scoped to #label-modal because the add form has its own "Add" submit button.
 function addLabelViaModal(kind: "project" | "context", name: string) {
-  const select = screen.getByRole("combobox", {
-    name: kind === "project" ? /^project$/i : /^context$/i,
-  });
-  fireEvent.change(select, { target: { value: "+add" } });
+  fireEvent.click(screen.getByRole("button", { name: triggerName(kind) }));
+  const picker = within(document.querySelector("dialog.select-modal[open]") as HTMLElement);
+  fireEvent.click(picker.getByRole("button", { name: new RegExp(`\\+ add ${kind}`, "i") }));
   const modal = within(document.getElementById("label-modal") as HTMLElement);
   fireEvent.change(modal.getByLabelText(/new label name/i), { target: { value: name } });
   fireEvent.click(modal.getByRole("button", { name: /add/i }));
@@ -34,8 +36,8 @@ describe("AddForm", () => {
     });
     addLabelViaModal("project", "garden");
 
-    const project = screen.getByRole("combobox", { name: /^project$/i }) as HTMLSelectElement;
-    expect(project.value).toBe("garden");
+    // The picker trigger now shows the staged, selected label.
+    expect(screen.getByRole("button", { name: /^project$/i }).textContent).toBe("garden");
     expect(onAdd).not.toHaveBeenCalled();
   });
 
@@ -45,8 +47,7 @@ describe("AddForm", () => {
 
     addLabelViaModal("context", "errands");
 
-    const context = screen.getByRole("combobox", { name: /^context$/i }) as HTMLSelectElement;
-    expect(context.value).toBe("errands");
+    expect(screen.getByRole("button", { name: /^context$/i }).textContent).toBe("errands");
     expect(onAdd).not.toHaveBeenCalled();
   });
 
