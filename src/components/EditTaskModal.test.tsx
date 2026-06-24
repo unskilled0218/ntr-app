@@ -1,10 +1,12 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import EditTaskModal from "./EditTaskModal";
 
 vi.mock("../api", () => ({
   errMsg: (e: unknown) => (e instanceof Error ? e.message : String(e)),
 }));
+
+// The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
 
 const SERVER_LABELS = { project: ["work", "home"], context: ["phone", "store"] };
 
@@ -20,14 +22,6 @@ const TASK = {
   tags: { due: "2026-06-30" },
   raw: "(A) 2026-06-01 call bank +work @phone due:2026-06-30",
 };
-
-beforeAll(() => {
-  HTMLDialogElement.prototype.showModal = function () { this.open = true; };
-  HTMLDialogElement.prototype.close = function () {
-    this.open = false;
-    this.dispatchEvent(new Event("close"));
-  };
-});
 
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(() => { cleanup(); });

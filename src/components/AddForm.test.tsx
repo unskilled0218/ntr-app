@@ -1,17 +1,10 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import AddForm from "./AddForm";
 
-const EMPTY_LABELS = { project: [], context: [] };
+// The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
 
-beforeAll(() => {
-  // jsdom does not implement <dialog>.showModal()/close(); the same stub EditTaskModal.test uses.
-  HTMLDialogElement.prototype.showModal = function () { this.open = true; };
-  HTMLDialogElement.prototype.close = function () {
-    this.open = false;
-    this.dispatchEvent(new Event("close"));
-  };
-});
+const EMPTY_LABELS = { project: [], context: [] };
 
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(() => { cleanup(); });

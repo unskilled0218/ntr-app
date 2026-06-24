@@ -16,5 +16,7 @@
   { "date": "2026-06-24", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "09-server-local-conflict review-plan.md" },
   { "date": "2026-06-24", "mode": "PR Review", "score": 93, "findings": { "critical": 0, "warning": 1, "suggestion": 2 }, "scope": "tasks/11-add-project-context-from-app/plan.md (round 1)" },
   { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/11-add-project-context-from-app/plan.md (round 2)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/11-add-project-context-from-app/plan.md (round 3, corrected mechanism)" }
+  { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/11-add-project-context-from-app/plan.md (round 3, corrected mechanism)" },
+  { "date": "2026-06-24", "mode": "PR Review", "score": 96, "findings": { "critical": 0, "warning": 0, "suggestion": 2 }, "scope": "11-add-project-context-from-app code (round 1)" },
+  { "date": "2026-06-24", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "11-add-project-context-from-app review-plan.md" }
 ]
