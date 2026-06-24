@@ -55,15 +55,15 @@ export default function FilterBar({
             </option>
           ))}
         </select>
-        <button
-          type="button"
-          aria-label={`Remove ${KINDS.project.singular}`}
-          disabled={!project}
-          onClick={() => onRemove("project", project)}
-        >
-          Remove
-        </button>
       </label>
+      <button
+        type="button"
+        aria-label={`Remove ${KINDS.project.singular}`}
+        disabled={!project}
+        onClick={() => onRemove("project", project)}
+      >
+        Remove
+      </button>
       <label>
         Context
         <select aria-label="Context filter" value={context} onChange={(e) => onContext(e.currentTarget.value)}>
@@ -74,15 +74,15 @@ export default function FilterBar({
             </option>
           ))}
         </select>
-        <button
-          type="button"
-          aria-label={`Remove ${KINDS.context.singular}`}
-          disabled={!context}
-          onClick={() => onRemove("context", context)}
-        >
-          Remove
-        </button>
       </label>
+      <button
+        type="button"
+        aria-label={`Remove ${KINDS.context.singular}`}
+        disabled={!context}
+        onClick={() => onRemove("context", context)}
+      >
+        Remove
+      </button>
       <label>
         Sort
         <select aria-label="Sort order" value={sort} onChange={(e) => onSort(e.currentTarget.value)}>
