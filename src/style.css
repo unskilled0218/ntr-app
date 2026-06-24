@@ -295,7 +295,9 @@ button {
   font: inherit;
 }
 
-form#add-form button {
+/* Only the "Add" submit button is accent-coloured; the field trigger buttons
+   (Priority / Projects / Contexts) keep the default white .select-field look. */
+form#add-form button[type="submit"] {
   background: var(--accent);
   color: #fff;
   border-color: var(--accent);
