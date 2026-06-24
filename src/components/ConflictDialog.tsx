@@ -30,7 +30,7 @@ export default function ConflictDialog({ conflict, onChoose, onDismiss }: Props)
 
   return (
     <dialog id="conflict-dialog" ref={dialogRef} aria-labelledby="conflict-title" onClose={onDismiss}>
-      <h2 id="conflict-title">{label} differ from the server</h2>
+      <h2 id="conflict-title">{label} out of sync with the server</h2>
       <p className="note-conflict-msg">
         Your local {label.toLowerCase()} and the server's copy have diverged. Choose which version to keep.
       </p>
