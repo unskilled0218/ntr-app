@@ -74,24 +74,22 @@ describe("FilterBar pickers", () => {
     renderBar();
     expect(openPicker(/status filter/i).queryByRole("button", { name: /remove/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
-    expect(openPicker(/sort order/i).queryByRole("button", { name: /remove/i })).toBeNull();
+    expect(openPicker(/^sort$/i).queryByRole("button", { name: /remove/i })).toBeNull();
   });
 
-  it("offers Projects and Contexts as sort keys and no longer offers A-Z", () => {
-    const { onSort } = renderBar();
-    const picker = openPicker(/sort order/i);
+  it("holds the sort keys and the directions in one Sort modal and reports each pick", () => {
+    const { onSort, onDir } = renderBar();
+    const picker = openPicker(/^sort$/i);
+    // Sort keys (with the task-16 additions, no A-Z) and directions live in the same modal.
     expect(picker.getByRole("button", { name: "Projects" })).toBeTruthy();
     expect(picker.getByRole("button", { name: "Contexts" })).toBeTruthy();
     expect(picker.queryByRole("button", { name: /^a-z$/i })).toBeNull();
+    expect(picker.getByRole("button", { name: "ASC" })).toBeTruthy();
+
     fireEvent.click(picker.getByRole("button", { name: "Projects" }));
     expect(onSort).toHaveBeenCalledWith("projects");
-  });
-
-  it("offers ASC/DESC in the Direction picker and calls onDir with the chosen value", () => {
-    const { onDir } = renderBar();
-    const picker = openPicker(/sort direction/i);
-    expect(picker.getByRole("button", { name: "ASC" })).toBeTruthy();
-    fireEvent.click(picker.getByRole("button", { name: "DESC" }));
+    // The modal stays open, so the direction can be chosen in the same visit.
+    fireEvent.click(openDialog().getByRole("button", { name: "DESC" }));
     expect(onDir).toHaveBeenCalledWith("desc");
   });
 });

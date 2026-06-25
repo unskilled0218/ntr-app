@@ -8,12 +8,11 @@
 // "+ Add..." entry is just an option whose value the caller intercepts in onChange.
 
 import { useEffect, useRef, useState } from "react";
+import PickerList, { type FieldOption } from "./PickerList";
 
-export interface FieldOption {
-  value: string;
-  label: string;
-  removable?: boolean; // show a Remove button on this row's right (needs onRemove)
-}
+// Re-exported so the many existing `import { FieldOption } from "./SelectField"` callers are
+// untouched; the type's home is now PickerList (it describes a picker row).
+export type { FieldOption };
 
 interface Props {
   ariaLabel: string; // accessible name for the trigger and the dialog
@@ -69,30 +68,12 @@ export default function SelectField({ ariaLabel, value, options, onChange, onRem
         {open && (
           <>
             <h2 className="select-modal-title">{ariaLabel}</h2>
-            <ul className="picker-list">
-              {options.map((o) => (
-                <li key={o.value} className="picker-option">
-                  <button
-                    type="button"
-                    className="picker-choice"
-                    aria-current={o.value === value ? "true" : undefined}
-                    onClick={() => choose(o.value)}
-                  >
-                    {o.label}
-                  </button>
-                  {o.removable && onRemove && (
-                    <button
-                      type="button"
-                      className="picker-remove"
-                      aria-label={`Remove ${o.label}`}
-                      onClick={() => remove(o.value)}
-                    >
-                      Remove
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
+            <PickerList
+              options={options}
+              value={value}
+              onChoose={choose}
+              onRemove={onRemove ? remove : undefined}
+            />
             <div className="modal-actions">
               <button type="button" onClick={() => setOpen(false)}>
                 Cancel
