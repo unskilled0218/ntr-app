@@ -15,6 +15,16 @@
   box-sizing: border-box;
 }
 
+/* No focus ring anywhere: the caret (note editor) and the aria-current highlight
+   (picker rows) already show state, and the app is mouse-first. An author-origin
+   `:focus { outline: none }` overrides the user-agent `:focus-visible` ring by
+   cascade origin, so `:focus` alone suffices; `:focus-visible` is kept as a
+   defensive belt-and-suspenders selector. */
+:focus,
+:focus-visible {
+  outline: none;
+}
+
 /* FIXED-HEIGHT LAYOUT (no page scroll), at every width: the page is one viewport tall and
    panes scroll internally. On mobile the @media block below shows one pane at a time + a
    bottom bar; on desktop both panes show side by side. */
@@ -120,11 +130,6 @@ h1 {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   overflow: auto; /* the editor surface is what scrolls */
-}
-
-.note-input:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
 }
 
 /* Placeholder, shown only when the note is empty. The is-empty class is toggled in JS
