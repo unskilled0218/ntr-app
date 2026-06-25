@@ -1,13 +1,16 @@
 // The Status / Project / Context / Sort choosers. Status + the two label filters drive the
 // backend query (TodoPane refetches); Sort is client-side (re-render only). Status/Project/Context
 // are SelectFields (a trigger that opens a single-choice modal); Sort is a SortField — one trigger
-// that opens one modal holding both the sort key and the direction (ASC/DESC).
+// that opens one modal holding both the sort key and the direction (ASC/DESC). When `compact`, all
+// four collapse behind a single "Options" button (an OptionsModal); the choosers are identical
+// either way — only where they render changes.
 //
 // The Project/Context pickers mark each concrete label row `removable` and pass onRemove, so each
 // label item carries a Remove button on its right; onRemove only opens the confirm dialog in
 // TodoPane, so removal is still the deliberate, confirmed task-12 flow.
 
 import { DIRECTIONS, KINDS, SORTS, STATUSES, type Kind, type Status } from "../config";
+import OptionsModal from "./OptionsModal";
 import SelectField, { type FieldOption } from "./SelectField";
 import SortField from "./SortField";
 
@@ -17,6 +20,7 @@ interface Props {
   context: string;
   sort: string;
   dir: string;
+  compact: boolean; // when true, the choosers collapse behind one "Options" button
   serverLabels: { project: string[]; context: string[] };
   onStatus: (s: Status) => void;
   onProject: (p: string) => void;
@@ -55,6 +59,7 @@ export default function FilterBar({
   context,
   sort,
   dir,
+  compact,
   serverLabels,
   onStatus,
   onProject,
@@ -63,8 +68,10 @@ export default function FilterBar({
   onDir,
   onRemove,
 }: Props) {
-  return (
-    <div id="filters">
+  // The four choosers, defined once and rendered either inline (default) or inside the compact
+  // Options modal — so each chooser's props and wiring live in exactly one place.
+  const fields = (
+    <>
       <label>
         Status
         <SelectField
@@ -105,6 +112,12 @@ export default function FilterBar({
           onDir={onDir}
         />
       </label>
+    </>
+  );
+
+  return (
+    <div id="filters">
+      {compact ? <OptionsModal ariaLabel="Filter options">{fields}</OptionsModal> : fields}
     </div>
   );
 }

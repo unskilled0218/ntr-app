@@ -21,6 +21,7 @@ function renderBar(overrides: Partial<ComponentProps<typeof FilterBar>> = {}) {
       context=""
       sort="file"
       dir="asc"
+      compact={false}
       serverLabels={SERVER_LABELS}
       onStatus={vi.fn()}
       onProject={onProject}
@@ -91,5 +92,23 @@ describe("FilterBar pickers", () => {
     // The modal stays open, so the direction can be chosen in the same visit.
     fireEvent.click(openDialog().getByRole("button", { name: "DESC" }));
     expect(onDir).toHaveBeenCalledWith("desc");
+  });
+
+  it("compact: collapses the choosers behind one Options button that still drives them", () => {
+    const { onSort } = renderBar({ compact: true });
+    // The choosers are not inline; only the Options trigger is.
+    expect(screen.queryByRole("button", { name: /status filter/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /filter options/i })).toBeTruthy();
+
+    // Open the Options modal: the four choosers live inside it.
+    fireEvent.click(screen.getByRole("button", { name: /filter options/i }));
+    const options = within(document.querySelector("dialog.options-modal[open]") as HTMLElement);
+    expect(options.getByRole("button", { name: /status filter/i })).toBeTruthy();
+    expect(options.getByRole("button", { name: /^sort$/i })).toBeTruthy();
+
+    // A chooser opened from inside the Options modal still works.
+    fireEvent.click(options.getByRole("button", { name: /^sort$/i }));
+    fireEvent.click(openDialog().getByRole("button", { name: "Projects" }));
+    expect(onSort).toHaveBeenCalledWith("projects");
   });
 });

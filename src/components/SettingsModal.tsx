@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { getDataDir, setDataDir } from "../api";
 import {
   getAllowInvalidCert,
+  getCompactUi,
   getConflictStrategy,
   getServerUrl,
   setAllowInvalidCert,
+  setCompactUi,
   setConflictStrategy,
   setServerUrl,
   type ConflictStrategy,
@@ -31,6 +33,7 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [dirError, setDirError] = useState("");
   const [strategy, setStrategy] = useState<ConflictStrategy>("ask");
   const [allowInvalidCert, setAllowInvalidCertState] = useState(false);
+  const [compact, setCompactState] = useState(false);
   const current = getServerUrl();
 
   useEffect(() => {
@@ -42,6 +45,7 @@ export default function SettingsModal({ open, onClose }: Props) {
       setDirError("");
       setStrategy(getConflictStrategy());
       setAllowInvalidCertState(getAllowInvalidCert());
+      setCompactState(getCompactUi());
       getDataDir().then(setDirInput).catch(() => {});
       el.showModal();
     } else {
@@ -148,6 +152,23 @@ export default function SettingsModal({ open, onClose }: Props) {
             Save path
           </button>
         </div>
+
+
+        <h2>Display</h2>
+        <label className="settings-checkbox">
+          <input
+            type="checkbox"
+            checked={compact}
+            onChange={(e) => {
+              setCompactState(e.target.checked);
+              setCompactUi(e.target.checked);
+            }}
+          />
+          Compact controls
+        </label>
+        <p className="settings-hint">
+          Collapse the task fields and filters into "Options" buttons.
+        </p>
 
 
         <h2>Conflict resolution</h2>

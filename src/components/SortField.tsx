@@ -5,8 +5,8 @@
 // re-renders, the single source of truth lives in the parent) and a single Done button closes.
 // Replaces the two adjacent SelectField triggers (Sort + Direction) with one.
 
-import { useEffect, useRef, useState } from "react";
 import PickerList, { optionLabel, type FieldOption } from "./PickerList";
+import { usePickerDialog } from "../lib/usePickerDialog";
 
 interface Props {
   sort: string;
@@ -18,19 +18,7 @@ interface Props {
 }
 
 export default function SortField({ sort, dir, sortOptions, dirOptions, onSort, onDir }: Props) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const [open, setOpen] = useState(false);
-
-  // Drive the native dialog in step with `open` (same pattern as SelectField/LabelModal/EditTaskModal).
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (open) {
-      if (!dialog.open) dialog.showModal();
-    } else if (dialog.open) {
-      dialog.close();
-    }
-  }, [open]);
+  const { dialogRef, open, setOpen } = usePickerDialog();
 
   // Both choices on the trigger, so the merged control still shows everything the two old triggers did.
   const summary = `${optionLabel(sortOptions, sort)} · ${optionLabel(dirOptions, dir)}`;

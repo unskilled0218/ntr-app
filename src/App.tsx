@@ -13,7 +13,7 @@ import {
   type Conflict,
   type ConflictChoice,
 } from "./api";
-import { getServerUrl } from "./settings";
+import { getCompactUi, getServerUrl } from "./settings";
 import { SWIPE_MIN, VIEWS, type View } from "./config";
 import NotePane, { type NotePaneHandle } from "./components/NotePane";
 import TodoPane, { type TodoPaneHandle } from "./components/TodoPane";
@@ -23,6 +23,9 @@ import ConflictDialog from "./components/ConflictDialog";
 export default function App() {
   const [view, setView] = useState<View>("note");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The compact-controls layout choice; re-read from settings on close (the modal covers the view,
+  // so applying live behind it would be invisible — same "apply on close" model as the others).
+  const [compact, setCompact] = useState(getCompactUi);
   // Bumped on settings close to force the onChange useEffect to re-subscribe with the new transport.
   const [connectionKey, setConnectionKey] = useState(0);
   // Outstanding server/local divergences awaiting a user choice, handled one at a time.
@@ -87,6 +90,7 @@ export default function App() {
   function onSettingsClose() {
     setSettingsOpen(false);
     setConnectionKey((k) => k + 1); // re-wire onChange subscription
+    setCompact(getCompactUi()); // pick up a compact-controls toggle made in the modal
     // Explicit reload: mode may have changed, so both panes need fresh data.
     todoRef.current?.onTasksChanged();
     noteRef.current?.onNoteChange();
@@ -132,7 +136,7 @@ export default function App() {
 
       <div className="panes" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         <NotePane ref={noteRef} />
-        <TodoPane ref={todoRef} />
+        <TodoPane ref={todoRef} compact={compact} />
       </div>
 
       {/* Button order must match VIEWS: swipe direction is computed from that array, so the bar's
