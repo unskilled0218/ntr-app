@@ -9,6 +9,7 @@ import { bareDescription, composeText } from "../labels";
 import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
 import SelectField from "./SelectField";
+import { useBackdropClose } from "./useBackdropClose";
 
 interface Props {
   task: Task | null;
@@ -67,6 +68,10 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
     e.preventDefault();
     onClose();
   }
+
+  // Click outside the box closes it via onClose (not a raw dialog.close()), so the parent's `task`
+  // state — the source of truth here — stays in step, exactly as Escape does.
+  useBackdropClose(dialogRef, onClose);
 
   return (
     <dialog id="edit-task-modal" ref={dialogRef} onCancel={onCancel}>

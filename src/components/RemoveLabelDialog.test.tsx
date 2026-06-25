@@ -40,4 +40,16 @@ describe("RemoveLabelDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
     expect(onCancel).toHaveBeenCalledOnce();
   });
+
+  // Backdrop dismissal (useBackdropClose, default path): the click runs dialog.close(), whose
+  // native close event fires onCancel — the same non-destructive dismiss as Escape/Cancel.
+  it("calls onCancel when the backdrop is clicked", () => {
+    const onCancel = vi.fn();
+    render(
+      <RemoveLabelDialog target={{ kind: "project", name: "work" }} onConfirm={vi.fn()} onCancel={onCancel} />,
+    );
+    const dialog = document.getElementById("remove-label-dialog") as HTMLDialogElement;
+    fireEvent.click(dialog); // e.target === dialog -> a backdrop click
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
 });

@@ -4,6 +4,7 @@
 // user's unsaved work. Ported from #note-conflict + app.js.
 
 import { useEffect, useRef } from "react";
+import { useBackdropClose } from "./useBackdropClose";
 
 interface Props {
   open: boolean;
@@ -23,6 +24,9 @@ export default function NoteConflictDialog({ open, mine, theirs, onKeepMine, onU
     if (open && !dialog.open) dialog.showModal();
     else if (!open && dialog.open) dialog.close();
   }, [open]);
+
+  // Click outside the box dismisses it (keep-mine, same as Escape) via the onClose below.
+  useBackdropClose(dialogRef);
 
   return (
     <dialog id="note-conflict" ref={dialogRef} aria-labelledby="note-conflict-title" onClose={onClose}>
