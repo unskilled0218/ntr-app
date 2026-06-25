@@ -8,7 +8,7 @@
 // "+ Add..." entry is just an option whose value the caller intercepts in onChange.
 
 import PickerList, { optionLabel, type FieldOption } from "./PickerList";
-import { usePickerDialog } from "../lib/usePickerDialog";
+import { usePickerDialog } from "./usePickerDialog";
 
 // Re-exported so the many existing `import { FieldOption } from "./SelectField"` callers are
 // untouched; the type's home is now PickerList (it describes a picker row).
