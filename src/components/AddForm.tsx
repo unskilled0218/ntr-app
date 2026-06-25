@@ -9,15 +9,17 @@ import { PRIORITY_OPTIONS, type Kind } from "../config";
 import { composeText } from "../labels";
 import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
+import OptionsModal from "./OptionsModal";
 import SelectField from "./SelectField";
 
 interface Props {
   serverLabels: { project: string[]; context: string[] };
   // Returns true on success (so the form resets) or false on error (kept for correction).
   onAdd: (text: string) => Promise<boolean>;
+  compact: boolean; // when true, the fields collapse behind one "Options" button on the add row
 }
 
-export default function AddForm({ serverLabels, onAdd }: Props) {
+export default function AddForm({ serverLabels, onAdd, compact }: Props) {
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState("");
   const [due, setDue] = useState("");
@@ -57,6 +59,43 @@ export default function AddForm({ serverLabels, onAdd }: Props) {
   // form's onSubmit (creating a stray task and clearing the just-picked label). Keeping it outside
   // matches EditTaskModal and the original web UI (server/web/index.html), where #label-modal is a
   // top-level sibling of #add-form.
+  // The four field controls, defined once and rendered either inline (default) or inside the
+  // compact Options modal — so their props and wiring live in exactly one place.
+  const fields = (
+    <>
+      <label>
+        Priority
+        <SelectField ariaLabel="Priority" value={priority} options={PRIORITY_OPTIONS} onChange={setPriority} />
+      </label>
+      <label>
+        Due
+        <input type="date" aria-label="Due date" value={due} onChange={(e) => setDue(e.currentTarget.value)} />
+      </label>
+      <label>
+        Projects
+        <LabelSelect
+          kind="project"
+          value={project}
+          serverLabels={serverLabels.project}
+          staged={staged.project}
+          onChange={setProject}
+          onAdd={() => setModalKind("project")}
+        />
+      </label>
+      <label>
+        Contexts
+        <LabelSelect
+          kind="context"
+          value={context}
+          serverLabels={serverLabels.context}
+          staged={staged.context}
+          onChange={setContext}
+          onAdd={() => setModalKind("context")}
+        />
+      </label>
+    </>
+  );
+
   return (
     <>
       <form id="add-form" autoComplete="off" onSubmit={submit}>
@@ -70,39 +109,9 @@ export default function AddForm({ serverLabels, onAdd }: Props) {
             onChange={(e) => setDescription(e.currentTarget.value)}
           />
           <button type="submit">Add</button>
+          {compact && <OptionsModal ariaLabel="Task options">{fields}</OptionsModal>}
         </div>
-        <div className="add-fields">
-          <label>
-            Priority
-            <SelectField ariaLabel="Priority" value={priority} options={PRIORITY_OPTIONS} onChange={setPriority} />
-          </label>
-          <label>
-            Due
-            <input type="date" aria-label="Due date" value={due} onChange={(e) => setDue(e.currentTarget.value)} />
-          </label>
-          <label>
-            Projects
-            <LabelSelect
-              kind="project"
-              value={project}
-              serverLabels={serverLabels.project}
-              staged={staged.project}
-              onChange={setProject}
-              onAdd={() => setModalKind("project")}
-            />
-          </label>
-          <label>
-            Contexts
-            <LabelSelect
-              kind="context"
-              value={context}
-              serverLabels={serverLabels.context}
-              staged={staged.context}
-              onChange={setContext}
-              onAdd={() => setModalKind("context")}
-            />
-          </label>
-        </div>
+        {!compact && <div className="add-fields">{fields}</div>}
       </form>
       <LabelModal kind={modalKind} onConfirm={onConfirm} onClose={() => setModalKind(null)} />
     </>

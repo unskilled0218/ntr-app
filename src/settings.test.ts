@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   getAllowInvalidCert,
+  getCompactUi,
   getConflictStrategy,
   getServerUrl,
   setAllowInvalidCert,
+  setCompactUi,
   setConflictStrategy,
   setServerUrl,
 } from "./settings";
@@ -86,5 +88,24 @@ describe("setAllowInvalidCert", () => {
     setAllowInvalidCert(false);
     expect(localStorage.getItem("ntr.allowInvalidCert")).toBeNull();
     expect(getAllowInvalidCert()).toBe(false);
+  });
+});
+
+describe("getCompactUi / setCompactUi", () => {
+  it("defaults to false when nothing is stored", () => {
+    expect(getCompactUi()).toBe(false);
+  });
+
+  it("stores '1' when enabled and reads back true", () => {
+    setCompactUi(true);
+    expect(localStorage.getItem("ntr.compactUi")).toBe("1");
+    expect(getCompactUi()).toBe(true);
+  });
+
+  it("removes the key when disabled (default is the absence of the key)", () => {
+    setCompactUi(true);
+    setCompactUi(false);
+    expect(localStorage.getItem("ntr.compactUi")).toBeNull();
+    expect(getCompactUi()).toBe(false);
   });
 });

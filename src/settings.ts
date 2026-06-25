@@ -1,6 +1,7 @@
 const KEY = "ntr.serverUrl";
 const STRATEGY_KEY = "ntr.conflictStrategy";
 const ALLOW_INVALID_CERT_KEY = "ntr.allowInvalidCert";
+const COMPACT_UI_KEY = "ntr.compactUi";
 
 export function getServerUrl(): string {
   return localStorage.getItem(KEY) ?? "";
@@ -22,6 +23,16 @@ export function setAllowInvalidCert(allow: boolean): void {
   allow
     ? localStorage.setItem(ALLOW_INVALID_CERT_KEY, "1")
     : localStorage.removeItem(ALLOW_INVALID_CERT_KEY);
+}
+
+// Whether the todo controls render in the compact, modal-collapsed layout. Off by default
+// (absent key); persisted like setAllowInvalidCert — "1" only when explicitly enabled.
+export function getCompactUi(): boolean {
+  return localStorage.getItem(COMPACT_UI_KEY) === "1";
+}
+
+export function setCompactUi(on: boolean): void {
+  on ? localStorage.setItem(COMPACT_UI_KEY, "1") : localStorage.removeItem(COMPACT_UI_KEY);
 }
 
 // How a server/local divergence is resolved on reconcile. "ask" prompts the user

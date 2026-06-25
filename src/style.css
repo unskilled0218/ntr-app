@@ -249,7 +249,8 @@ form#add-form {
 }
 
 .add-fields label,
-#filters label {
+#filters label,
+.options-fields label {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
@@ -257,8 +258,21 @@ form#add-form {
   color: var(--muted);
 }
 
+/* Compact "Options" modal: stack the borrowed field rows; they reuse the field-label and
+   date-input styling above so a control looks the same inline or inside the modal. */
+.options-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.options-trigger {
+  align-self: center; /* sit beside Add on the add row */
+}
+
 .select-field,
-.add-fields input[type="date"] {
+.add-fields input[type="date"],
+.options-fields input[type="date"] {
   padding: 0.4rem 0.5rem;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -376,7 +390,8 @@ li.task.completed .text {
 }
 
 dialog#label-modal,
-dialog.select-modal {
+dialog.select-modal,
+dialog.options-modal {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 1.25rem;
@@ -385,7 +400,8 @@ dialog.select-modal {
 }
 
 dialog#label-modal::backdrop,
-dialog.select-modal::backdrop {
+dialog.select-modal::backdrop,
+dialog.options-modal::backdrop {
   background: rgba(0, 0, 0, 0.35);
 }
 

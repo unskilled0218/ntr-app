@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import SettingsModal from "./SettingsModal";
-import { setConflictStrategy } from "../settings";
+import { setCompactUi, setConflictStrategy } from "../settings";
 
 // The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
 
@@ -15,6 +15,8 @@ vi.mock("../settings", () => ({
   setServerUrl: vi.fn(),
   getAllowInvalidCert: () => false,
   setAllowInvalidCert: vi.fn(),
+  getCompactUi: () => false,
+  setCompactUi: vi.fn(),
   getConflictStrategy: () => "ask",
   setConflictStrategy: vi.fn(),
 }));
@@ -36,5 +38,18 @@ describe("SettingsModal conflict-strategy picker", () => {
 
     expect(vi.mocked(setConflictStrategy)).toHaveBeenCalledWith("server");
     expect(trigger.textContent).toBe("Always use server");
+  });
+});
+
+describe("SettingsModal compact-controls toggle", () => {
+  it("persists the compact-controls choice when toggled", () => {
+    render(<SettingsModal open onClose={vi.fn()} />);
+
+    const checkbox = screen.getByRole("checkbox", { name: /compact controls/i }) as HTMLInputElement;
+    expect(checkbox.checked).toBe(false); // seeded from getCompactUi() = false
+
+    fireEvent.click(checkbox);
+    expect(vi.mocked(setCompactUi)).toHaveBeenCalledWith(true);
+    expect(checkbox.checked).toBe(true);
   });
 });

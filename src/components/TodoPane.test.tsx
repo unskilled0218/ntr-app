@@ -59,7 +59,7 @@ afterEach(() => { cleanup(); });
 
 describe("TodoPane removal glue", () => {
   it("removing a project updates every task that carries it and reloads", async () => {
-    render(<TodoPane />);
+    render(<TodoPane compact={false} />);
 
     // Open the Project filter picker and click the "work" row's Remove button.
     await openRemove("work");
@@ -81,7 +81,7 @@ describe("TodoPane removal glue", () => {
 
   it("still reloads when an update fails", async () => {
     vi.mocked(updateTask).mockRejectedValueOnce(new Error("network error"));
-    render(<TodoPane />);
+    render(<TodoPane compact={false} />);
 
     await openRemove("work");
 

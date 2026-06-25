@@ -7,8 +7,8 @@
 // row gets a Remove button on its right. The picker stays ignorant of label semantics — the
 // "+ Add..." entry is just an option whose value the caller intercepts in onChange.
 
-import { useEffect, useRef, useState } from "react";
 import PickerList, { optionLabel, type FieldOption } from "./PickerList";
+import { usePickerDialog } from "../lib/usePickerDialog";
 
 // Re-exported so the many existing `import { FieldOption } from "./SelectField"` callers are
 // untouched; the type's home is now PickerList (it describes a picker row).
@@ -23,19 +23,7 @@ interface Props {
 }
 
 export default function SelectField({ ariaLabel, value, options, onChange, onRemove }: Props) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const [open, setOpen] = useState(false);
-
-  // Drive the native dialog in step with `open` (same pattern as LabelModal/EditTaskModal).
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (open) {
-      if (!dialog.open) dialog.showModal();
-    } else if (dialog.open) {
-      dialog.close();
-    }
-  }, [open]);
+  const { dialogRef, open, setOpen } = usePickerDialog();
 
   function choose(v: string) {
     setOpen(false);

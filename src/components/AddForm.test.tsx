@@ -29,7 +29,7 @@ describe("AddForm", () => {
   // just-picked label. The modal is now a sibling of the form, so neither happens.
   it("adding a project from the modal keeps it selected and does not submit the task", () => {
     const onAdd = vi.fn().mockResolvedValue(true);
-    render(<AddForm serverLabels={EMPTY_LABELS} onAdd={onAdd} />);
+    render(<AddForm serverLabels={EMPTY_LABELS} onAdd={onAdd} compact={false} />);
 
     fireEvent.change(screen.getByRole("textbox", { name: /new task/i }), {
       target: { value: "water plants" },
@@ -43,7 +43,7 @@ describe("AddForm", () => {
 
   it("adding a context from the modal does not fire onAdd even with an empty description", () => {
     const onAdd = vi.fn().mockResolvedValue(true);
-    render(<AddForm serverLabels={EMPTY_LABELS} onAdd={onAdd} />);
+    render(<AddForm serverLabels={EMPTY_LABELS} onAdd={onAdd} compact={false} />);
 
     addLabelViaModal("context", "errands");
 
@@ -53,7 +53,7 @@ describe("AddForm", () => {
 
   it("submitting a task calls onAdd with the composed text and resets the form", async () => {
     const onAdd = vi.fn().mockResolvedValue(true);
-    render(<AddForm serverLabels={EMPTY_LABELS} onAdd={onAdd} />);
+    render(<AddForm serverLabels={EMPTY_LABELS} onAdd={onAdd} compact={false} />);
 
     const input = screen.getByRole("textbox", { name: /new task/i }) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "call bank" } });
@@ -63,5 +63,22 @@ describe("AddForm", () => {
 
     await waitFor(() => expect(onAdd).toHaveBeenCalledWith("call bank"));
     await waitFor(() => expect(input.value).toBe(""));
+  });
+
+  it("compact: hides the inline fields behind a Task options modal, keeping the add row", () => {
+    render(<AddForm serverLabels={EMPTY_LABELS} onAdd={vi.fn()} compact={true} />);
+
+    // The add row keeps the input + Add; the four fields are not inline.
+    expect(screen.getByRole("textbox", { name: /new task/i })).toBeTruthy();
+    const form = within(document.getElementById("add-form") as HTMLElement);
+    expect(form.getByRole("button", { name: /^add$/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^priority$/i })).toBeNull();
+
+    // Opening the Options modal reveals the Priority / Projects / Contexts controls.
+    fireEvent.click(screen.getByRole("button", { name: /task options/i }));
+    const options = within(document.querySelector("dialog.options-modal[open]") as HTMLElement);
+    expect(options.getByRole("button", { name: /^priority$/i })).toBeTruthy();
+    expect(options.getByRole("button", { name: /^project$/i })).toBeTruthy();
+    expect(options.getByRole("button", { name: /^context$/i })).toBeTruthy();
   });
 });

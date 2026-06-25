@@ -25,9 +25,13 @@ export interface TodoPaneHandle {
   onTasksChanged: () => void;
 }
 
+interface Props {
+  compact: boolean; // collapse the add fields and filter choosers into "Options" modals
+}
+
 type Labels = { project: string[]; context: string[] };
 
-const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
+const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
   const [status, setStatus] = useState<Status>("all");
   const [project, setProject] = useState("");
   const [context, setContext] = useState("");
@@ -172,7 +176,7 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
     <section className="pane todo-pane" id="todo-view">
       <h1>todo</h1>
 
-      <AddForm serverLabels={serverLabels} onAdd={onAdd} />
+      <AddForm serverLabels={serverLabels} onAdd={onAdd} compact={compact} />
 
       <FilterBar
         status={status}
@@ -180,6 +184,7 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
         context={context}
         sort={sort}
         dir={dir}
+        compact={compact}
         serverLabels={serverLabels}
         onStatus={setStatus}
         onProject={setProject}
