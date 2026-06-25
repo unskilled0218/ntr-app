@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import PickerList, { type FieldOption } from "./PickerList";
+import PickerList, { optionLabel, type FieldOption } from "./PickerList";
 
 // The selectable-row contract that both SelectField and SortField now depend on.
 
@@ -46,5 +46,19 @@ describe("PickerList", () => {
   it("shows no Remove buttons when onRemove is omitted", () => {
     render(<PickerList options={OPTIONS} value="" onChoose={vi.fn()} />);
     expect(screen.queryByRole("button", { name: /remove/i })).toBeNull();
+  });
+});
+
+describe("optionLabel", () => {
+  it("returns the matching option's label", () => {
+    expect(optionLabel(OPTIONS, "work")).toBe("work");
+  });
+
+  it("falls back to the first option's label when the value matches none", () => {
+    expect(optionLabel(OPTIONS, "missing")).toBe("All projects");
+  });
+
+  it("returns an empty string when there are no options", () => {
+    expect(optionLabel([], "anything")).toBe("");
   });
 });

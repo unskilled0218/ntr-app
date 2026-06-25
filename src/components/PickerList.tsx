@@ -9,6 +9,13 @@ export interface FieldOption {
   removable?: boolean; // show a Remove button on this row's right (needs onRemove)
 }
 
+// The label of the option whose value matches, falling back to the first option's, then "" — the
+// text a picker trigger shows for its current selection. One home so every trigger (SelectField,
+// SortField) derives its display text the same way.
+export function optionLabel(options: FieldOption[], value: string): string {
+  return (options.find((o) => o.value === value) ?? options[0])?.label ?? "";
+}
+
 interface Props {
   options: FieldOption[];
   value: string;
