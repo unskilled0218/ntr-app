@@ -12,22 +12,26 @@ function renderBar(overrides: Partial<ComponentProps<typeof FilterBar>> = {}) {
   const onRemove = vi.fn();
   const onProject = vi.fn();
   const onContext = vi.fn();
+  const onSort = vi.fn();
+  const onDir = vi.fn();
   render(
     <FilterBar
       status="all"
       project=""
       context=""
       sort="file"
+      dir="asc"
       serverLabels={SERVER_LABELS}
       onStatus={vi.fn()}
       onProject={onProject}
       onContext={onContext}
-      onSort={vi.fn()}
+      onSort={onSort}
+      onDir={onDir}
       onRemove={onRemove}
       {...overrides}
     />,
   );
-  return { onRemove, onProject, onContext };
+  return { onRemove, onProject, onContext, onSort, onDir };
 }
 
 const openDialog = () => within(document.querySelector("dialog.select-modal[open]") as HTMLElement);
@@ -71,5 +75,23 @@ describe("FilterBar pickers", () => {
     expect(openPicker(/status filter/i).queryByRole("button", { name: /remove/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
     expect(openPicker(/sort order/i).queryByRole("button", { name: /remove/i })).toBeNull();
+  });
+
+  it("offers Projects and Contexts as sort keys and no longer offers A-Z", () => {
+    const { onSort } = renderBar();
+    const picker = openPicker(/sort order/i);
+    expect(picker.getByRole("button", { name: "Projects" })).toBeTruthy();
+    expect(picker.getByRole("button", { name: "Contexts" })).toBeTruthy();
+    expect(picker.queryByRole("button", { name: /^a-z$/i })).toBeNull();
+    fireEvent.click(picker.getByRole("button", { name: "Projects" }));
+    expect(onSort).toHaveBeenCalledWith("projects");
+  });
+
+  it("offers ASC/DESC in the Direction picker and calls onDir with the chosen value", () => {
+    const { onDir } = renderBar();
+    const picker = openPicker(/sort direction/i);
+    expect(picker.getByRole("button", { name: "ASC" })).toBeTruthy();
+    fireEvent.click(picker.getByRole("button", { name: "DESC" }));
+    expect(onDir).toHaveBeenCalledWith("desc");
   });
 });

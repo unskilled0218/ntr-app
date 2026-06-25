@@ -1,12 +1,13 @@
-// The Status / Project / Context / Sort choosers. Status + the two label filters drive the
-// backend query (TodoPane refetches); Sort is client-side (re-render only). Each chooser is a
-// SelectField (a trigger button that opens a modal list), ported from the #filters block.
+// The Status / Project / Context / Sort / Direction choosers. Status + the two label filters
+// drive the backend query (TodoPane refetches); Sort and Direction are client-side (re-render
+// only). Each chooser is a SelectField (a trigger button that opens a modal list), ported from
+// the #filters block.
 //
 // The Project/Context pickers mark each concrete label row `removable` and pass onRemove, so each
 // label item carries a Remove button on its right; onRemove only opens the confirm dialog in
 // TodoPane, so removal is still the deliberate, confirmed task-12 flow.
 
-import { KINDS, SORTS, STATUSES, type Kind, type Status } from "../config";
+import { DIRECTIONS, KINDS, SORTS, STATUSES, type Kind, type Status } from "../config";
 import SelectField, { type FieldOption } from "./SelectField";
 
 interface Props {
@@ -14,11 +15,13 @@ interface Props {
   project: string;
   context: string;
   sort: string;
+  dir: string;
   serverLabels: { project: string[]; context: string[] };
   onStatus: (s: Status) => void;
   onProject: (p: string) => void;
   onContext: (c: string) => void;
   onSort: (s: string) => void;
+  onDir: (d: string) => void;
   onRemove: (kind: Kind, name: string) => void;
 }
 
@@ -30,6 +33,11 @@ const STATUS_OPTIONS: FieldOption[] = Object.entries(STATUSES).map(([value, s]) 
 const SORT_OPTIONS: FieldOption[] = Object.entries(SORTS).map(([value, s]) => ({
   value,
   label: s.label,
+}));
+
+const DIRECTION_OPTIONS: FieldOption[] = Object.entries(DIRECTIONS).map(([value, d]) => ({
+  value,
+  label: d.label,
 }));
 
 // "All <kind>s" first, then each concrete label as a removable row.
@@ -45,11 +53,13 @@ export default function FilterBar({
   project,
   context,
   sort,
+  dir,
   serverLabels,
   onStatus,
   onProject,
   onContext,
   onSort,
+  onDir,
   onRemove,
 }: Props) {
   return (
@@ -86,6 +96,15 @@ export default function FilterBar({
       <label>
         Sort
         <SelectField ariaLabel="Sort order" value={sort} options={SORT_OPTIONS} onChange={onSort} />
+      </label>
+      <label>
+        Direction
+        <SelectField
+          ariaLabel="Sort direction"
+          value={dir}
+          options={DIRECTION_OPTIONS}
+          onChange={onDir}
+        />
       </label>
     </div>
   );

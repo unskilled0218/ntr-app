@@ -59,19 +59,34 @@ export function cmpMissingLast(a: string | null | undefined, b: string | null | 
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+// The alphabetically-first label of a task, or null when it has none — so tasks with no
+// project/context sort to the bottom like any other missing key. Reduces to the min rather
+// than sorting a copy: no allocation, no full sort, and the task's own label array is never
+// mutated.
+function firstLabel(labels: string[]): string | null {
+  return labels.length ? labels.reduce((m, x) => (x < m ? x : m)) : null;
+}
+
 // Client-side sort orders. compare:null keeps the server's file order. Every comparator sorts
 // ascending and sends tasks missing the key to the bottom; JS's stable sort keeps file order
-// among ties.
+// among ties. The label sorts (projects/contexts) key off the task's alphabetically-first label.
 export const SORTS: Record<string, { label: string; compare: ((a: Task, b: Task) => number) | null }> = {
   file: { label: "File order", compare: null },
   priority: { label: "Priority", compare: (a, b) => cmpMissingLast(a.priority, b.priority) },
   due: { label: "Due date", compare: (a, b) => cmpMissingLast(a.tags.due, b.tags.due) },
   created: { label: "Created", compare: (a, b) => cmpMissingLast(a.creation_date, b.creation_date) },
-  alpha: {
-    label: "A-Z",
-    compare: (a, b) => a.description.localeCompare(b.description, undefined, { sensitivity: "base" }),
-  },
+  projects: { label: "Projects", compare: (a, b) => cmpMissingLast(firstLabel(a.projects), firstLabel(b.projects)) },
+  contexts: { label: "Contexts", compare: (a, b) => cmpMissingLast(firstLabel(a.contexts), firstLabel(b.contexts)) },
 };
+
+// Sort direction. asc is each comparator's natural (ascending) order; desc reverses the
+// comparator. Keyed by <select> value, label beside it — mirrors STATUSES so the text lives once.
+export const DIRECTIONS = {
+  asc: { label: "ASC" },
+  desc: { label: "DESC" },
+} as const;
+
+export type Direction = keyof typeof DIRECTIONS;
 
 // THE VIEW ORDER — one home. The nav-button order, the swipe direction, and the default view
 // all derive from this one array (mirrors web/app.js VIEWS).
@@ -81,10 +96,14 @@ export type View = (typeof VIEWS)[number];
 // px of horizontal travel before a drag counts as a view swipe.
 export const SWIPE_MIN = 50;
 
-// Return the tasks in the order selected by the Sort dropdown. file order is a no-op (the
-// backend already returns file order); other keys sort a copy so the fetched array is never
-// mutated.
-export function sortTasks(tasks: Task[], sort: string): Task[] {
+// Return the tasks in the order selected by the Sort + Direction pickers. file order (compare
+// null) is a no-op in asc (the backend already returns file order) and its reverse in desc; other
+// keys sort a copy so the fetched array is never mutated. desc negates the comparator, so it is
+// the exact reverse of asc — including sinking missing-key tasks to the top — one rule, no special
+// case. Stable sort keeps file order among ties in both directions.
+export function sortTasks(tasks: Task[], sort: string, dir: Direction = "asc"): Task[] {
   const compare = SORTS[sort].compare;
-  return compare ? [...tasks].sort(compare) : tasks;
+  if (!compare) return dir === "asc" ? tasks : [...tasks].reverse();
+  const sign = dir === "asc" ? 1 : -1;
+  return [...tasks].sort((a, b) => sign * compare(a, b));
 }

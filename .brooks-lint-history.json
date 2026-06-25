@@ -30,5 +30,6 @@
   { "date": "2026-06-24", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/14-dropdowns-to-modals/review-plan.md" },
   { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/15-remove-focus-border/plan.md (round 1)" },
   { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "15-remove-focus-border code (round 1)" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/15-remove-focus-border/review-plan.md" }
+  { "date": "2026-06-25", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/15-remove-focus-border/review-plan.md" },
+  { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/16-sort-options/plan.md (round 1)" }
 ]
