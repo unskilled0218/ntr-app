@@ -12,6 +12,7 @@ import {
   type ConflictStrategy,
 } from "../settings";
 import SelectField, { type FieldOption } from "./SelectField";
+import { useBackdropClose } from "./useBackdropClose";
 
 // The conflict-resolution strategies, in display order. value is the stored ConflictStrategy.
 const STRATEGY_OPTIONS: FieldOption[] = [
@@ -58,6 +59,10 @@ export default function SettingsModal({ open, onClose }: Props) {
     e.preventDefault();
     onClose();
   }
+
+  // Click outside the box closes it via onClose (not a raw dialog.close()), so the parent's `open`
+  // state — the source of truth here — stays in step, exactly as Escape does.
+  useBackdropClose(dialogRef, onClose);
 
   function onConnect() {
     const url = input.trim();

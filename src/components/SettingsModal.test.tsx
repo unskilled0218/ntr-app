@@ -53,3 +53,24 @@ describe("SettingsModal compact-controls toggle", () => {
     expect(checkbox.checked).toBe(true);
   });
 });
+
+describe("SettingsModal backdrop close", () => {
+  // The state-driven override path: a backdrop click routes through onClose (not a raw
+  // dialog.close()), so the parent keeps control of the `open` prop, exactly as Escape does.
+  it("calls onClose when the backdrop is clicked", () => {
+    const onClose = vi.fn();
+    render(<SettingsModal open onClose={onClose} />);
+
+    const dialog = document.getElementById("settings-modal") as HTMLDialogElement;
+    fireEvent.click(dialog); // e.target === dialog -> a backdrop click
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("stays put when a click lands on inner content rather than the backdrop", () => {
+    const onClose = vi.fn();
+    render(<SettingsModal open onClose={onClose} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /on conflict/i })); // inner trigger
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});

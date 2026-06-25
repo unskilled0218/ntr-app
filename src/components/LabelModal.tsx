@@ -1,10 +1,12 @@
-// The "+ Add project/context..." modal. Native <dialog> gives a focus trap, backdrop, and
-// Escape-to-dismiss; dismissing changes nothing (the add-form select was never moved off its
-// prior value). Ported from #label-modal + app.js openLabelModal/confirmLabel.
+// The "+ Add project/context..." modal. Native <dialog> gives a focus trap and Escape-to-dismiss,
+// plus click-outside-to-dismiss via useBackdropClose; dismissing changes nothing (the add-form
+// select was never moved off its prior value). Ported from #label-modal + app.js openLabelModal/
+// confirmLabel.
 
 import { useEffect, useRef, useState } from "react";
 import { KINDS, type Kind } from "../config";
 import { parseLabelInput } from "../labels";
+import { useBackdropClose } from "./useBackdropClose";
 
 interface Props {
   kind: Kind | null; // non-null while open; which kind the new label belongs to
@@ -31,6 +33,9 @@ export default function LabelModal({ kind, onConfirm, onClose }: Props) {
       dialog.close();
     }
   }, [kind]);
+
+  // Click outside the box dismisses it; the default dialog.close() fires the onClose below.
+  useBackdropClose(dialogRef);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();

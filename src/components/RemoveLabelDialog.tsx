@@ -6,6 +6,7 @@
 
 import { useEffect, useRef } from "react";
 import { KINDS, type Kind } from "../config";
+import { useBackdropClose } from "./useBackdropClose";
 
 interface Props {
   target: { kind: Kind; name: string } | null; // null = closed
@@ -23,6 +24,9 @@ export default function RemoveLabelDialog({ target, onConfirm, onCancel }: Props
     if (open && !dialog.open) dialog.showModal();
     else if (!open && dialog.open) dialog.close();
   }, [open]);
+
+  // Click outside the box dismisses it (non-destructive, same as Escape/Cancel) via onCancel below.
+  useBackdropClose(dialogRef);
 
   const singular = target ? KINDS[target.kind].singular : "label";
   const token = target ? KINDS[target.kind].prefix + target.name : "";

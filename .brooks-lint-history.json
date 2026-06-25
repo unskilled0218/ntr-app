@@ -42,5 +42,6 @@
   { "date": "2026-06-25", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/18-compact-ui-toggle/review-plan.md" },
   { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/19-android-safe-area/plan.md (round 1)" },
   { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "19-android-safe-area code (round 1)" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/19-android-safe-area/review-plan.md" }
+  { "date": "2026-06-25", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/19-android-safe-area/review-plan.md" },
+  { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/20-click-outside-modal-close/plan.md (round 1)" }
 ]

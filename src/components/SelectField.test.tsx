@@ -67,4 +67,23 @@ describe("SelectField", () => {
     fireEvent.click(screen.getByRole("button", { name: /project filter/i }));
     expect(openDialog().queryByRole("button", { name: /remove/i })).toBeNull();
   });
+
+  // Backdrop dismissal (useBackdropClose via usePickerDialog) — also covers SortField/OptionsModal,
+  // which share the same hook.
+  it("closes when the backdrop (the dialog element itself) is clicked", () => {
+    render(<SelectField ariaLabel="Project filter" value="" options={OPTIONS} onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /project filter/i }));
+    const dialog = document.querySelector("dialog.select-modal") as HTMLElement;
+    expect(dialog.hasAttribute("open")).toBe(true);
+
+    fireEvent.click(dialog); // e.target === dialog -> a backdrop click
+    expect(document.querySelector("dialog.select-modal[open]")).toBeNull();
+  });
+
+  it("stays open when a click lands on inner content rather than the backdrop", () => {
+    render(<SelectField ariaLabel="Project filter" value="" options={OPTIONS} onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /project filter/i }));
+    fireEvent.click(openDialog().getByText("Project filter")); // the title <h2>, target !== dialog
+    expect(document.querySelector("dialog.select-modal[open]")).not.toBeNull();
+  });
 });

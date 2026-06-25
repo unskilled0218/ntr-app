@@ -8,6 +8,7 @@
 
 import { useEffect, useRef } from "react";
 import type { Conflict, ConflictChoice } from "../api";
+import { useBackdropClose } from "./useBackdropClose";
 
 interface Props {
   conflict: Conflict | null; // null = closed
@@ -25,6 +26,9 @@ export default function ConflictDialog({ conflict, onChoose, onDismiss }: Props)
     if (open && !dialog.open) dialog.showModal();
     else if (!open && dialog.open) dialog.close();
   }, [open]);
+
+  // Click outside the box dismisses it (non-destructive, same as Escape) via the onClose below.
+  useBackdropClose(dialogRef);
 
   const label = conflict?.resource === "tasks" ? "Tasks" : "Note";
 
