@@ -8,7 +8,7 @@
 // "+ Add..." entry is just an option whose value the caller intercepts in onChange.
 
 import { useEffect, useRef, useState } from "react";
-import PickerList, { type FieldOption } from "./PickerList";
+import PickerList, { optionLabel, type FieldOption } from "./PickerList";
 
 // Re-exported so the many existing `import { FieldOption } from "./SelectField"` callers are
 // untouched; the type's home is now PickerList (it describes a picker row).
@@ -37,9 +37,6 @@ export default function SelectField({ ariaLabel, value, options, onChange, onRem
     }
   }, [open]);
 
-  // The trigger shows the selected option's label, falling back to the first option's.
-  const selected = options.find((o) => o.value === value) ?? options[0];
-
   function choose(v: string) {
     setOpen(false);
     onChange(v);
@@ -60,7 +57,7 @@ export default function SelectField({ ariaLabel, value, options, onChange, onRem
         aria-haspopup="dialog"
         onClick={() => setOpen(true)}
       >
-        {selected?.label ?? ""}
+        {optionLabel(options, value)}
       </button>
       {/* Render the contents only while open: a closed dialog leaves no stray focusable buttons in
           the DOM (each field would otherwise contribute an always-present "Cancel"). */}

@@ -34,5 +34,7 @@
   { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/16-sort-options/plan.md (round 1)" },
   { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "16-sort-options code (round 1)" },
   { "date": "2026-06-25", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/16-sort-options/review-plan.md" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/17-sort-direction-one-modal/plan.md (round 1)" }
+  { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/17-sort-direction-one-modal/plan.md (round 1)" },
+  { "date": "2026-06-25", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 2 }, "scope": "17-sort-direction-one-modal code (round 1)" },
+  { "date": "2026-06-25", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/17-sort-direction-one-modal/review-plan.md" }
 ]

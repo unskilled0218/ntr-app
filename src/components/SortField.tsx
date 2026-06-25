@@ -6,7 +6,7 @@
 // Replaces the two adjacent SelectField triggers (Sort + Direction) with one.
 
 import { useEffect, useRef, useState } from "react";
-import PickerList, { type FieldOption } from "./PickerList";
+import PickerList, { optionLabel, type FieldOption } from "./PickerList";
 
 interface Props {
   sort: string;
@@ -15,12 +15,6 @@ interface Props {
   dirOptions: FieldOption[];
   onSort(value: string): void;
   onDir(value: string): void;
-}
-
-// The current option's label, falling back to the first option's — same rule SelectField's
-// trigger uses so an unmatched value still renders something sensible.
-function labelFor(options: FieldOption[], value: string): string {
-  return (options.find((o) => o.value === value) ?? options[0])?.label ?? "";
 }
 
 export default function SortField({ sort, dir, sortOptions, dirOptions, onSort, onDir }: Props) {
@@ -39,7 +33,7 @@ export default function SortField({ sort, dir, sortOptions, dirOptions, onSort, 
   }, [open]);
 
   // Both choices on the trigger, so the merged control still shows everything the two old triggers did.
-  const summary = `${labelFor(sortOptions, sort)} · ${labelFor(dirOptions, dir)}`;
+  const summary = `${optionLabel(sortOptions, sort)} · ${optionLabel(dirOptions, dir)}`;
 
   return (
     <>
