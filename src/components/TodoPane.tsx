@@ -174,26 +174,26 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
 
   return (
     <section className="pane todo-pane" id="todo-view">
-      <h1>todo</h1>
+      <div>
+        <h1>todo</h1>
 
-      <AddForm serverLabels={serverLabels} onAdd={onAdd} compact={compact} />
-
-      <FilterBar
-        status={status}
-        project={project}
-        context={context}
-        sort={sort}
-        dir={dir}
-        compact={compact}
-        serverLabels={serverLabels}
-        onStatus={setStatus}
-        onProject={setProject}
-        onContext={setContext}
-        onSort={setSort}
-        onDir={(d) => setDir(d as Direction)}
-        onRemove={(kind, name) => setRemoving({ kind, name })}
-      />
-
+        <FilterBar
+          status={status}
+          project={project}
+          context={context}
+          sort={sort}
+          dir={dir}
+          compact={compact}
+          serverLabels={serverLabels}
+          onStatus={setStatus}
+          onProject={setProject}
+          onContext={setContext}
+          onSort={setSort}
+          onDir={(d) => setDir(d as Direction)}
+          onRemove={(kind, name) => setRemoving({ kind, name })}
+        />
+      </div>
+      
       <div className="task-list">
         <ul id="tasks">
           {sorted.map((task) => (
@@ -207,6 +207,8 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
           {error}
         </p>
       </div>
+
+      <AddForm serverLabels={serverLabels} onAdd={onAdd} compact={compact} />
 
       <EditTaskModal
         task={editTask}
