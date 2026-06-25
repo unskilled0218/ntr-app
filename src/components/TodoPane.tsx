@@ -14,7 +14,7 @@ import {
   type Task,
 } from "../api";
 import EditTaskModal from "./EditTaskModal";
-import { sortTasks, STATUSES, type Kind, type Status } from "../config";
+import { sortTasks, STATUSES, type Direction, type Kind, type Status } from "../config";
 import { planLabelRemoval } from "../labels";
 import AddForm from "./AddForm";
 import FilterBar from "./FilterBar";
@@ -32,6 +32,7 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
   const [project, setProject] = useState("");
   const [context, setContext] = useState("");
   const [sort, setSort] = useState("file");
+  const [dir, setDir] = useState<Direction>("asc");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [serverLabels, setServerLabels] = useState<Labels>({ project: [], context: [] });
   const [error, setError] = useState("");
@@ -165,7 +166,7 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
     await loadLabels();
   }
 
-  const sorted = sortTasks(tasks, sort);
+  const sorted = sortTasks(tasks, sort, dir);
 
   return (
     <section className="pane todo-pane" id="todo-view">
@@ -178,11 +179,13 @@ const TodoPane = forwardRef<TodoPaneHandle>((_, ref) => {
         project={project}
         context={context}
         sort={sort}
+        dir={dir}
         serverLabels={serverLabels}
         onStatus={setStatus}
         onProject={setProject}
         onContext={setContext}
         onSort={setSort}
+        onDir={(d) => setDir(d as Direction)}
         onRemove={(kind, name) => setRemoving({ kind, name })}
       />
 
