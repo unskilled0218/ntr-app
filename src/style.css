@@ -9,6 +9,15 @@
   --border: #d1d5db;
   --done: #9ca3af;
   --danger: #b91c1c;
+
+  /* System-bar / display-cutout insets, exposed by viewport-fit=cover (index.html) on Android
+     edge-to-edge (MainActivity.enableEdgeToEdge). 0px wherever there is no inset (desktop, no
+     cutout), so the layout below is unchanged off-device. Named once here; consumed only at the
+     few elements that touch a screen edge (main, the settings button, the mobile bottom-nav). */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
 }
 
 * {
@@ -40,7 +49,13 @@ main {
   position: relative; /* anchor for the absolute-positioned settings button */
   max-width: 1100px;
   margin: 0 auto;
-  padding: 2rem 1rem;
+  /* Each side is at least its design gutter (was: padding: 2rem 1rem) and grows to clear its
+     safe-area inset. max(), not sum: the inset already covers the bar depth, so we don't stack a
+     second full gutter on top of it. With no inset every max() collapses to today's value. */
+  padding-top: max(2rem, var(--safe-top));
+  padding-right: max(1rem, var(--safe-right));
+  padding-bottom: max(2rem, var(--safe-bottom));
+  padding-left: max(1rem, var(--safe-left));
   height: 100dvh; /* one viewport tall (border-box keeps padding inside) */
   display: flex;
   flex-direction: column;
@@ -98,6 +113,10 @@ h1 {
     flex: none; /* a fixed-height bar; .panes (flex: 1) takes the remaining height */
     border-top: 1px solid var(--border);
     background: #fff;
+    /* Sit flush to the bottom edge but reserve the gesture-bar depth below the buttons: the white
+       fill + top border reach the screen edge (edge-to-edge look kept) while the Note/Todo buttons
+       stay above the gesture bar. main keeps padding-bottom: 0 here, so the nav owns this edge. */
+    padding-bottom: var(--safe-bottom);
   }
   .bottom-nav button {
     flex: 1; /* two equal-width segments */
@@ -591,8 +610,12 @@ dialog#edit-task-modal::backdrop {
 /* Settings toggle — fixed top-right, shows [S] (server) or [L] (local) as a mode badge. */
 .settings-btn {
   position: absolute;
-  top: 0.5rem;
-  right: 0.75rem;
+  /* Absolute offsets are measured from main's padding-box edge (the screen edge under
+     edge-to-edge), so main's new padding does not push this chip inward — it adds the inset
+     itself to clear the status bar (top) and any right-side cutout. calc(inset + gap), not max(),
+     so the chip keeps its full gap below the bar. With no inset this is the original 0.5rem/0.75rem. */
+  top: calc(var(--safe-top) + 0.5rem);
+  right: calc(var(--safe-right) + 0.75rem);
   padding: 0.2rem 0.45rem;
   font-size: 0.75rem;
   font-family: ui-monospace, monospace;
