@@ -6,7 +6,7 @@
 // Replaces the two adjacent SelectField triggers (Sort + Direction) with one.
 
 import PickerList, { optionLabel, type FieldOption } from "./PickerList";
-import { usePickerDialog } from "../lib/usePickerDialog";
+import { usePickerDialog } from "./usePickerDialog";
 
 interface Props {
   sort: string;

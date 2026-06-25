@@ -6,7 +6,7 @@
 // `select-modal` inside it never collides with that selector.
 
 import { type ReactNode } from "react";
-import { usePickerDialog } from "../lib/usePickerDialog";
+import { usePickerDialog } from "./usePickerDialog";
 
 interface Props {
   ariaLabel: string; // accessible name for the trigger and dialog (e.g. "Task options")
