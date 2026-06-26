@@ -13,10 +13,11 @@ import {
   type Conflict,
   type ConflictChoice,
 } from "./api";
-import { getCompactUi, getServerUrl } from "./settings";
+import { getCompactUi } from "./settings";
 import { SWIPE_MIN, VIEWS, type View } from "./config";
 import NotePane, { type NotePaneHandle } from "./components/NotePane";
 import TodoPane, { type TodoPaneHandle } from "./components/TodoPane";
+import SettingsButton from "./components/SettingsButton";
 import SettingsModal from "./components/SettingsModal";
 import ConflictDialog from "./components/ConflictDialog";
 
@@ -121,26 +122,25 @@ export default function App() {
     if (next >= 0 && next < VIEWS.length) setView(VIEWS[next]);
   }
 
-  const serverUrl = getServerUrl();
+  const openSettings = () => setSettingsOpen(true);
 
   return (
     <main data-view={view}>
-      <button
-        type="button"
-        className="settings-btn"
-        aria-label="Connection settings"
-        onClick={() => setSettingsOpen(true)}
-      >
-        {serverUrl ? "[S]" : "[L]"}
-      </button>
+      {/* Desktop title row: app wordmark + the connection-settings badge in one line. Hidden on
+          mobile (CSS), where the badge moves into the bottom nav below. */}
+      <header className="app-header">
+        <span className="app-title">ntr</span>
+        <SettingsButton onOpen={openSettings} />
+      </header>
 
       <div className="panes" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         <NotePane ref={noteRef} />
         <TodoPane ref={todoRef} compact={compact} />
       </div>
 
-      {/* Button order must match VIEWS: swipe direction is computed from that array, so the bar's
-          left-to-right order and the swipe order share one source of truth. */}
+      {/* View-button order must match VIEWS: swipe direction is computed from that array, so the
+          bar's left-to-right order and the swipe order share one source of truth. The trailing
+          settings badge is not a view (no data-view, not in VIEWS), so it does not affect swipe. */}
       <nav className="bottom-nav" aria-label="Switch view" ref={navRef}>
         {VIEWS.map((v) => (
           <button
@@ -155,6 +155,7 @@ export default function App() {
             {v === "note" ? "Note" : "Todo"}
           </button>
         ))}
+        <SettingsButton onOpen={openSettings} />
       </nav>
 
       <SettingsModal open={settingsOpen} onClose={onSettingsClose} />

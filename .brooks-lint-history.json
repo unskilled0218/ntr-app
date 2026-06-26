@@ -537,5 +537,16 @@
       "suggestion": 0
     },
     "scope": "tasks/21-hide-pane-titles-mobile/review-plan.md"
+  },
+  {
+    "date": "2026-06-26",
+    "mode": "PR Review",
+    "score": 98,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 2
+    },
+    "scope": "tasks/22-move-settings-button/plan.md (round 1)"
   }
 ]
