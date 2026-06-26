@@ -108,6 +108,14 @@ h1 {
     display: flex; /* re-show; flex-direction: column comes from the base .pane rule */
   }
 
+  /* The pane titles ("note" / "todo") duplicate the bottom-nav labels in single-pane mode, so
+     reclaim their row; the bottom nav names the visible pane. Descendant (not child) combinator:
+     note's h1 is a direct child of .note-pane but todo's sits inside .todo-header. */
+  .note-pane h1,
+  .todo-pane h1 {
+    display: none;
+  }
+
   .bottom-nav {
     display: flex;
     flex: none; /* a fixed-height bar; .panes (flex: 1) takes the remaining height */

@@ -1,49 +1,519 @@
 [
-  { "date": "2026-06-23", "mode": "PR Review", "score": 88, "findings": { "critical": 0, "warning": 1, "suggestion": 3 }, "scope": "tasks/01-tauri-react-client/plan.md (round 1)" },
-  { "date": "2026-06-23", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/01-tauri-react-client/plan.md (round 2)" }
-,
-  { "date": "2026-06-23", "mode": "PR Review", "score": 81, "findings": { "critical": 0, "warning": 2, "suggestion": 1 }, "scope": "tasks/05-custom-data-dir/plan.md (round 1)" },
-  { "date": "2026-06-23", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/05-custom-data-dir/plan.md (round 2)" },
-  { "date": "2026-06-23", "mode": "PR Review", "score": 89, "findings": { "critical": 0, "warning": 2, "suggestion": 1 }, "scope": "05-custom-data-dir code (round 1)" },
-  { "date": "2026-06-23", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "05-custom-data-dir review-plan.md" },
-  { "date": "2026-06-23", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "05-custom-data-dir code (round 2)" },
-  { "date": "2026-06-23", "mode": "PR Review", "score": 91, "findings": { "critical": 0, "warning": 2, "suggestion": 0 }, "scope": "tasks/06-move-files-on-path-change/plan.md (round 1)" },
-  { "date": "2026-06-23", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/06-move-files-on-path-change/plan.md (round 2)" },
-  { "date": "2026-06-23", "mode": "PR Review", "score": 96, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "06-move-files-on-path-change code (round 1)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 88, "findings": { "critical": 0, "warning": 2, "suggestion": 2 }, "scope": "tasks/09-server-local-conflict/plan.md (round 1)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/09-server-local-conflict/plan.md (round 2)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 94, "findings": { "critical": 0, "warning": 1, "suggestion": 1 }, "scope": "09-server-local-conflict code (round 1)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "09-server-local-conflict review-plan.md" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 93, "findings": { "critical": 0, "warning": 1, "suggestion": 2 }, "scope": "tasks/11-add-project-context-from-app/plan.md (round 1)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/11-add-project-context-from-app/plan.md (round 2)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/11-add-project-context-from-app/plan.md (round 3, corrected mechanism)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 96, "findings": { "critical": 0, "warning": 0, "suggestion": 2 }, "scope": "11-add-project-context-from-app code (round 1)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "11-add-project-context-from-app review-plan.md" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 93, "findings": { "critical": 0, "warning": 1, "suggestion": 2 }, "scope": "tasks/12-remove-project-context/plan.md (round 1)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/12-remove-project-context/plan.md (round 2)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 94, "findings": { "critical": 0, "warning": 1, "suggestion": 1 }, "scope": "12-remove-project-context code (round 1)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "12-remove-project-context review-plan.md" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 2 }, "scope": "tasks/13-move-remove-into-dropdown/plan.md (round 1)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "13-move-remove-into-dropdown code (round 1)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 2 }, "scope": "tasks/14-dropdowns-to-modals/plan.md (round 1)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 2 }, "scope": "14-dropdowns-to-modals code (round 1)" },
-  { "date": "2026-06-24", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/14-dropdowns-to-modals/review-plan.md" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/15-remove-focus-border/plan.md (round 1)" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "15-remove-focus-border code (round 1)" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/15-remove-focus-border/review-plan.md" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/16-sort-options/plan.md (round 1)" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "16-sort-options code (round 1)" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/16-sort-options/review-plan.md" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/17-sort-direction-one-modal/plan.md (round 1)" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 2 }, "scope": "17-sort-direction-one-modal code (round 1)" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/17-sort-direction-one-modal/review-plan.md" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/18-compact-ui-toggle/plan.md (round 1)" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 98, "findings": { "critical": 0, "warning": 0, "suggestion": 2 }, "scope": "18-compact-ui-toggle code (round 1)" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/18-compact-ui-toggle/review-plan.md" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/19-android-safe-area/plan.md (round 1)" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "19-android-safe-area code (round 1)" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/19-android-safe-area/review-plan.md" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "tasks/20-click-outside-modal-close/plan.md (round 1)" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 99, "findings": { "critical": 0, "warning": 0, "suggestion": 1 }, "scope": "20-click-outside-modal-close code (round 1)" },
-  { "date": "2026-06-25", "mode": "PR Review", "score": 100, "findings": { "critical": 0, "warning": 0, "suggestion": 0 }, "scope": "tasks/20-click-outside-modal-close/review-plan.md" }
+  {
+    "date": "2026-06-23",
+    "mode": "PR Review",
+    "score": 88,
+    "findings": {
+      "critical": 0,
+      "warning": 1,
+      "suggestion": 3
+    },
+    "scope": "tasks/01-tauri-react-client/plan.md (round 1)"
+  },
+  {
+    "date": "2026-06-23",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "tasks/01-tauri-react-client/plan.md (round 2)"
+  },
+  {
+    "date": "2026-06-23",
+    "mode": "PR Review",
+    "score": 81,
+    "findings": {
+      "critical": 0,
+      "warning": 2,
+      "suggestion": 1
+    },
+    "scope": "tasks/05-custom-data-dir/plan.md (round 1)"
+  },
+  {
+    "date": "2026-06-23",
+    "mode": "PR Review",
+    "score": 98,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "tasks/05-custom-data-dir/plan.md (round 2)"
+  },
+  {
+    "date": "2026-06-23",
+    "mode": "PR Review",
+    "score": 89,
+    "findings": {
+      "critical": 0,
+      "warning": 2,
+      "suggestion": 1
+    },
+    "scope": "05-custom-data-dir code (round 1)"
+  },
+  {
+    "date": "2026-06-23",
+    "mode": "PR Review",
+    "score": 100,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 0
+    },
+    "scope": "05-custom-data-dir review-plan.md"
+  },
+  {
+    "date": "2026-06-23",
+    "mode": "PR Review",
+    "score": 98,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "05-custom-data-dir code (round 2)"
+  },
+  {
+    "date": "2026-06-23",
+    "mode": "PR Review",
+    "score": 91,
+    "findings": {
+      "critical": 0,
+      "warning": 2,
+      "suggestion": 0
+    },
+    "scope": "tasks/06-move-files-on-path-change/plan.md (round 1)"
+  },
+  {
+    "date": "2026-06-23",
+    "mode": "PR Review",
+    "score": 98,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "tasks/06-move-files-on-path-change/plan.md (round 2)"
+  },
+  {
+    "date": "2026-06-23",
+    "mode": "PR Review",
+    "score": 96,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "06-move-files-on-path-change code (round 1)"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 88,
+    "findings": {
+      "critical": 0,
+      "warning": 2,
+      "suggestion": 2
+    },
+    "scope": "tasks/09-server-local-conflict/plan.md (round 1)"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "tasks/09-server-local-conflict/plan.md (round 2)"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 94,
+    "findings": {
+      "critical": 0,
+      "warning": 1,
+      "suggestion": 1
+    },
+    "scope": "09-server-local-conflict code (round 1)"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 100,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 0
+    },
+    "scope": "09-server-local-conflict review-plan.md"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 93,
+    "findings": {
+      "critical": 0,
+      "warning": 1,
+      "suggestion": 2
+    },
+    "scope": "tasks/11-add-project-context-from-app/plan.md (round 1)"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "tasks/11-add-project-context-from-app/plan.md (round 2)"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "tasks/11-add-project-context-from-app/plan.md (round 3, corrected mechanism)"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 96,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 2
+    },
+    "scope": "11-add-project-context-from-app code (round 1)"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 100,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 0
+    },
+    "scope": "11-add-project-context-from-app review-plan.md"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 93,
+    "findings": {
+      "critical": 0,
+      "warning": 1,
+      "suggestion": 2
+    },
+    "scope": "tasks/12-remove-project-context/plan.md (round 1)"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "tasks/12-remove-project-context/plan.md (round 2)"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 94,
+    "findings": {
+      "critical": 0,
+      "warning": 1,
+      "suggestion": 1
+    },
+    "scope": "12-remove-project-context code (round 1)"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "12-remove-project-context review-plan.md"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 98,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 2
+    },
+    "scope": "tasks/13-move-remove-into-dropdown/plan.md (round 1)"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "13-move-remove-into-dropdown code (round 1)"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 98,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 2
+    },
+    "scope": "tasks/14-dropdowns-to-modals/plan.md (round 1)"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 98,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 2
+    },
+    "scope": "14-dropdowns-to-modals code (round 1)"
+  },
+  {
+    "date": "2026-06-24",
+    "mode": "PR Review",
+    "score": 100,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 0
+    },
+    "scope": "tasks/14-dropdowns-to-modals/review-plan.md"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "tasks/15-remove-focus-border/plan.md (round 1)"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "15-remove-focus-border code (round 1)"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 100,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 0
+    },
+    "scope": "tasks/15-remove-focus-border/review-plan.md"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "tasks/16-sort-options/plan.md (round 1)"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "16-sort-options code (round 1)"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 100,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 0
+    },
+    "scope": "tasks/16-sort-options/review-plan.md"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "tasks/17-sort-direction-one-modal/plan.md (round 1)"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 98,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 2
+    },
+    "scope": "17-sort-direction-one-modal code (round 1)"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 100,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 0
+    },
+    "scope": "tasks/17-sort-direction-one-modal/review-plan.md"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "tasks/18-compact-ui-toggle/plan.md (round 1)"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 98,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 2
+    },
+    "scope": "18-compact-ui-toggle code (round 1)"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 100,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 0
+    },
+    "scope": "tasks/18-compact-ui-toggle/review-plan.md"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "tasks/19-android-safe-area/plan.md (round 1)"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "19-android-safe-area code (round 1)"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 100,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 0
+    },
+    "scope": "tasks/19-android-safe-area/review-plan.md"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "tasks/20-click-outside-modal-close/plan.md (round 1)"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "20-click-outside-modal-close code (round 1)"
+  },
+  {
+    "date": "2026-06-25",
+    "mode": "PR Review",
+    "score": 100,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 0
+    },
+    "scope": "tasks/20-click-outside-modal-close/review-plan.md"
+  },
+  {
+    "date": "2026-06-26",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "tasks/21-hide-pane-titles-mobile/plan.md (round 1)"
+  }
 ]
