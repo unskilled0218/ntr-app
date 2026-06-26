@@ -99,6 +99,7 @@ export default function AddForm({ serverLabels, onAdd, compact }: Props) {
   return (
     <>
       <form id="add-form" autoComplete="off" onSubmit={submit}>
+        {!compact && <div className="add-fields">{fields}</div>}
         <div className="add-row">
           <input
             id="add-input"
@@ -111,7 +112,6 @@ export default function AddForm({ serverLabels, onAdd, compact }: Props) {
           <button type="submit">Add</button>
           {compact && <OptionsModal ariaLabel="Task options">{fields}</OptionsModal>}
         </div>
-        {!compact && <div className="add-fields">{fields}</div>}
       </form>
       <LabelModal kind={modalKind} onConfirm={onConfirm} onClose={() => setModalKind(null)} />
     </>
