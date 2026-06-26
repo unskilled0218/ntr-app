@@ -37,6 +37,10 @@ function blockKind(line: string): string {
 // A dimmed, kept marker (e.g. `#`, `**`, `>`); the one place marker spans are built.
 const mark = (s: string) => `<span class="md-mark">${s}</span>`;
 
+// A dimmed, kept LINK marker (`[`, `](`, `)`): like mark() but additionally tagged so the CSS can hide
+// just link syntax (never heading #, bold **, etc.) when the line is not the one being edited.
+const linkMark = (s: string) => `<span class="md-mark md-link-mark">${s}</span>`;
+
 // A replace callback that wraps one emphasis run: the fixed marker re-emitted as dimmed marks
 // around a styled span, so textContent === the source run.
 const emph =
@@ -47,12 +51,20 @@ const emph =
 // Wrap emphasis and links on one already-escaped, non-code run, re-emitting every original marker
 // character inside an .md-mark span so textContent === the source run. Order: links, then bold,
 // then italic (so ** is not eaten by the single-* rule); every branch preserves characters.
+//
+// A link renders in ONE collapsed form: the text becomes an <a> (so it reads as a hyperlink and the
+// open gestures can find it), while the `[`, `](`, URL, and `)` are kept as text but tagged so the CSS
+// hides them — until the caret's line gains .md-edit, when they reveal for editing (see style.css). The
+// raw URL is carried on data-href (NOT href: a real href invites contenteditable's own click/drag and
+// URL normalisation; we open via the Tauri opener and identify links by the .md-link class). `t`/`u` are
+// already HTML-escaped here, so `u` is safe in the double-quoted attribute and decodes back to the raw
+// URL via el.dataset.href. Every character is still emitted, so THE LINE INVARIANT holds.
 function formatInline(run: string): string {
   return run
     .replace(
       /\[([^\]]+)\]\(([^)]+)\)/g,
       (_, t, u) =>
-        `${mark("[")}<span class="md-link">${t}</span>${mark("](")}<span class="md-url">${u}</span>${mark(")")}`,
+        `${linkMark("[")}<a class="md-link" data-href="${u}">${t}</a>${linkMark("](")}<span class="md-url">${u}</span>${linkMark(")")}`,
     )
     .replace(/\*\*([^*]+)\*\*/g, emph("**", "md-strong"))
     .replace(/__([^_]+)__/g, emph("__", "md-strong"))

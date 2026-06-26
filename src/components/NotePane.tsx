@@ -11,8 +11,11 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import { errMsg, getNote, putNote } from "../api";
 import { NOTE_SAVE_DELAY_MS } from "../config";
 import { getCaret, readNoteText, setEditorText } from "../lib/caret";
+import { setEditLine } from "../lib/editLine";
 import { classifyNoteEvent } from "../lib/noteSync";
 import NoteConflictDialog from "./NoteConflictDialog";
+import OpenLinkDialog from "./OpenLinkDialog";
+import { useLinkGestures } from "./useLinkGestures";
 
 export interface NotePaneHandle {
   onNoteChange: () => void;
@@ -20,6 +23,7 @@ export interface NotePaneHandle {
 
 const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   const editorRef = useRef<HTMLDivElement>(null);
+  const links = useLinkGestures();
 
   // The note text as last successfully persisted. The editor is "dirty" when it differs.
   const savedNote = useRef("");
@@ -38,6 +42,22 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   const editor = () => editorRef.current!;
   const noteDirty = () => readNoteText(editor()) !== savedNote.current;
   const setNoteStatus = (msg: string, isError: boolean) => setStatus({ msg, isError });
+
+  // Reveal the raw Markdown on whichever line the caret is on (collapse every other line's links). null
+  // node when the editor is unfocused, which collapses every line.
+  const markEditLine = () => {
+    const sel = window.getSelection();
+    const focused = document.activeElement === editor() && sel && sel.rangeCount > 0;
+    setEditLine(editor(), focused ? sel!.getRangeAt(0).startContainer : null);
+  };
+
+  // The component's single editor-write path: render text + restore caret (the shared setEditorText),
+  // then re-tag the caret's line so its links reveal. Every render path goes through here, so the reveal
+  // cannot drift out of sync with a render (re-rendering innerHTML drops the .md-edit class).
+  const paint = (text: string, caret: number | null) => {
+    setEditorText(editor(), text, caret);
+    markEditLine();
+  };
 
   // (Re)arm the debounce: a save fires NOTE_SAVE_DELAY_MS after the last keystroke.
   const scheduleNoteSave = () => {
@@ -79,7 +99,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   // Make the editor show `text` as the saved, clean note: new base, render in place, clear status.
   const adoptNote = (text: string) => {
     savedNote.current = text;
-    setEditorText(editor(), text, null);
+    paint(text, null);
     setNoteStatus("", false);
   };
 
@@ -154,14 +174,14 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   }
 
   // Re-highlight in place, preserving the caret.
-  const rerenderNote = () => setEditorText(editor(), readNoteText(editor()), getCaret(editor()));
+  const rerenderNote = () => paint(readNoteText(editor()), getCaret(editor()));
 
   // Insert `insert` at the caret, operating on the logical text so the DOM stays flat (one div per
   // line). Used by Enter ("\n") and paste (clipboard text/plain).
   const spliceNote = (insert: string) => {
     const text = readNoteText(editor());
     const at = getCaret(editor()) ?? text.length;
-    setEditorText(editor(), text.slice(0, at) + insert + text.slice(at), at + insert.length);
+    paint(text.slice(0, at) + insert + text.slice(at), at + insert.length);
     setNoteStatus("Editing…", false);
     scheduleNoteSave();
   };
@@ -171,6 +191,20 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     loadNote();
     window.addEventListener("pagehide", flushNoteBeacon);
     return () => window.removeEventListener("pagehide", flushNoteBeacon);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Caret moves from plain clicks and arrow keys do not fire onInput, so the edit-line reveal is driven
+  // from selectionchange. It guards on focus FIRST, so a selection change elsewhere in the app returns
+  // immediately rather than walking the note's lines; collapse-on-leave is handled by onBlur. Toggling a
+  // class never touches the selection, so this cannot re-enter via selectionchange.
+  useEffect(() => {
+    const onSelect = () => {
+      if (composingNote.current || document.activeElement !== editor()) return;
+      markEditLine();
+    };
+    document.addEventListener("selectionchange", onSelect);
+    return () => document.removeEventListener("selectionchange", onSelect);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -204,7 +238,11 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
           e.preventDefault();
           spliceNote(e.clipboardData.getData("text/plain"));
         }}
-        onBlur={() => void flushNote()}
+        {...links.handlers}
+        onBlur={() => {
+          void flushNote();
+          setEditLine(editor(), null); // collapse every link when focus leaves the note
+        }}
         onFocus={() => void reconcileNote()}
         onCompositionStart={() => {
           composingNote.current = true;
@@ -228,6 +266,8 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
         onUseTheirs={() => resolveNoteConflict(true)}
         onClose={() => resolveNoteConflict(false)}
       />
+
+      <OpenLinkDialog url={links.pending} onConfirm={links.confirm} onCancel={links.dismiss} />
     </section>
   );
 });
