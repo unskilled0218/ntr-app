@@ -349,6 +349,13 @@ form#add-form button[type="submit"] {
   flex-wrap: wrap;
 }
 
+/* In compact mode the heading and filter row share one line (the filters collapse to an
+   "Options" trigger, so there's room beside the "todo" heading); normal mode stacks them. */
+.todo-header--compact {
+  display: flex;
+  justify-content: space-between;
+}
+
 /* The todo scroll region: the heading, add form, and filters above it stay fixed (the "menu"),
    and only this list area scrolls. #empty/#error live inside it, so they scroll with the list. */
 .task-list {
