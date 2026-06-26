@@ -515,5 +515,27 @@
       "suggestion": 1
     },
     "scope": "tasks/21-hide-pane-titles-mobile/plan.md (round 1)"
+  },
+  {
+    "date": "2026-06-26",
+    "mode": "PR Review",
+    "score": 100,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 0
+    },
+    "scope": "21-hide-pane-titles-mobile code (round 1)"
+  },
+  {
+    "date": "2026-06-26",
+    "mode": "PR Review",
+    "score": 100,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 0
+    },
+    "scope": "tasks/21-hide-pane-titles-mobile/review-plan.md"
   }
 ]
