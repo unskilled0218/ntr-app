@@ -174,7 +174,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
 
   return (
     <section className="pane todo-pane" id="todo-view">
-      <div>
+      <div className={compact ? "todo-header todo-header--compact" : "todo-header"}>
         <h1>todo</h1>
 
         <FilterBar
