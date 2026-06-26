@@ -614,5 +614,16 @@
       "suggestion": 0
     },
     "scope": "tasks/23-android-keyboard-adjustresize/review-plan.md"
+  },
+  {
+    "date": "2026-06-26",
+    "mode": "PR Review",
+    "score": 99,
+    "findings": {
+      "critical": 0,
+      "warning": 0,
+      "suggestion": 1
+    },
+    "scope": "tasks/24-persist-view-options/plan.md (round 1)"
   }
 ]

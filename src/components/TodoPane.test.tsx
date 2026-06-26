@@ -55,7 +55,7 @@ beforeEach(() => {
   vi.mocked(listTasks).mockResolvedValue(TASKS);
   vi.mocked(updateTask).mockResolvedValue(TASKS[0]);
 });
-afterEach(() => { cleanup(); });
+afterEach(() => { cleanup(); localStorage.clear(); });
 
 describe("TodoPane removal glue", () => {
   it("removing a project updates every task that carries it and reloads", async () => {
@@ -92,5 +92,29 @@ describe("TodoPane removal glue", () => {
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("network error"));
     // The catch path reloads too, so the UI reflects whatever landed before the failure.
     await waitFor(() => expect(vi.mocked(listTasks).mock.calls.length).toBeGreaterThan(callsBefore));
+  });
+});
+
+describe("TodoPane view-option persistence", () => {
+  it("writes a Status pick through to the local cache", async () => {
+    render(<TodoPane compact={false} />);
+
+    // Open the Status picker and choose Active; the change handler persists it.
+    fireEvent.click(screen.getByRole("button", { name: /status filter/i }));
+    const picker = within(document.querySelector("dialog.select-modal[open]") as HTMLElement);
+    fireEvent.click(picker.getByRole("button", { name: "Active" }));
+
+    await waitFor(() => expect(localStorage.getItem("ntr.status")).toBe("active"));
+  });
+
+  it("seeds the status from the cache on mount, so the first fetch uses it", async () => {
+    // A persisted Active status must drive the mount refresh's filter (completed: false),
+    // proving the lazy useState(getStatus) seed is read before the first listTasks call.
+    localStorage.setItem("ntr.status", "active");
+    render(<TodoPane compact={false} />);
+
+    await waitFor(() =>
+      expect(vi.mocked(listTasks)).toHaveBeenCalledWith(expect.objectContaining({ completed: false })),
+    );
   });
 });

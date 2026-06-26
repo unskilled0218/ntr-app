@@ -3,11 +3,17 @@ import {
   getAllowInvalidCert,
   getCompactUi,
   getConflictStrategy,
+  getDirection,
   getServerUrl,
+  getSort,
+  getStatus,
   setAllowInvalidCert,
   setCompactUi,
   setConflictStrategy,
+  setDirection,
   setServerUrl,
+  setSort,
+  setStatus,
 } from "./settings";
 
 afterEach(() => {
@@ -107,5 +113,77 @@ describe("getCompactUi / setCompactUi", () => {
     setCompactUi(false);
     expect(localStorage.getItem("ntr.compactUi")).toBeNull();
     expect(getCompactUi()).toBe(false);
+  });
+});
+
+describe("getStatus / setStatus", () => {
+  it("defaults to 'all' when nothing is stored", () => {
+    expect(getStatus()).toBe("all");
+  });
+
+  it("falls back to 'all' for a value not in STATUSES", () => {
+    localStorage.setItem("ntr.status", "bogus");
+    expect(getStatus()).toBe("all");
+  });
+
+  it("round-trips a valid non-default status", () => {
+    setStatus("active");
+    expect(localStorage.getItem("ntr.status")).toBe("active");
+    expect(getStatus()).toBe("active");
+  });
+
+  it("removes the key for 'all' (default is the absence of the key)", () => {
+    setStatus("active");
+    setStatus("all");
+    expect(localStorage.getItem("ntr.status")).toBeNull();
+    expect(getStatus()).toBe("all");
+  });
+});
+
+describe("getSort / setSort", () => {
+  it("defaults to 'file' when nothing is stored", () => {
+    expect(getSort()).toBe("file");
+  });
+
+  it("falls back to 'file' for a key not in SORTS (e.g. the removed 'alpha')", () => {
+    localStorage.setItem("ntr.sort", "alpha");
+    expect(getSort()).toBe("file");
+  });
+
+  it("round-trips a valid non-default sort key", () => {
+    setSort("priority");
+    expect(localStorage.getItem("ntr.sort")).toBe("priority");
+    expect(getSort()).toBe("priority");
+  });
+
+  it("removes the key for 'file' (default is the absence of the key)", () => {
+    setSort("priority");
+    setSort("file");
+    expect(localStorage.getItem("ntr.sort")).toBeNull();
+    expect(getSort()).toBe("file");
+  });
+});
+
+describe("getDirection / setDirection", () => {
+  it("defaults to 'asc' when nothing is stored", () => {
+    expect(getDirection()).toBe("asc");
+  });
+
+  it("falls back to 'asc' for a value not in DIRECTIONS", () => {
+    localStorage.setItem("ntr.sortDir", "sideways");
+    expect(getDirection()).toBe("asc");
+  });
+
+  it("round-trips 'desc'", () => {
+    setDirection("desc");
+    expect(localStorage.getItem("ntr.sortDir")).toBe("desc");
+    expect(getDirection()).toBe("desc");
+  });
+
+  it("removes the key for 'asc' (default is the absence of the key)", () => {
+    setDirection("desc");
+    setDirection("asc");
+    expect(localStorage.getItem("ntr.sortDir")).toBeNull();
+    expect(getDirection()).toBe("asc");
   });
 });
