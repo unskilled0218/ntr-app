@@ -15,6 +15,14 @@ import {
 } from "../api";
 import EditTaskModal from "./EditTaskModal";
 import { sortTasks, STATUSES, type Direction, type Kind, type Status } from "../config";
+import {
+  getStatus,
+  setStatus as persistStatus,
+  getSort,
+  setSort as persistSort,
+  getDirection,
+  setDirection as persistDir,
+} from "../settings";
 import { planLabelRemoval } from "../labels";
 import AddForm from "./AddForm";
 import FilterBar from "./FilterBar";
@@ -32,11 +40,13 @@ interface Props {
 type Labels = { project: string[]; context: string[] };
 
 const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
-  const [status, setStatus] = useState<Status>("all");
+  // Status / sort / direction are seeded from the local cache (lazy useState initializer runs once
+  // on mount) and written back in their change handlers below, so the view options survive relaunch.
+  const [status, setStatus] = useState<Status>(getStatus);
   const [project, setProject] = useState("");
   const [context, setContext] = useState("");
-  const [sort, setSort] = useState("file");
-  const [dir, setDir] = useState<Direction>("asc");
+  const [sort, setSort] = useState(getSort);
+  const [dir, setDir] = useState<Direction>(getDirection);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [serverLabels, setServerLabels] = useState<Labels>({ project: [], context: [] });
   const [error, setError] = useState("");
@@ -185,11 +195,11 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
           dir={dir}
           compact={compact}
           serverLabels={serverLabels}
-          onStatus={setStatus}
+          onStatus={(s) => { setStatus(s); persistStatus(s); }}
           onProject={setProject}
           onContext={setContext}
-          onSort={setSort}
-          onDir={(d) => setDir(d as Direction)}
+          onSort={(s) => { setSort(s); persistSort(s); }}
+          onDir={(d) => { const next = d as Direction; setDir(next); persistDir(next); }}
           onRemove={(kind, name) => setRemoving({ kind, name })}
         />
       </div>

@@ -1,7 +1,12 @@
+import { DIRECTIONS, SORTS, STATUSES, type Direction, type Status } from "./config";
+
 const KEY = "ntr.serverUrl";
 const STRATEGY_KEY = "ntr.conflictStrategy";
 const ALLOW_INVALID_CERT_KEY = "ntr.allowInvalidCert";
 const COMPACT_UI_KEY = "ntr.compactUi";
+const STATUS_KEY = "ntr.status";
+const SORT_KEY = "ntr.sort";
+const SORT_DIR_KEY = "ntr.sortDir";
 
 export function getServerUrl(): string {
   return localStorage.getItem(KEY) ?? "";
@@ -47,4 +52,38 @@ export function getConflictStrategy(): ConflictStrategy {
 export function setConflictStrategy(s: ConflictStrategy): void {
   // "ask" is the default; represent it by the absence of the key, as setServerUrl does.
   s === "ask" ? localStorage.removeItem(STRATEGY_KEY) : localStorage.setItem(STRATEGY_KEY, s);
+}
+
+// The todo view options — status filter, sort key, sort direction — persisted to the local cache
+// only (never sent to the server): they describe how THIS client views the list, not the tasks
+// themselves. Each is validated against its config table on read, so a stored value that no longer
+// exists (e.g. a sort key dropped in a later version, as `alpha` was in task 16) degrades to the
+// default instead of throwing in sortTasks. The default is the absence of the key, exactly as
+// setServerUrl / setConflictStrategy represent theirs.
+
+export function getStatus(): Status {
+  const v = localStorage.getItem(STATUS_KEY);
+  return v && v in STATUSES ? (v as Status) : "all";
+}
+
+export function setStatus(s: Status): void {
+  s === "all" ? localStorage.removeItem(STATUS_KEY) : localStorage.setItem(STATUS_KEY, s);
+}
+
+export function getSort(): string {
+  const v = localStorage.getItem(SORT_KEY);
+  return v && v in SORTS ? v : "file";
+}
+
+export function setSort(s: string): void {
+  s === "file" ? localStorage.removeItem(SORT_KEY) : localStorage.setItem(SORT_KEY, s);
+}
+
+export function getDirection(): Direction {
+  const v = localStorage.getItem(SORT_DIR_KEY);
+  return v && v in DIRECTIONS ? (v as Direction) : "asc";
+}
+
+export function setDirection(d: Direction): void {
+  d === "asc" ? localStorage.removeItem(SORT_DIR_KEY) : localStorage.setItem(SORT_DIR_KEY, d);
 }
