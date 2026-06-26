@@ -49,6 +49,34 @@ describe("highlightMarkdown — styling classes", () => {
   });
 });
 
+describe("highlightMarkdown — links", () => {
+  it("renders the text as an <a> with the raw URL on data-href, keeping markers and URL as tagged text", () => {
+    const html = highlightMarkdown("see [docs](https://x.io/a?b=1&c=2)");
+    // The text becomes a clickable <a>; the URL rides on data-href (escaped & decodes back to raw).
+    expect(html).toContain('<a class="md-link" data-href="https://x.io/a?b=1&amp;c=2">docs</a>');
+    // The brackets are kept but tagged so the CSS can hide just link syntax.
+    expect(html).toContain('class="md-mark md-link-mark"');
+    // The URL is also kept as visible-when-editing text (so it round-trips and stays editable).
+    expect(html).toContain('<span class="md-url">https://x.io/a?b=1&amp;c=2</span>');
+  });
+
+  it("keeps every link character so the line invariant holds (markers/URL hidden, not removed)", () => {
+    const src = "a [link](https://example.com) inline";
+    const root = document.createElement("div");
+    root.innerHTML = highlightMarkdown(src);
+    expect(readNoteText(root)).toBe(src); // textContent === source, brackets and URL included
+  });
+
+  it("escapes a hostile URL so it cannot break out of the data-href attribute", () => {
+    const html = highlightMarkdown('[x](http://e/"><img src=y onerror=z>)');
+    const a = html.slice(html.indexOf('data-href="') + 'data-href="'.length, html.indexOf('">x</a>'));
+    // No raw quote or angle bracket survives inside the attribute value — no markup injection.
+    expect(a).not.toContain('"');
+    expect(a).not.toContain("<");
+    expect(a).not.toContain(">");
+  });
+});
+
 describe("escapeHtml", () => {
   it("escapes the five significant characters and preserves length-by-decoding", () => {
     expect(escapeHtml("<a & b>")).toBe("&lt;a &amp; b&gt;");

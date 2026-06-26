@@ -38,6 +38,10 @@ export const PRIORITY_OPTIONS = [
 // How long after the last keystroke the note auto-saves. One named source, not a magic number.
 export const NOTE_SAVE_DELAY_MS = 800;
 
+// How long a touch must be held on a note link before the "Open link?" modal is raised. One named
+// source, not a magic number.
+export const LONG_PRESS_MS = 500;
+
 // Status filter options keyed by their <select> value. `completed` is the query param the
 // option maps to (null = omit it), kept beside the label so the query builder never re-decides
 // what a status means.

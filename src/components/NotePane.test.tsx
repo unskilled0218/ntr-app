@@ -94,3 +94,45 @@ describe("NotePane conflict resolution", () => {
     expect(putNote).toHaveBeenCalledWith("baseX");
   });
 });
+
+describe("NotePane link reveal", () => {
+  // Put the caret inside `line`'s first text node and announce it the way a real caret move would.
+  function caretInto(line: Element) {
+    const range = document.createRange();
+    range.setStart(line.firstChild!, 0);
+    range.collapse(true);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  }
+
+  it("reveals the raw Markdown only on the line that holds the caret", async () => {
+    getNote.mockResolvedValue(["[a](https://a.io)", "[b](https://b.io)"].join("\n"));
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks(); // load the two link lines
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    const [lineA, lineB] = Array.from(editor.children);
+
+    // On load the editor is unfocused → every link collapsed (no line is being edited).
+    expect(lineA.classList.contains("md-edit")).toBe(false);
+    expect(lineB.classList.contains("md-edit")).toBe(false);
+
+    // Focus and put the caret on the first link's line → only that line reveals.
+    act(() => editor.focus());
+    act(() => caretInto(lineA));
+    expect(lineA.classList.contains("md-edit")).toBe(true);
+    expect(lineB.classList.contains("md-edit")).toBe(false);
+
+    // Move the caret to the second line → the reveal moves with it.
+    act(() => caretInto(lineB));
+    expect(lineA.classList.contains("md-edit")).toBe(false);
+    expect(lineB.classList.contains("md-edit")).toBe(true);
+
+    // Blur collapses everything again.
+    act(() => editor.blur());
+    expect(lineA.classList.contains("md-edit")).toBe(false);
+    expect(lineB.classList.contains("md-edit")).toBe(false);
+  });
+});

@@ -259,8 +259,21 @@ h1 {
 .md-em {
   font-style: italic;
 }
-.md-link,
+/* A Markdown link reads as just its text (a hyperlink); the brackets and URL are hidden until the
+   caret is on that line, when the line gains .md-edit and the raw [text](url) is revealed for editing.
+   The characters are always present in the DOM (THE LINE INVARIANT) — only their visibility changes. */
+.md-link {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.md-link-mark,
 .md-url {
+  display: none; /* link syntax is hidden in the collapsed (default) state */
+}
+.md-line.md-edit .md-link-mark,
+.md-line.md-edit .md-url {
+  display: inline; /* the caret's line shows the raw Markdown so it can be edited */
   color: var(--accent);
 }
 
