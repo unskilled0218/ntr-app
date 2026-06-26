@@ -13,7 +13,7 @@
   /* System-bar / display-cutout insets, exposed by viewport-fit=cover (index.html) on Android
      edge-to-edge (MainActivity.enableEdgeToEdge). 0px wherever there is no inset (desktop, no
      cutout), so the layout below is unchanged off-device. Named once here; consumed only at the
-     few elements that touch a screen edge (main, the settings button, the mobile bottom-nav). */
+     few elements that touch a screen edge (main and the mobile bottom-nav). */
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -66,6 +66,22 @@ h1 {
   margin: 0 0 1rem;
 }
 
+/* The desktop title row: app wordmark on the left, the connection badge on the right, in one line
+   above the panes. A non-growing flex child of the main column, so .panes (flex: 1) keeps the rest.
+   Hidden on mobile (the @media block), where the badge moves into the bottom nav. */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.app-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--fg);
+}
+
 .panes {
   display: flex;
   gap: 1.5rem;
@@ -98,6 +114,12 @@ h1 {
 @media (max-width: 720px) {
   main {
     padding-bottom: 0; /* the bottom-nav sits flush against the viewport edge */
+  }
+
+  /* The title row is desktop-only; on mobile its space is reclaimed and the settings badge
+     lives in the bottom nav instead. */
+  .app-header {
+    display: none;
   }
 
   .pane {
@@ -145,6 +167,12 @@ h1 {
   .bottom-nav button.is-active {
     color: var(--accent);
     font-weight: 600;
+  }
+  /* The settings badge is a compact trailing item, not a third equal segment: Note/Todo keep their
+     flex: 1 halves and this sits to their right at its natural width. It inherits the plain,
+     borderless .bottom-nav button look above and never gets is-active (it is not a view). */
+  .bottom-nav .settings-btn {
+    flex: 0 0 auto;
   }
 }
 
@@ -629,15 +657,9 @@ dialog#edit-task-modal::backdrop {
   color: var(--muted);
 }
 
-/* Settings toggle — fixed top-right, shows [S] (server) or [L] (local) as a mode badge. */
+/* Connection-mode badge: [S] (server) or [L] (local). Positioned by its container — the desktop
+   .app-header or the mobile .bottom-nav — not by itself, so it needs no offsets or inset math. */
 .settings-btn {
-  position: absolute;
-  /* Absolute offsets are measured from main's padding-box edge (the screen edge under
-     edge-to-edge), so main's new padding does not push this chip inward — it adds the inset
-     itself to clear the status bar (top) and any right-side cutout. calc(inset + gap), not max(),
-     so the chip keeps its full gap below the bar. With no inset this is the original 0.5rem/0.75rem. */
-  top: calc(var(--safe-top) + 0.5rem);
-  right: calc(var(--safe-right) + 0.75rem);
   padding: 0.2rem 0.45rem;
   font-size: 0.75rem;
   font-family: ui-monospace, monospace;
@@ -646,7 +668,6 @@ dialog#edit-task-modal::backdrop {
   background: #fff;
   color: var(--muted);
   cursor: pointer;
-  z-index: 10;
 }
 
 /* Settings dialog — same shape as the label-modal for visual consistency. */
