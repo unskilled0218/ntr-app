@@ -113,6 +113,13 @@ h1 {
     flex: none; /* a fixed-height bar; .panes (flex: 1) takes the remaining height */
     border-top: 1px solid var(--border);
     background: #fff;
+    /* Cancel main's horizontal padding so the bar spans edge-to-edge, then re-add the safe-area
+       insets as padding so the buttons clear any display cutout while the white fill + border still
+       reach the screen edges. */
+    margin-left: calc(-1 * max(1rem, var(--safe-left)));
+    margin-right: calc(-1 * max(1rem, var(--safe-right)));
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
     /* Sit flush to the bottom edge but reserve the gesture-bar depth below the buttons: the white
        fill + top border reach the screen edge (edge-to-edge look kept) while the Note/Todo buttons
        stay above the gesture bar. main keeps padding-bottom: 0 here, so the nav owns this edge. */
