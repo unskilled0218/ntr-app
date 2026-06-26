@@ -35,6 +35,25 @@ cd src-tauri && cargo test      # Rust tests
 cd src-tauri && cargo clippy --all-targets
 ```
 
+## Release builds
+
+```sh
+scripts/build-release.sh           # desktop + android
+scripts/build-release.sh android   # android only
+```
+
+Artifacts land in `release/<version>/{desktop,android}/`.
+
+### Android signing
+
+A release APK/AAB must be signed or Android refuses to install it on a real device ("App not installed" / `INSTALL_PARSE_FAILED_NO_CERTIFICATES`). Create a signing keystore once:
+
+```sh
+scripts/android-keystore.sh        # prompts for a keystore password
+```
+
+This writes `src-tauri/gen/android/release.keystore` and `keystore.properties` (both gitignored). After that, `tauri android build` produces a signed `app-universal-release.apk` you can install via `adb install` or by copying it to the device. Back up `release.keystore`: losing it means you can no longer ship updates to the same app. Without the keystore the build still runs but emits an unsigned, non-installable APK.
+
 ## Stack
 
 - [Tauri v2](https://tauri.app) — desktop shell, file I/O commands, file-watcher events
