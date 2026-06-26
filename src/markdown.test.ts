@@ -67,6 +67,28 @@ describe("highlightMarkdown — links", () => {
     expect(readNoteText(root)).toBe(src); // textContent === source, brackets and URL included
   });
 
+  it("emits a URL containing _ and * verbatim, never mangling it into emphasis", () => {
+    // A real-world URL whose path/fragment holds underscores (and an asterisk) must reach data-href and
+    // the md-url span unchanged — emphasis must not rewrite _docs_ or *x* inside the link.
+    const url = "https://h.io/md_docs_2awesome__sunshine.html#a_b*c*d";
+    const html = highlightMarkdown(`see [v](${url})`);
+    expect(html).toContain(`<a class="md-link" data-href="${url}">v</a>`);
+    expect(html).toContain(`<span class="md-url">${url}</span>`);
+    expect(html).not.toContain("md-em"); // no italic injected into the URL
+    expect(html).not.toContain("md-strong"); // no bold injected into the URL
+    // And it still round-trips (the underscores/asterisks are preserved as text).
+    const root = document.createElement("div");
+    root.innerHTML = html;
+    expect(readNoteText(root)).toBe(`see [v](${url})`);
+  });
+
+  it("still applies emphasis to text outside a link on the same line", () => {
+    const html = highlightMarkdown("**bold** then [t](http://x) and _em_");
+    expect(html).toContain("md-strong"); // **bold** before the link
+    expect(html).toContain("md-em"); // _em_ after the link
+    expect(html).toContain('data-href="http://x"');
+  });
+
   it("escapes a hostile URL so it cannot break out of the data-href attribute", () => {
     const html = highlightMarkdown('[x](http://e/"><img src=y onerror=z>)');
     const a = html.slice(html.indexOf('data-href="') + 'data-href="'.length, html.indexOf('">x</a>'));

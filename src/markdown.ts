@@ -48,28 +48,46 @@ const emph =
   (_: string, t: string) =>
     `${mark(marker)}<span class="${cls}">${t}</span>${mark(marker)}`;
 
-// Wrap emphasis and links on one already-escaped, non-code run, re-emitting every original marker
-// character inside an .md-mark span so textContent === the source run. Order: links, then bold,
-// then italic (so ** is not eaten by the single-* rule); every branch preserves characters.
-//
-// A link renders in ONE collapsed form: the text becomes an <a> (so it reads as a hyperlink and the
-// open gestures can find it), while the `[`, `](`, URL, and `)` are kept as text but tagged so the CSS
-// hides them — until the caret's line gains .md-edit, when they reveal for editing (see style.css). The
-// raw URL is carried on data-href (NOT href: a real href invites contenteditable's own click/drag and
-// URL normalisation; we open via the Tauri opener and identify links by the .md-link class). `t`/`u` are
-// already HTML-escaped here, so `u` is safe in the double-quoted attribute and decodes back to the raw
-// URL via el.dataset.href. Every character is still emitted, so THE LINE INVARIANT holds.
-function formatInline(run: string): string {
+// One [text](url): the text, the URL, and the whole-match recogniser. The split form carries the `g`
+// flag and a capturing group so split() keeps the links as odd segments; LINK (no `g`) re-parses one
+// such segment back into its text and URL.
+const LINK = /\[([^\]]+)\]\(([^)]+)\)/;
+const LINK_SPLIT = /(\[[^\]]+\]\([^)]+\))/g;
+
+// Render one already-escaped [text](url) as its ONE collapsed form: the text becomes an <a> (so it reads
+// as a hyperlink and the open gestures can find it), while the `[`, `](`, URL, and `)` are kept as text
+// but tagged so the CSS hides them — until the caret's line gains .md-edit, when they reveal for editing
+// (see style.css). The raw URL is carried on data-href (NOT href: a real href invites contenteditable's
+// own click/drag and URL normalisation; we open via the Tauri opener and identify links by the .md-link
+// class). The URL is emitted verbatim into both the attribute and the .md-url span — never run through
+// emphasis — so a URL containing `_` or `*` cannot be mangled. `t`/`u` are already HTML-escaped, so `u`
+// is safe in the double-quoted attribute and decodes back to the raw URL via el.dataset.href. Every
+// character is still emitted, so THE LINE INVARIANT holds.
+function renderLink(link: string): string {
+  const [, t, u] = link.match(LINK)!;
+  return `${linkMark("[")}<a class="md-link" data-href="${u}">${t}</a>${linkMark("](")}<span class="md-url">${u}</span>${linkMark(")")}`;
+}
+
+// Wrap bold/italic emphasis on one already-escaped run that contains NO link, re-emitting every marker
+// inside an .md-mark span so textContent === the source. Order: bold before italic so ** is not eaten by
+// the single-* rule; every branch preserves characters.
+function emphasize(run: string): string {
   return run
-    .replace(
-      /\[([^\]]+)\]\(([^)]+)\)/g,
-      (_, t, u) =>
-        `${linkMark("[")}<a class="md-link" data-href="${u}">${t}</a>${linkMark("](")}<span class="md-url">${u}</span>${linkMark(")")}`,
-    )
     .replace(/\*\*([^*]+)\*\*/g, emph("**", "md-strong"))
     .replace(/__([^_]+)__/g, emph("__", "md-strong"))
     .replace(/\*([^*]+)\*/g, emph("*", "md-em"))
     .replace(/_([^_]+)_/g, emph("_", "md-em"));
+}
+
+// Format emphasis and links on one already-escaped, non-code run. Links are partitioned out FIRST (the
+// odd segments of the split) and rendered verbatim; emphasis is applied only to the remaining non-link
+// text. This ordering is essential: a link's URL must be emitted exactly, so running emphasis over the
+// link markup (as a chained .replace would) cannot turn an underscore/asterisk inside a URL into <em>.
+function formatInline(run: string): string {
+  return run
+    .split(LINK_SPLIT)
+    .map((seg, i) => (i % 2 ? renderLink(seg) : emphasize(seg)))
+    .join("");
 }
 
 // Inline highlight of one already-escaped run: partition `code` spans (odd segments) from the
