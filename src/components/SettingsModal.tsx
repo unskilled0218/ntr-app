@@ -5,11 +5,14 @@ import {
   getCompactUi,
   getConflictStrategy,
   getServerUrl,
+  getStartupView,
   setAllowInvalidCert,
   setCompactUi,
   setConflictStrategy,
   setServerUrl,
+  setStartupView,
   type ConflictStrategy,
+  type StartupView,
 } from "../settings";
 import SelectField, { type FieldOption } from "./SelectField";
 import { useBackdropClose } from "./useBackdropClose";
@@ -19,6 +22,12 @@ const STRATEGY_OPTIONS: FieldOption[] = [
   { value: "ask", label: "Ask every time" },
   { value: "server", label: "Always use server" },
   { value: "local", label: "Always use local" },
+];
+
+const STARTUP_VIEW_OPTIONS: FieldOption[] = [
+  { value: "note", label: "Note" },
+  { value: "todo", label: "Todo" },
+  { value: "last", label: "Last opened" },
 ];
 
 interface Props {
@@ -35,6 +44,7 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [strategy, setStrategy] = useState<ConflictStrategy>("ask");
   const [allowInvalidCert, setAllowInvalidCertState] = useState(false);
   const [compact, setCompactState] = useState(false);
+  const [startupView, setStartupViewState] = useState<StartupView>("note");
   const current = getServerUrl();
 
   useEffect(() => {
@@ -47,6 +57,7 @@ export default function SettingsModal({ open, onClose }: Props) {
       setStrategy(getConflictStrategy());
       setAllowInvalidCertState(getAllowInvalidCert());
       setCompactState(getCompactUi());
+      setStartupViewState(getStartupView());
       getDataDir().then(setDirInput).catch(() => {});
       el.showModal();
     } else {
@@ -173,6 +184,22 @@ export default function SettingsModal({ open, onClose }: Props) {
         </label>
         <p className="settings-hint">
           Collapse the task fields and filters into "Options" buttons.
+        </p>
+        <label>
+          Startup page
+          <SelectField
+            ariaLabel="Startup page"
+            value={startupView}
+            options={STARTUP_VIEW_OPTIONS}
+            onChange={(v) => {
+              const s = v as StartupView;
+              setStartupViewState(s);
+              setStartupView(s);
+            }}
+          />
+        </label>
+        <p className="settings-hint">
+          Which pane opens first on mobile. Desktop always shows both.
         </p>
 
 

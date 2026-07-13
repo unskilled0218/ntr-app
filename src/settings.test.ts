@@ -4,15 +4,19 @@ import {
   getCompactUi,
   getConflictStrategy,
   getDirection,
+  getLastView,
   getServerUrl,
   getSort,
+  getStartupView,
   getStatus,
   setAllowInvalidCert,
   setCompactUi,
   setConflictStrategy,
   setDirection,
+  setLastView,
   setServerUrl,
   setSort,
+  setStartupView,
   setStatus,
 } from "./settings";
 
@@ -185,5 +189,53 @@ describe("getDirection / setDirection", () => {
     setDirection("asc");
     expect(localStorage.getItem("ntr.sortDir")).toBeNull();
     expect(getDirection()).toBe("asc");
+  });
+});
+
+describe("getStartupView / setStartupView", () => {
+  it("defaults to 'note' when nothing is stored", () => {
+    expect(getStartupView()).toBe("note");
+  });
+
+  it("round-trips 'todo' and 'last'", () => {
+    setStartupView("todo");
+    expect(getStartupView()).toBe("todo");
+    setStartupView("last");
+    expect(getStartupView()).toBe("last");
+  });
+
+  it("falls back to 'note' for an unrecognised stored value", () => {
+    localStorage.setItem("ntr.startupView", "bogus");
+    expect(getStartupView()).toBe("note");
+  });
+
+  it("removes the key for 'note' (default is the absence of the key)", () => {
+    setStartupView("todo");
+    setStartupView("note");
+    expect(localStorage.getItem("ntr.startupView")).toBeNull();
+    expect(getStartupView()).toBe("note");
+  });
+});
+
+describe("getLastView / setLastView", () => {
+  it("defaults to 'note' when nothing is stored", () => {
+    expect(getLastView()).toBe("note");
+  });
+
+  it("round-trips 'todo'", () => {
+    setLastView("todo");
+    expect(getLastView()).toBe("todo");
+  });
+
+  it("falls back to 'note' for an unrecognised stored value", () => {
+    localStorage.setItem("ntr.lastView", "bogus");
+    expect(getLastView()).toBe("note");
+  });
+
+  it("stores 'note' as an observed last view instead of removing the key", () => {
+    setLastView("todo");
+    setLastView("note");
+    expect(localStorage.getItem("ntr.lastView")).toBe("note");
+    expect(getLastView()).toBe("note");
   });
 });

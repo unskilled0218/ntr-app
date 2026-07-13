@@ -13,7 +13,7 @@ import {
   type Conflict,
   type ConflictChoice,
 } from "./api";
-import { getCompactUi } from "./settings";
+import { getCompactUi, getLastView, getStartupView, setLastView } from "./settings";
 import { SWIPE_MIN, VIEWS, type View } from "./config";
 import NotePane, { type NotePaneHandle } from "./components/NotePane";
 import TodoPane, { type TodoPaneHandle } from "./components/TodoPane";
@@ -22,7 +22,10 @@ import SettingsModal from "./components/SettingsModal";
 import ConflictDialog from "./components/ConflictDialog";
 
 export default function App() {
-  const [view, setView] = useState<View>("note");
+  const [view, setView] = useState<View>(() => {
+    const startup = getStartupView();
+    return startup === "last" ? getLastView() : startup;
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The compact-controls layout choice; re-read from settings on close (the modal covers the view,
   // so applying live behind it would be invisible — same "apply on close" model as the others).
@@ -101,6 +104,11 @@ export default function App() {
   // display:none on desktop, shown on mobile) instead of re-encoding the 720px breakpoint here.
   const onMobile = () => (navRef.current ? getComputedStyle(navRef.current).display !== "none" : false);
 
+  function selectView(v: View) {
+    setView(v);
+    setLastView(v);
+  }
+
   function onTouchStart(e: React.TouchEvent) {
     if (!onMobile() || e.touches.length !== 1) {
       swipeStartX.current = null;
@@ -119,7 +127,7 @@ export default function App() {
     if (Math.abs(dx) < SWIPE_MIN || Math.abs(dx) <= Math.abs(dy)) return;
     const cur = VIEWS.indexOf(view);
     const next = cur + (dx < 0 ? 1 : -1); // swipe left → next view, right → previous
-    if (next >= 0 && next < VIEWS.length) setView(VIEWS[next]);
+    if (next >= 0 && next < VIEWS.length) selectView(VIEWS[next]);
   }
 
   const openSettings = () => setSettingsOpen(true);
@@ -150,7 +158,7 @@ export default function App() {
             aria-controls={`${v}-view`}
             aria-current={view === v ? "page" : undefined}
             className={view === v ? "is-active" : undefined}
-            onClick={() => setView(v)}
+            onClick={() => selectView(v)}
           >
             {v === "note" ? "Note" : "Todo"}
           </button>
