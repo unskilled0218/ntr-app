@@ -10,7 +10,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { errMsg, getNote, putNote } from "../api";
 import { NOTE_SAVE_DELAY_MS } from "../config";
-import { getCaret, readNoteText, setEditorText } from "../lib/caret";
+import { getCaret, getCaretRange, readNoteText, setEditorText } from "../lib/caret";
 import { setEditLine } from "../lib/editLine";
 import { classifyNoteEvent } from "../lib/noteSync";
 import NoteConflictDialog from "./NoteConflictDialog";
@@ -176,12 +176,14 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   // Re-highlight in place, preserving the caret.
   const rerenderNote = () => paint(readNoteText(editor()), getCaret(editor()));
 
-  // Insert `insert` at the caret, operating on the logical text so the DOM stays flat (one div per
-  // line). Used by Enter ("\n") and paste (clipboard text/plain).
+  // Insert `insert` over the selected range, operating on the logical text so the DOM stays flat
+  // (one div per line). Used by Enter ("\n"), Space, Tab, and paste (clipboard text/plain).
   const spliceNote = (insert: string) => {
     const text = readNoteText(editor());
-    const at = getCaret(editor()) ?? text.length;
-    paint(text.slice(0, at) + insert + text.slice(at), at + insert.length);
+    const range = getCaretRange(editor());
+    const start = range?.start ?? text.length;
+    const end = range?.end ?? start;
+    paint(text.slice(0, start) + insert + text.slice(end), start + insert.length);
     setNoteStatus("Editing…", false);
     scheduleNoteSave();
   };
@@ -229,9 +231,16 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
           if (!composingNote.current) rerenderNote();
         }}
         onKeyDown={(e) => {
+          if (e.nativeEvent.isComposing || composingNote.current || e.ctrlKey || e.metaKey || e.altKey) return;
           if (e.key === "Enter") {
             e.preventDefault();
             spliceNote("\n");
+          } else if (e.key === " ") {
+            e.preventDefault();
+            spliceNote(" ");
+          } else if (e.key === "Tab" && !e.shiftKey) {
+            e.preventDefault();
+            spliceNote("\t");
           }
         }}
         onPaste={(e) => {

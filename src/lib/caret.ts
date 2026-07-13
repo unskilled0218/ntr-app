@@ -18,25 +18,37 @@ export function readNoteText(root: HTMLElement): string {
     .join("\n");
 }
 
-// Characters before the caret, counting one "\n" per line boundary — the inverse of the
-// readNoteText join, so an offset survives a re-render unchanged. null when the caret is not in
-// the editor (nothing to restore).
-export function getCaret(root: HTMLElement): number | null {
-  const sel = window.getSelection();
-  if (!sel || !sel.rangeCount) return null;
-  const range = sel.getRangeAt(0);
-  if (!root.contains(range.startContainer)) return null;
+// Characters before one DOM boundary point, counting one "\n" per line boundary — the inverse of
+// the readNoteText join, so an offset survives a re-render unchanged.
+function offsetOf(root: HTMLElement, container: Node, nodeOffset: number): number {
   let offset = 0;
   for (const line of Array.from(root.children)) {
-    if (line === range.startContainer || line.contains(range.startContainer)) {
+    if (line === container || line.contains(container)) {
       const within = document.createRange();
       within.setStart(line, 0);
-      within.setEnd(range.startContainer, range.startOffset);
+      within.setEnd(container, nodeOffset);
       return offset + within.toString().length; // no block boundaries inside a line
     }
     offset += lineLen(line); // same per-line length the join implies (THE LINE INVARIANT)
   }
   return offset;
+}
+
+export function getCaretRange(root: HTMLElement): { start: number; end: number } | null {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return null;
+  const range = sel.getRangeAt(0);
+  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+  return {
+    start: offsetOf(root, range.startContainer, range.startOffset),
+    end: offsetOf(root, range.endContainer, range.endOffset),
+  };
+}
+
+// Characters before the caret, counting one "\n" per line boundary. null when the caret is not in
+// the editor (nothing to restore).
+export function getCaret(root: HTMLElement): number | null {
+  return getCaretRange(root)?.start ?? null;
 }
 
 // Put the caret at character offset `pos` within `line`, walking its descendant text nodes. An

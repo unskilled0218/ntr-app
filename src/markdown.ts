@@ -108,7 +108,7 @@ function highlightInline(escaped: string): string {
 // line exactly (markers kept), so the lines join back to the raw Markdown; an empty line becomes
 // <br> so it keeps height and stays selectable.
 const LINE: Record<string, (line: string) => string> = {
-  blank: () => `<div class="md-line"><br></div>`,
+  blank: (line) => `<div class="md-line">${line === "" ? "<br>" : escapeHtml(line)}</div>`,
   code: (line) => {
     const body = escapeHtml(line);
     return `<div class="md-line md-code">${body === "" ? "<br>" : body}</div>`;

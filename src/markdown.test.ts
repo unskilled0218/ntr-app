@@ -30,6 +30,11 @@ describe("highlightMarkdown — line invariant (textContent === source)", () => 
     roundTrips(doc);
   });
 
+  it("round-trips whitespace-only lines without dropping their characters", () => {
+    roundTrips("a\n  \nb");
+    roundTrips("a\n\t\nb");
+  });
+
   it("round-trips HTML-significant characters without injecting markup", () => {
     roundTrips("5 < 6 && 7 > 3 with \"quotes\" and 'apostrophes'");
   });

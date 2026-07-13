@@ -2,6 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { createRef } from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import NotePane, { type NotePaneHandle } from "./NotePane";
+import { readNoteText, setCaret } from "../lib/caret";
 
 // Mock only the transport seam (api.ts). getNote/putNote are controllable; errMsg stays real.
 const getNote = vi.fn<() => Promise<string>>();
@@ -48,6 +49,32 @@ function pasteInto(editor: Element, text: string) {
   fireEvent.paste(editor, { clipboardData: { getData: () => text } });
 }
 
+function keyDown(editor: Element, key: string, init: KeyboardEventInit = {}) {
+  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
+  fireEvent(editor, event);
+  return event;
+}
+
+function composingKeyDown(editor: Element, key: string) {
+  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+  Object.defineProperty(event, "isComposing", { value: true });
+  fireEvent(editor, event);
+  return event;
+}
+
+function selectText(root: HTMLElement, start: number, end: number) {
+  setCaret(root, start);
+  const range = document.createRange();
+  const startRange = window.getSelection()!.getRangeAt(0);
+  range.setStart(startRange.startContainer, startRange.startOffset);
+  setCaret(root, end);
+  const endRange = window.getSelection()!.getRangeAt(0);
+  range.setEnd(endRange.startContainer, endRange.startOffset);
+  const sel = window.getSelection()!;
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
 describe("NotePane autosave", () => {
   it("debounced-saves the entered text and shows Saved", async () => {
     getNote.mockResolvedValue("");
@@ -65,6 +92,79 @@ describe("NotePane autosave", () => {
     expect(putNote).toHaveBeenCalledTimes(1);
     expect(putNote).toHaveBeenCalledWith("hello note");
     expect(container.querySelector("#note-status")!.textContent).toBe("Saved");
+  });
+});
+
+describe("NotePane text key handling", () => {
+  it("inserts Space into the current line without creating another line", async () => {
+    getNote.mockResolvedValue("ab\ncd");
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    setCaret(editor, 1);
+    const event = keyDown(editor, " ");
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(readNoteText(editor)).toBe("a b\ncd");
+    expect(editor.children).toHaveLength(2);
+  });
+
+  it("keeps a Space typed on an otherwise empty note and saves it", async () => {
+    getNote.mockResolvedValue("");
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    setCaret(editor, 0);
+    keyDown(editor, " ");
+
+    expect(readNoteText(editor)).toBe(" ");
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(putNote).toHaveBeenCalledWith(" ");
+  });
+
+  it("inserts Tab at the caret and leaves Shift+Tab for focus navigation", async () => {
+    getNote.mockResolvedValue("ab");
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    setCaret(editor, 1);
+    const tab = keyDown(editor, "Tab");
+
+    expect(tab.defaultPrevented).toBe(true);
+    expect(readNoteText(editor)).toBe("a\tb");
+
+    const shiftTab = keyDown(editor, "Tab", { shiftKey: true });
+    expect(shiftTab.defaultPrevented).toBe(false);
+  });
+
+  it("replaces a non-collapsed selection with Space", async () => {
+    getNote.mockResolvedValue("abcd");
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    selectText(editor, 1, 3);
+    keyDown(editor, " ");
+
+    expect(readNoteText(editor)).toBe("a d");
+  });
+
+  it("does not intercept composing Space keydown events", async () => {
+    getNote.mockResolvedValue("ab");
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    setCaret(editor, 1);
+    const event = composingKeyDown(editor, " ");
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(readNoteText(editor)).toBe("ab");
   });
 });
 

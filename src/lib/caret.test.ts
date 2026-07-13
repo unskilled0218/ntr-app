@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getCaret, readNoteText, setCaret, setEditorText } from "./caret";
+import { getCaret, getCaretRange, readNoteText, setCaret, setEditorText } from "./caret";
 
 function editorWith(text: string): HTMLDivElement {
   const root = document.createElement("div");
@@ -31,5 +31,41 @@ describe("caret line invariant (getCaret is the inverse of setCaret)", () => {
       setCaret(root, pos);
       expect(getCaret(root)).toBe(pos);
     }
+  });
+
+  it("reports non-collapsed ranges across lines using logical offsets", () => {
+    const root = editorWith("abcd\nefgh");
+    const [first, second] = Array.from(root.children);
+    const range = document.createRange();
+    range.setStart(first.firstChild!, 1);
+    range.setEnd(second.firstChild!, 2);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    expect(getCaretRange(root)).toEqual({ start: 1, end: 7 });
+  });
+
+  it("reports collapsed ranges at the same offset as getCaret", () => {
+    const root = editorWith("abcd\nefgh");
+    setCaret(root, 6);
+
+    expect(getCaretRange(root)).toEqual({ start: 6, end: 6 });
+    expect(getCaret(root)).toBe(6);
+  });
+
+  it("returns null when the selection is outside the editor", () => {
+    const root = editorWith("inside");
+    const outside = document.createElement("div");
+    outside.textContent = "outside";
+    document.body.appendChild(outside);
+    const range = document.createRange();
+    range.setStart(outside.firstChild!, 0);
+    range.collapse(true);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    expect(getCaretRange(root)).toBeNull();
   });
 });

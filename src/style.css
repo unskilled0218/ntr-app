@@ -190,6 +190,7 @@ h1 {
   color: var(--fg);
   background: #fff;
   white-space: pre-wrap;
+  tab-size: 2;
   overflow-wrap: anywhere;
   overflow: auto; /* the editor surface is what scrolls */
 }
