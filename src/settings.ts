@@ -1,4 +1,4 @@
-import { DIRECTIONS, SORTS, STATUSES, type Direction, type Status } from "./config";
+import { DIRECTIONS, SORTS, STATUSES, VIEWS, type Direction, type Status, type View } from "./config";
 
 const KEY = "ntr.serverUrl";
 const STRATEGY_KEY = "ntr.conflictStrategy";
@@ -7,6 +7,8 @@ const COMPACT_UI_KEY = "ntr.compactUi";
 const STATUS_KEY = "ntr.status";
 const SORT_KEY = "ntr.sort";
 const SORT_DIR_KEY = "ntr.sortDir";
+const STARTUP_VIEW_KEY = "ntr.startupView";
+const LAST_VIEW_KEY = "ntr.lastView";
 
 export function getServerUrl(): string {
   return localStorage.getItem(KEY) ?? "";
@@ -86,4 +88,24 @@ export function getDirection(): Direction {
 
 export function setDirection(d: Direction): void {
   d === "asc" ? localStorage.removeItem(SORT_DIR_KEY) : localStorage.setItem(SORT_DIR_KEY, d);
+}
+
+export type StartupView = View | "last";
+
+export function getStartupView(): StartupView {
+  const v = localStorage.getItem(STARTUP_VIEW_KEY);
+  return v === "todo" || v === "last" ? v : "note";
+}
+
+export function setStartupView(v: StartupView): void {
+  v === "note" ? localStorage.removeItem(STARTUP_VIEW_KEY) : localStorage.setItem(STARTUP_VIEW_KEY, v);
+}
+
+export function getLastView(): View {
+  const v = localStorage.getItem(LAST_VIEW_KEY);
+  return v && (VIEWS as readonly string[]).includes(v) ? (v as View) : "note";
+}
+
+export function setLastView(v: View): void {
+  localStorage.setItem(LAST_VIEW_KEY, v);
 }
