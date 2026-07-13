@@ -1,130 +1,77 @@
-# 27 - Space and Tab in the note insert a new line instead of the character
+# 27 - Space and Tab keys in the note
 
-## Bug
+## Goal
 
-Reported in `~/workdir/agents/command.md`: "space and tab doesn't work on
-note - Both make new line". In the note editor, pressing Space or Tab
-produces a new line instead of a space or a tab character.
+In the note editor, Space must type a space and Tab must indent. Today neither works:
 
-## Root cause
+- Space inserts a new line when the caret's line has a line under it.
+- Space does nothing (the character vanishes) when it does not.
+- Tab does not indent at all; it moves focus out of the editor to the next focusable element.
 
-`NotePane.tsx`'s `onKeyDown` only special-cases `Enter`
-(`src/components/NotePane.tsx:231-236`): it calls `preventDefault()` and
-routes the newline through `spliceNote("\n")`, the app's own controlled
-insert path. Every other key, including Space and Tab, is left to the
-browser's native contenteditable editing command for that key and only
-picked up afterwards by `onInput` -> `rerenderNote()`.
+## Why it happens
 
-The editor's DOM is not a normal contenteditable paragraph flow; it is a
-flat "one `<div class="md-line">` per source line" structure that
-`setEditorText`/`readNoteText` treat as the ground truth
-(`src/lib/caret.ts:1-19`, the file's own "THE LINE INVARIANT" comment).
-Native contenteditable editing commands are designed around a regular
-paragraph/`<br>` model, not this shape. Browsers (this app ships across
-several WebView engines: WebKit on macOS/iOS, WebKitGTK on Linux, WebView2
-on Windows, plus Android's system WebView per the mobile view added in task
-26) are inconsistent about which native command a bare Space or Tab keypress
-maps to when the caret sits at a block-boundary inside a div-per-line
-editor; several of them fall back to an `insertParagraph`/`insertLineBreak`
-command instead of `insertText`, which is exactly the symptom described:
-the key that should add one character instead splits the line in two. Enter
-already had to be pulled out of native handling for the same structural
-reason; Space and Tab need the same treatment.
+The note is a contenteditable that is driven imperatively (`src/components/NotePane.tsx:1-8`): its DOM is written only by `setEditorText`, and its logical text is defined by THE LINE INVARIANT in `src/lib/caret.ts:15-19` -- `readNoteText` reads **element children only** (`root.children`) and joins each line's `textContent` with exactly one `"\n"`. Every keystroke then goes `onInput` -> `rerenderNote` -> `paint(readNoteText, getCaret)`, so anything the browser's default editing put into the DOM that does not fit "one `.md-line` element per line, text inside it" is re-interpreted or lost on the very next repaint. Three separate defects meet on the Space/Tab keys:
 
-Plain character keys (letters, digits, punctuation) are not affected
-because native single-character insertion stays within the current line's
-text node and never touches a block boundary, so `onInput` -> `rerenderNote`
-picks it up cleanly. Space and Tab are the two keys whose native command
-choice is documented as caret-position-sensitive at block boundaries, which
-matches "both" failing the same way while ordinary typing works.
+1. **The browser owns the Space keystroke.** `Enter` and paste are the only inputs the component intercepts (`NotePane.tsx:231-240`); everything else falls through to the browser's native contenteditable editing, which is free to split a line, wrap the typed character in its own block, or drop a bare text node directly under the root. `readNoteText` skips bare text nodes (they are not in `root.children`) and treats any element the browser created as a **new line** -- which is exactly the pair of symptoms above: a stray new line, or a character that disappears.
 
-## Fix
+2. **Whitespace-only lines lose their whitespace.** Even when the space does reach the right line, `blockKind` classifies `" "` as `blank` (`src/markdown.ts:28`) and the `blank` renderer emits `<div class="md-line"><br></div>` (`markdown.ts:111`) -- textContent `""`. So a line that is only spaces/tabs round-trips to an empty line and the typed whitespace is destroyed on the next repaint. This **violates THE LINE INVARIANT** (`highlightMarkdown` is supposed never to add, remove, or reorder a character), and it is the reason a space on an otherwise-empty line can never stick, no matter who inserts it.
 
-Extend the existing `onKeyDown` handler in `src/components/NotePane.tsx`
-with the same pattern already used for Enter, so Space and Tab never reach
-native contenteditable handling and always go through `spliceNote`, the
-single controlled-insert path:
+3. **Tab is a focus key by default.** Nothing intercepts it, so the browser does what it does in any editable: move focus. That also triggers `onBlur` -> `flushNote`, which is why Tab feels like "leave the note".
 
-```tsx
-onKeyDown={(e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    spliceNote("\n");
-  } else if (e.key === " ") {
-    e.preventDefault();
-    spliceNote(" ");
-  } else if (e.key === "Tab") {
-    e.preventDefault();
-    spliceNote("\t");
-  }
-}}
-```
+## The single idea: the note owns every key that produces text
 
-`spliceNote` already does the right thing for any string: it reads the
-logical text, inserts at the caret, repaints, and arms the save debounce
-(`src/components/NotePane.tsx:181-187`) - no change needed there.
+`Enter` already shows the shape of the fix (`NotePane.tsx:181-187`, `231-236`): `preventDefault()`, then splice the character into the **logical text** and repaint through the one write path. Space and Tab join it. The rule for the component becomes: *any key that inserts characters is spliced by us; the browser is only allowed to do the edits we have verified survive a repaint (typing a normal character, backspace, delete).* This keeps the DOM flat -- one `.md-line` div per line -- which is the assumption the whole caret/markdown pair rests on.
 
-Tab is treated as a literal `\t` character insert, not list indent/outdent.
-`markdown.ts`'s `LIST_ITEM` pattern already tolerates leading whitespace
-generically (`/^(\s*)([-*+]|\d+\.)(\s+)(.*)$/`), so a literal tab in a list
-line's indent keeps rendering as a list item; no markdown.ts change is
-needed. Reinterpreting Tab as indent/outdent on list lines would be a
-second, separate feature and is out of scope here - this task is only about
-the key inserting the wrong character, not adding new editing behavior.
+That is deliberately narrow: we are not switching to `beforeinput`, `execCommand`, or a rewrite of the input model. We fix the two keys the task names, plus the invariant violation (2) that would silently eat the typed whitespace even after the keys are intercepted.
 
-### CSS: tab-size
+## `spliceNote` must respect the selection
 
-`.note-input` (`src/style.css:183-195`) sets `white-space: pre-wrap` but no
-`tab-size`, so an inserted `\t` renders at the browser default (8 columns),
-inconsistent with this project's own 2-space tab convention. Add `tab-size:
-2` next to `white-space: pre-wrap` so a literal tab in the note renders at
-the same width as everywhere else in this codebase.
+`spliceNote` inserts at `getCaret()`, which is the range's **start** and ignores the rest of a non-collapsed selection (`caret.ts:24-40`, `NotePane.tsx:181-187`). Today that is a latent bug for Enter and paste; for Space it becomes an everyday one -- selecting a word and pressing Space must *replace* the word, not insert a space before it. So `spliceNote` splices over a range `[start, end]` instead of at a point. This is required by the task, not a side quest: without it "space works" is false for the most common selection gesture.
+
+`caret.ts` gains a `getCaretRange(root): { start: number; end: number } | null` alongside `getCaret`, sharing one offset-of-a-boundary-point helper so both stay exact inverses of the `readNoteText` join (the file's stated reason for keeping these together). `getCaret` becomes `getCaretRange(...)?.start ?? null`, so there is still exactly one home for "how many characters precede this DOM point".
+
+## Changes
+
+### `src/lib/caret.ts`
+
+- Extract the body of `getCaret`'s loop into `offsetOf(root, container, offset): number` -- characters before one DOM boundary point, counting one `"\n"` per line boundary (unchanged logic, unchanged invariant comment).
+- Add `getCaretRange(root)`: `null` when the selection is absent or outside the editor; otherwise `{ start: offsetOf(startContainer, startOffset), end: offsetOf(endContainer, endOffset) }`. A collapsed selection gives `start === end`, so callers need no special case.
+- `getCaret(root)` keeps its signature and delegates to `getCaretRange`.
+
+### `src/markdown.ts`
+
+- `blank` renderer: keep `<br>` only for a genuinely empty line; a whitespace-only line emits its own escaped characters (`<div class="md-line">${escapeHtml(line)}</div>`). Every character is then preserved and THE LINE INVARIANT holds for whitespace-only lines. `blockKind` is untouched -- a whitespace-only line is still the `blank` *block* (it still separates paragraphs and does not become a paragraph); only its rendering stops destroying characters.
+
+### `src/components/NotePane.tsx`
+
+- `spliceNote(insert)` uses `getCaretRange`, splices `text.slice(0, start) + insert + text.slice(end)` and puts the caret at `start + insert.length`. Falls back to `text.length` (append) when there is no range, as today.
+- `onKeyDown` handles, in one guarded block:
+  - Bail out first when the event is composing (`e.nativeEvent.isComposing`) or `composingNote.current` is set -- an IME must keep owning its keystrokes -- and when Ctrl/Meta/Alt is held, so shortcuts still reach the browser.
+  - `Enter` -> `preventDefault` + `spliceNote("\n")` (existing behaviour, now selection-aware and composition-guarded).
+  - `" "` -> `preventDefault` + `spliceNote(" ")`.
+  - `Tab` without Shift -> `preventDefault` + `spliceNote("\t")`.
+  - **Shift+Tab is deliberately left alone**: it keeps moving focus, so a keyboard-only user still has a way out of the editor (an editable that traps Tab in both directions is a keyboard trap). Nothing else in the app needs forward-Tab from the note.
+- Indentation character: a real `"\t"`. The note is stored and served as raw Markdown, and a tab is what the key means; `LIST_ITEM`'s `^(\s*)` already accepts it, so a tab-indented bullet still highlights as a list item.
+
+### `src/style.css`
+
+- `tab-size: 2` on `.note-input` (AGENTS.md: tab size = 2), so a `"\t"` renders as a two-column indent under the existing `white-space: pre-wrap`.
 
 ## Tests
 
-Extend `src/components/NotePane.test.tsx`, same pattern as the existing
-autosave test (render, `flushMicrotasks` for `loadNote`, act on the editor,
-run timers, assert on `putNote`). `fireEvent.keyDown` on `#note-input`
-followed by asserting the saved text, mirroring how `pasteInto` already
-drives the controlled-insert path in this suite:
-
-- Space: `fireEvent.keyDown(editor, { key: " " })` after seeding some text
-  (via `pasteInto`) inserts a literal space at the caret, not a line break -
-  assert the debounced `putNote` call's argument has no extra `\n` and does
-  contain the space.
-- Tab: `fireEvent.keyDown(editor, { key: "Tab" })` inserts a literal `\t`
-  the same way - assert `putNote`'s argument contains `\t` and no extra
-  `\n`.
-- Both events call `preventDefault` (assert
-  `event.defaultPrevented`/`isDefaultPrevented()` on the fired event, the
-  same check Enter's handling would need if it were tested) so native
-  handling is confirmed bypassed, not just coincidentally correct.
-
-No `src/lib/caret.ts` or `src/markdown.ts` test changes - neither's
-behavior changes; `spliceNote` and `LIST_ITEM` already handle arbitrary
-inserted characters, including tab and space.
-
-## Verification
-
-- `npm test` - existing suites stay green; new Space/Tab `NotePane` cases
-  pass.
-- `npm run build` (tsc + vite) - no type or bundle change beyond the two
-  new `else if` branches and one CSS line.
-- Manual: type a line, press Space mid-word and at end of line - a space is
-  inserted, caret advances by one, no new line appears. Press Tab - a tab
-  character is inserted (visibly indented ~2 columns), no new line appears,
-  and focus stays in the editor (does not tab away to the next control).
-  Repeat on an empty note (caret on the placeholder's single empty line) to
-  cover the block-boundary case the bug report points at.
-- No version bump - this is a bug fix with no user-visible feature change,
-  matching the precedent of the previous note-editor bug fix (link URL
-  emphasis mangling, commit ad3258f), which also did not bump
-  package.json/tauri.conf.json.
+- `src/markdown.test.ts`: a whitespace-only line (`"a\n  \nb"`, and a tab-only line) round-trips through `highlightMarkdown` with every character intact -- i.e. the rendered HTML's per-line textContent joined by `"\n"` equals the source. This is the invariant test that pins defect (2).
+- `src/lib/caret.test.ts`: `getCaretRange` over a non-collapsed selection spanning two lines returns the start/end offsets counting the joining `"\n"`; a collapsed selection returns `start === end === getCaret()`; a selection outside the editor returns `null`.
+- `src/components/NotePane.test.tsx` (jsdom does not implement native contenteditable editing, so these test exactly our intercept path -- which is the point of the fix):
+  - Space at a caret inside the first of two lines inserts a space **into that line** and leaves the line count at 2 (the reported "makes a new line" symptom).
+  - Space on a line with nothing under it keeps the character (the reported "does nothing" symptom), and the debounced save PUTs the text with the space.
+  - Tab inserts `"\t"` at the caret and the event is defaultPrevented (focus stays); Shift+Tab is **not** defaultPrevented.
+  - A Space typed over a non-collapsed selection replaces the selected text.
+  - An `isComposing` Space keydown is not intercepted (the IME still owns it).
 
 ## Out of scope
 
-- No Tab-as-indent/outdent behavior on list lines - literal character
-  insert only, as decided above.
-- No change to how Enter is handled - already correct, untouched.
-- No change to `caret.ts`/`markdown.ts` - both already handle arbitrary
-  characters, tab and space included, without modification.
+Shift+Tab as outdent, Tab-to-indent-a-whole-selection, list auto-continuation on Enter, and any change to the save/conflict machinery.
+
+## Verification
+
+`npm test` for the units above, then drive the real app (Tab/Space at end of line, mid-line, on an empty line, over a selection, on the last line, with an IME) and confirm the note round-trips and autosaves what is on screen.
