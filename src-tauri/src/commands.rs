@@ -5,13 +5,14 @@
 //! Commands do NOT emit `change` events — the caller refreshes from the return value and the
 //! file watcher is the single emitter (see plan.md "Single emitter").
 
+use crate::backend::{self, FileBackend};
 use crate::dto::TaskDto;
 use crate::paths::{self, ADD_CREATION_DATE};
 use crate::state::AppState;
 use crate::store::{Filter, StoreError};
 use chrono::{Local, NaiveDate};
 use std::io;
-use std::path::Path;
+use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 /// Today in the local timezone, matching the server's `today()`.
@@ -33,45 +34,36 @@ fn lock_err<E>(_: E) -> String {
   "store lock poisoned".to_string()
 }
 
-/// Undo file moves made by `set_data_dir` on error. Best-effort: individual
-/// failures are ignored so the original error is not masked.
-fn rollback_moves(
-  moved_todo: bool,
-  new_todo: &Path,
-  old_todo: &Path,
-  moved_note: bool,
-  new_note: &Path,
-  old_note: &Path,
-) {
-  if moved_todo {
-    let _ = move_file(new_todo, old_todo);
-  }
-  if moved_note {
-    let _ = move_file(new_note, old_note);
-  }
+/// Copy one app data file between backends and remove the old copy. Missing
+/// source files are a no-op, matching store load semantics.
+fn move_backend_file(
+  old_backend: &Arc<dyn FileBackend>,
+  new_backend: &Arc<dyn FileBackend>,
+  name: &str,
+) -> io::Result<bool> {
+  let Some(content) = old_backend.read(name)? else {
+    return Ok(false);
+  };
+  new_backend.write(name, &content)?;
+  old_backend.remove(name)?;
+  Ok(true)
 }
 
-/// Move `from` to `to`, overwriting `to` if it exists. The caller is the one
-/// who has decided to overwrite: the user explicitly requested a path change,
-/// so their current data takes precedence over any pre-existing file at the
-/// destination.
-///
-/// On the same filesystem `fs::rename` is atomic. Across filesystems (EXDEV)
-/// we fall back to copy + delete; the window between the two is not atomic,
-/// but for a user-triggered settings action this is acceptable.
-///
-/// Known limitation: if a forward move succeeds and its rollback in the caller
-/// also fails (e.g. the file is removed by a concurrent process in the ~10 ms
-/// between the two calls), the file is lost. The probability is negligible for
-/// an interactive settings operation.
-fn move_file(from: &Path, to: &Path) -> io::Result<()> {
-  match std::fs::rename(from, to) {
-    Ok(()) => Ok(()),
-    Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
-      std::fs::copy(from, to)?;
-      std::fs::remove_file(from)
+/// Undo backend file moves made by `set_data_dir` on error. Best-effort:
+/// individual failures are ignored so the original error is not masked.
+fn rollback_backend_moves(
+  old_backend: &Arc<dyn FileBackend>,
+  new_backend: &Arc<dyn FileBackend>,
+  moved_todo: bool,
+  moved_note: bool,
+) {
+  for (moved, name) in [
+    (moved_todo, paths::TODO_FILE),
+    (moved_note, paths::NOTE_FILE),
+  ] {
+    if moved {
+      let _ = move_backend_file(new_backend, old_backend, name);
     }
-    Err(e) => Err(e),
   }
 }
 
@@ -168,12 +160,53 @@ pub fn put_note(state: State<'_, AppState>, text: String) -> Result<(), String> 
   note.replace(&text).map_err(|e| e.to_string())
 }
 
-/// Return the absolute path of the directory currently used for todo.txt and Note.md.
+/// Return the display location currently used for todo.txt and Note.md.
 #[tauri::command]
 pub fn get_data_dir(app: AppHandle) -> Result<String, String> {
-  paths::resolve_data_dir(&app)
-    .map(|p| p.to_string_lossy().into_owned())
-    .map_err(|e| e.to_string())
+  let location = paths::resolve_data_dir(&app).map_err(|e| e.to_string())?;
+  if backend::is_saf_location(&location) {
+    backend::saf_display_name(&app, &location).map_err(|e| e.to_string())
+  } else {
+    Ok(location)
+  }
+}
+
+#[tauri::command]
+pub async fn pick_data_dir(app: AppHandle) -> Result<Option<String>, String> {
+  #[cfg(target_os = "android")]
+  {
+    return backend::pick_saf_dir(&app).await.map_err(|e| e.to_string());
+  }
+
+  #[cfg(not(target_os = "android"))]
+  {
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().pick_folder(move |picked| {
+      let _ = tx.send(picked);
+    });
+    let picked = rx.await.map_err(|e| e.to_string())?;
+    picked
+      .map(|p| {
+        p.into_path()
+          .map(|path| path.to_string_lossy().into_owned())
+      })
+      .transpose()
+      .map_err(|e| e.to_string())
+  }
+}
+
+#[tauri::command]
+pub fn storage_kind(_app: AppHandle) -> Result<&'static str, String> {
+  #[cfg(target_os = "android")]
+  {
+    Ok("saf")
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    Ok("path")
+  }
 }
 
 /// Set the directory used for todo.txt and Note.md. Pass an empty string to
@@ -181,118 +214,124 @@ pub fn get_data_dir(app: AppHandle) -> Result<String, String> {
 /// new location; stores are then reloaded from there. Any task IDs held by
 /// the frontend are invalidated.
 #[tauri::command]
-pub fn set_data_dir(
-  app: AppHandle,
-  state: State<'_, AppState>,
-  dir: String,
-) -> Result<(), String> {
+pub fn set_data_dir(app: AppHandle, state: State<'_, AppState>, dir: String) -> Result<(), String> {
   let dir = dir.trim();
 
-  let new_dir = if dir.is_empty() {
-    paths::app_data_dir(&app).map_err(|e| e.to_string())?
+  let old_location = paths::resolve_data_dir(&app).map_err(|e| e.to_string())?;
+  let new_location = if dir.is_empty() {
+    paths::app_data_dir(&app)
+      .map_err(|e| e.to_string())?
+      .to_string_lossy()
+      .into_owned()
+  } else if backend::is_saf_location(dir) {
+    dir.to_string()
   } else {
     let p = std::path::PathBuf::from(dir);
     if !p.is_absolute() {
       return Err("path must be absolute".to_string());
     }
     std::fs::create_dir_all(&p).map_err(|e| e.to_string())?;
-    p
+    p.to_string_lossy().into_owned()
   };
 
-  // Both files always share the same parent directory by construction
-  // (see paths::data_files). Derive the note's old path from the store's path
-  // so we avoid adding a path() getter to NoteStore for a single caller.
-  let old_todo = {
-    let store = state.store.lock().map_err(lock_err)?;
-    store.path().to_path_buf()
+  let old_backend = backend::backend_for(&app, Some(&old_location)).map_err(|e| e.to_string())?;
+  let new_backend = backend::backend_for(&app, Some(&new_location)).map_err(|e| e.to_string())?;
+
+  let changed = old_location != new_location;
+  let moved_todo = if changed {
+    move_backend_file(&old_backend, &new_backend, paths::TODO_FILE).map_err(|e| e.to_string())?
+  } else {
+    false
   };
-  let old_note = old_todo
-    .parent()
-    .ok_or("data directory has no parent")?
-    .join(paths::NOTE_FILE);
-
-  let new_todo = new_dir.join(paths::TODO_FILE);
-  let new_note = new_dir.join(paths::NOTE_FILE);
-
-  // Move files before switching stores. Only move when the path actually
-  // changes and the source file exists; absent files are a no-op (stores
-  // already treat missing files as empty).
-  let moved_todo = old_todo != new_todo && old_todo.exists();
-  let moved_note = old_note != new_note && old_note.exists();
-
-  if moved_todo {
-    move_file(&old_todo, &new_todo).map_err(|e| e.to_string())?;
-  }
-  if moved_note {
-    if let Err(e) = move_file(&old_note, &new_note) {
-      rollback_moves(moved_todo, &new_todo, &old_todo, false, &new_note, &old_note);
-      return Err(e.to_string());
+  let moved_note = if changed {
+    match move_backend_file(&old_backend, &new_backend, paths::NOTE_FILE) {
+      Ok(moved) => moved,
+      Err(e) => {
+        rollback_backend_moves(&old_backend, &new_backend, moved_todo, false);
+        return Err(e.to_string());
+      }
     }
-  }
+  } else {
+    false
+  };
 
-  // Switch both stores to read from the new paths. Rollback file moves on
+  // Switch both stores to read from the new backend. Rollback file moves on
   // store-switch failure so the session stays consistent.
   {
     let mut store = state.store.lock().map_err(lock_err)?;
-    if let Err(e) = store.set_path(new_todo.clone()) {
-      rollback_moves(moved_todo, &new_todo, &old_todo, moved_note, &new_note, &old_note);
+    if let Err(e) = store.set_backend(new_backend.clone()) {
+      rollback_backend_moves(&old_backend, &new_backend, moved_todo, moved_note);
       return Err(e.to_string());
     }
   }
 
   {
     let mut note = state.note.lock().map_err(lock_err)?;
-    if let Err(e) = note.set_path(new_note.clone()) {
+    if let Err(e) = note.set_backend(new_backend.clone()) {
       if let Ok(mut store) = state.store.lock() {
-        let _ = store.set_path(old_todo.clone());
+        let _ = store.set_backend(old_backend.clone());
       }
-      rollback_moves(moved_todo, &new_todo, &old_todo, moved_note, &new_note, &old_note);
+      rollback_backend_moves(&old_backend, &new_backend, moved_todo, moved_note);
       return Err(e.to_string());
     }
   }
 
-  let custom = if dir.is_empty() {
-    None
-  } else {
-    Some(new_dir.as_path())
-  };
-  paths::save_custom_data_dir(&app, custom).map_err(|e| e.to_string())
+  if let Err(e) = paths::save_custom_data_dir(
+    &app,
+    if dir.is_empty() {
+      None
+    } else {
+      Some(new_location.as_str())
+    },
+  ) {
+    if let Ok(mut store) = state.store.lock() {
+      let _ = store.set_backend(old_backend.clone());
+    }
+    if let Ok(mut note) = state.note.lock() {
+      let _ = note.set_backend(old_backend.clone());
+    }
+    rollback_backend_moves(&old_backend, &new_backend, moved_todo, moved_note);
+    return Err(e.to_string());
+  }
+
+  Ok(())
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use std::fs;
-
-  fn temp_path(tag: &str) -> std::path::PathBuf {
+  fn temp_dir(tag: &str) -> std::path::PathBuf {
     let mut p = std::env::temp_dir();
     p.push(format!("ntr-cmd-{}-{}", tag, std::process::id()));
+    let _ = std::fs::remove_dir_all(&p);
     p
   }
 
   #[test]
-  fn move_file_moves_content_and_removes_source() {
-    let src = temp_path("mv-src.txt");
-    let dst = temp_path("mv-dst.txt");
-    fs::write(&src, "hello").unwrap();
-    let _ = fs::remove_file(&dst);
+  fn move_backend_file_moves_content_and_removes_source() {
+    let src: Arc<dyn FileBackend> = Arc::new(crate::backend::FsBackend::new(temp_dir("mv-src")));
+    let dst: Arc<dyn FileBackend> = Arc::new(crate::backend::FsBackend::new(temp_dir("mv-dst")));
+    src.write(paths::TODO_FILE, "hello").unwrap();
 
-    move_file(&src, &dst).unwrap();
+    assert!(move_backend_file(&src, &dst, paths::TODO_FILE).unwrap());
 
-    assert_eq!(fs::read_to_string(&dst).unwrap(), "hello");
-    assert!(!src.exists());
+    assert_eq!(
+      dst.read(paths::TODO_FILE).unwrap().as_deref(),
+      Some("hello")
+    );
+    assert!(src.read(paths::TODO_FILE).unwrap().is_none());
   }
 
   #[test]
-  fn move_file_overwrites_existing_destination() {
-    let src = temp_path("mv-ow-src.txt");
-    let dst = temp_path("mv-ow-dst.txt");
-    fs::write(&src, "new").unwrap();
-    fs::write(&dst, "old").unwrap();
+  fn move_backend_file_overwrites_existing_destination() {
+    let src: Arc<dyn FileBackend> = Arc::new(crate::backend::FsBackend::new(temp_dir("mv-ow-src")));
+    let dst: Arc<dyn FileBackend> = Arc::new(crate::backend::FsBackend::new(temp_dir("mv-ow-dst")));
+    src.write(paths::TODO_FILE, "new").unwrap();
+    dst.write(paths::TODO_FILE, "old").unwrap();
 
-    move_file(&src, &dst).unwrap();
+    assert!(move_backend_file(&src, &dst, paths::TODO_FILE).unwrap());
 
-    assert_eq!(fs::read_to_string(&dst).unwrap(), "new");
-    assert!(!src.exists());
+    assert_eq!(dst.read(paths::TODO_FILE).unwrap().as_deref(), Some("new"));
+    assert!(src.read(paths::TODO_FILE).unwrap().is_none());
   }
 }

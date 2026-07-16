@@ -9,7 +9,7 @@
 use crate::atomicfile;
 use serde::{Deserialize, Serialize};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
 /// todo.txt file name within the data directory.
@@ -26,12 +26,12 @@ pub const ADD_CREATION_DATE: bool = true;
 #[derive(Serialize, Deserialize, Default)]
 struct Config {
   #[serde(skip_serializing_if = "Option::is_none")]
-  data_dir: Option<PathBuf>,
+  data_dir: Option<String>,
 }
 
 // --- Private helpers (no Tauri dependency; testable with a temp path) ---
 
-fn read_custom_data_dir(config_path: &Path) -> io::Result<Option<PathBuf>> {
+fn read_custom_data_dir(config_path: &std::path::Path) -> io::Result<Option<String>> {
   let text = match std::fs::read_to_string(config_path) {
     Ok(t) => t,
     Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -42,9 +42,9 @@ fn read_custom_data_dir(config_path: &Path) -> io::Result<Option<PathBuf>> {
   Ok(cfg.data_dir)
 }
 
-fn write_custom_data_dir(config_path: &Path, dir: Option<&Path>) -> io::Result<()> {
+fn write_custom_data_dir(config_path: &std::path::Path, dir: Option<&str>) -> io::Result<()> {
   let cfg = Config {
-    data_dir: dir.map(PathBuf::from),
+    data_dir: dir.map(str::to_string),
   };
   let text = serde_json::to_string(&cfg)
     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
@@ -65,35 +65,25 @@ pub fn app_data_dir(app: &AppHandle) -> io::Result<PathBuf> {
 }
 
 /// Read the stored custom data directory (`None` = not set / use default).
-pub fn load_custom_data_dir(app: &AppHandle) -> io::Result<Option<PathBuf>> {
+pub fn load_custom_data_dir(app: &AppHandle) -> io::Result<Option<String>> {
   let config_path = app_data_dir(app)?.join(CONFIG_FILE);
   read_custom_data_dir(&config_path)
 }
 
 /// Persist a custom data directory. Pass `None` to clear (revert to default).
-pub fn save_custom_data_dir(app: &AppHandle, dir: Option<&Path>) -> io::Result<()> {
+pub fn save_custom_data_dir(app: &AppHandle, dir: Option<&str>) -> io::Result<()> {
   let config_path = app_data_dir(app)?.join(CONFIG_FILE);
   write_custom_data_dir(&config_path, dir)
 }
 
-/// Resolve the data directory to use for `todo.txt` and `Note.md`. Returns
-/// the custom path from config if set, otherwise the app-data directory.
-pub fn resolve_data_dir(app: &AppHandle) -> io::Result<PathBuf> {
+/// Resolve the location used for `todo.txt` and `Note.md`. Returns the custom
+/// filesystem path or SAF `content://` URI from config if set, otherwise the
+/// app-data directory path.
+pub fn resolve_data_dir(app: &AppHandle) -> io::Result<String> {
   if let Some(custom) = load_custom_data_dir(app)? {
     return Ok(custom);
   }
-  app_data_dir(app)
-}
-
-/// Resolve the `(todo.txt, Note.md)` paths inside the current data directory,
-/// creating the directory on first run. A missing file is fine — the stores
-/// treat it as empty (see `Store::load` / `NoteStore::load`).
-pub fn data_files(app: &AppHandle) -> io::Result<(PathBuf, PathBuf)> {
-  // Always ensure the fixed app-data dir exists (for the config file).
-  app_data_dir(app)?;
-  let dir = resolve_data_dir(app)?;
-  std::fs::create_dir_all(&dir)?;
-  Ok((dir.join(TODO_FILE), dir.join(NOTE_FILE)))
+  app_data_dir(app).map(|p| p.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]
@@ -117,15 +107,15 @@ mod tests {
   #[test]
   fn write_then_read_roundtrip() {
     let p = temp_config("rw");
-    let dir = PathBuf::from("/tmp/my-notes");
-    write_custom_data_dir(&p, Some(&dir)).unwrap();
-    assert_eq!(read_custom_data_dir(&p).unwrap(), Some(dir));
+    let dir = "/tmp/my-notes";
+    write_custom_data_dir(&p, Some(dir)).unwrap();
+    assert_eq!(read_custom_data_dir(&p).unwrap().as_deref(), Some(dir));
   }
 
   #[test]
   fn write_none_clears_setting() {
     let p = temp_config("clear");
-    write_custom_data_dir(&p, Some(Path::new("/tmp/notes"))).unwrap();
+    write_custom_data_dir(&p, Some("/tmp/notes")).unwrap();
     write_custom_data_dir(&p, None).unwrap();
     assert!(read_custom_data_dir(&p).unwrap().is_none());
   }
@@ -133,7 +123,7 @@ mod tests {
   #[test]
   fn config_file_is_valid_json() {
     let p = temp_config("json");
-    write_custom_data_dir(&p, Some(Path::new("/tmp/notes"))).unwrap();
+    write_custom_data_dir(&p, Some("/tmp/notes")).unwrap();
     let text = fs::read_to_string(&p).unwrap();
     assert!(serde_json::from_str::<serde_json::Value>(&text).is_ok());
   }

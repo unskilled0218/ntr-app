@@ -10,28 +10,27 @@
 //! memory never diverge. The note has no structure to parse; it is a single
 //! block of text.
 
-use crate::atomicfile;
-use std::fs;
+use crate::backend::FileBackend;
 use std::io;
-use std::path::PathBuf;
+use std::sync::Arc;
 
 pub struct NoteStore {
-  path: PathBuf,
+  backend: Arc<dyn FileBackend>,
+  name: &'static str,
   content: String,
 }
 
 impl NoteStore {
-  /// Load the note from `path`. A missing file is treated as an empty note,
+  /// Load the note from `backend`. A missing file is treated as an empty note,
   /// exactly as [`Store::load`](crate::store::Store::load) treats a missing
   /// todo.txt.
-  pub fn load(path: impl Into<PathBuf>) -> io::Result<NoteStore> {
-    let path = path.into();
-    let content = match fs::read_to_string(&path) {
-      Ok(c) => c,
-      Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
-      Err(e) => return Err(e),
-    };
-    Ok(NoteStore { path, content })
+  pub fn load(backend: Arc<dyn FileBackend>, name: &'static str) -> io::Result<NoteStore> {
+    let content = backend.read(name)?.unwrap_or_default();
+    Ok(NoteStore {
+      backend,
+      name,
+      content,
+    })
   }
 
   /// The current note text.
@@ -39,32 +38,28 @@ impl NoteStore {
     &self.content
   }
 
-  /// Switch to a new file path by reloading from it. Semantics are identical
+  /// Switch to a new backend by reloading from it. Semantics are identical
   /// to a fresh `load`: missing file = empty content.
-  pub fn set_path(&mut self, new_path: PathBuf) -> io::Result<()> {
-    *self = NoteStore::load(new_path)?;
+  pub fn set_backend(&mut self, backend: Arc<dyn FileBackend>) -> io::Result<()> {
+    *self = NoteStore::load(backend, self.name)?;
     Ok(())
   }
 
   /// Replace the whole note. Persists atomically, then swaps into memory.
   pub fn replace(&mut self, content: &str) -> io::Result<()> {
-    atomicfile::write(&self.path, content)?;
+    self.backend.write(self.name, content)?;
     self.content = content.to_string();
     Ok(())
   }
 
   /// Pull the file back into memory: the mirror of [`replace`](NoteStore::replace),
-  /// which pushes memory to disk. Re-reads `self.path` (a missing file is empty, as in
+  /// which pushes memory to disk. Re-reads the backend (a missing file is empty, as in
   /// [`load`](NoteStore::load)) and, since the note has no structure, compares the text
   /// directly. Returns `Ok(false)` and changes nothing when it matches — so the note's
   /// own just-written file is seen as "no change". When it differs (an out-of-band
   /// edit) the new text is swapped in and `Ok(true)` is returned.
   pub fn reload_from_disk(&mut self) -> io::Result<bool> {
-    let content = match fs::read_to_string(&self.path) {
-      Ok(c) => c,
-      Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
-      Err(e) => return Err(e),
-    };
+    let content = self.backend.read(self.name)?.unwrap_or_default();
     if content == self.content {
       return Ok(false);
     }
@@ -76,46 +71,61 @@ impl NoteStore {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::backend::FsBackend;
+  use crate::paths;
+  use std::fs;
+  use std::path::PathBuf;
 
-  fn temp_path(tag: &str) -> PathBuf {
+  fn temp_dir(tag: &str) -> PathBuf {
     let mut path = std::env::temp_dir();
-    path.push(format!("ntr-note-{}-{}.md", tag, std::process::id()));
-    let _ = fs::remove_file(&path);
+    path.push(format!("ntr-note-{}-{}", tag, std::process::id()));
+    let _ = fs::remove_dir_all(&path);
     path
+  }
+
+  fn backend(tag: &str) -> (Arc<dyn FileBackend>, PathBuf) {
+    let dir = temp_dir(tag);
+    (Arc::new(FsBackend::new(dir.clone())), dir)
+  }
+
+  fn load_note(backend: Arc<dyn FileBackend>) -> NoteStore {
+    NoteStore::load(backend, paths::NOTE_FILE).unwrap()
   }
 
   #[test]
   fn missing_file_is_empty() {
-    let note = NoteStore::load(temp_path("missing")).unwrap();
+    let (backend, _) = backend("missing");
+    let note = load_note(backend);
     assert_eq!(note.content(), "");
   }
 
   #[test]
   fn replace_persists_and_reloads() {
-    let path = temp_path("persist");
+    let (backend, _) = backend("persist");
     {
-      let mut note = NoteStore::load(&path).unwrap();
+      let mut note = load_note(backend.clone());
       note.replace("# Title\n\n- a note\n").unwrap();
       assert_eq!(note.content(), "# Title\n\n- a note\n");
     }
-    let reloaded = NoteStore::load(&path).unwrap();
+    let reloaded = load_note(backend);
     assert_eq!(reloaded.content(), "# Title\n\n- a note\n");
   }
 
   #[test]
   fn replace_overwrites() {
-    let path = temp_path("overwrite");
-    let mut note = NoteStore::load(&path).unwrap();
+    let (backend, _) = backend("overwrite");
+    let mut note = load_note(backend.clone());
     note.replace("first").unwrap();
     note.replace("second").unwrap();
     assert_eq!(note.content(), "second");
-    assert_eq!(NoteStore::load(&path).unwrap().content(), "second");
+    assert_eq!(load_note(backend).content(), "second");
   }
 
   #[test]
   fn reload_from_disk_picks_up_external_edits() {
-    let path = temp_path("reload");
-    let mut note = NoteStore::load(&path).unwrap();
+    let (backend, dir) = backend("reload");
+    let path = dir.join(paths::NOTE_FILE);
+    let mut note = load_note(backend);
     note.replace("mine\n").unwrap();
     // The note's own write is not a change.
     assert!(!note.reload_from_disk().unwrap());
@@ -130,23 +140,24 @@ mod tests {
 
   #[test]
   fn set_path_to_absent_path_gives_empty_content() {
-    let src = temp_path("setempty-src");
-    let mut note = NoteStore::load(&src).unwrap();
+    let (src_backend, _) = backend("setempty-src");
+    let mut note = load_note(src_backend);
     note.replace("old content\n").unwrap();
 
-    let dst = temp_path("setempty-dst");
-    note.set_path(dst).unwrap();
+    let (dst_backend, _) = backend("setempty-dst");
+    note.set_backend(dst_backend).unwrap();
     assert_eq!(note.content(), "");
   }
 
   #[test]
   fn set_path_loads_existing_content() {
-    let dst = temp_path("setpath-dst");
-    fs::write(&dst, "# existing note\n").unwrap();
+    let (dst_backend, dir) = backend("setpath-dst");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(paths::NOTE_FILE), "# existing note\n").unwrap();
 
-    let src = temp_path("setpath-src");
-    let mut note = NoteStore::load(&src).unwrap();
-    note.set_path(dst).unwrap();
+    let (src_backend, _) = backend("setpath-src");
+    let mut note = load_note(src_backend);
+    note.set_backend(dst_backend).unwrap();
     assert_eq!(note.content(), "# existing note\n");
   }
 }

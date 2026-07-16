@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import SettingsModal from "./SettingsModal";
+import { getDataDir, getStorageKind, pickDataDir, setDataDir } from "../api";
 import { getStartupView, setCompactUi, setConflictStrategy, setStartupView, type StartupView } from "../settings";
 
 // The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
@@ -11,6 +12,8 @@ const settingsState = vi.hoisted(() => ({
 
 vi.mock("../api", () => ({
   getDataDir: vi.fn().mockResolvedValue(""),
+  getStorageKind: vi.fn().mockResolvedValue("path"),
+  pickDataDir: vi.fn(),
   setDataDir: vi.fn(),
 }));
 
@@ -32,8 +35,58 @@ vi.mock("../settings", () => ({
 beforeEach(() => {
   settingsState.startupView = "note";
   vi.clearAllMocks();
+  vi.mocked(getDataDir).mockResolvedValue("");
+  vi.mocked(getStorageKind).mockResolvedValue("path");
+  vi.mocked(pickDataDir).mockResolvedValue(null);
+  vi.mocked(setDataDir).mockResolvedValue(undefined);
 });
 afterEach(() => { cleanup(); });
+
+describe("SettingsModal data-directory picker", () => {
+  it("fills the editable path input on desktop and waits for Save path", async () => {
+    vi.mocked(getDataDir).mockResolvedValue("/old");
+    vi.mocked(pickDataDir).mockResolvedValue("/picked");
+    render(<SettingsModal open onClose={vi.fn()} />);
+
+    const input = await screen.findByDisplayValue("/old");
+    fireEvent.click(screen.getByRole("button", { name: /choose folder/i }));
+
+    await waitFor(() => expect((input as HTMLInputElement).value).toBe("/picked"));
+    expect(setDataDir).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /save path/i }));
+    await waitFor(() => expect(setDataDir).toHaveBeenCalledWith("/picked"));
+  });
+
+  it("applies a picked SAF folder immediately", async () => {
+    const onClose = vi.fn();
+    vi.mocked(getDataDir).mockResolvedValue("Notes");
+    vi.mocked(getStorageKind).mockResolvedValue("saf");
+    vi.mocked(pickDataDir).mockResolvedValue("content://tree/notes");
+    render(<SettingsModal open onClose={onClose} />);
+
+    expect(await screen.findByText("Notes")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /save path/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /choose folder/i }));
+
+    await waitFor(() => expect(setDataDir).toHaveBeenCalledWith("content://tree/notes"));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("leaves the current path alone when folder picking is cancelled", async () => {
+    vi.mocked(getDataDir).mockResolvedValue("/old");
+    vi.mocked(pickDataDir).mockResolvedValue(null);
+    render(<SettingsModal open onClose={vi.fn()} />);
+
+    const input = await screen.findByDisplayValue("/old");
+    fireEvent.click(screen.getByRole("button", { name: /choose folder/i }));
+
+    await waitFor(() => expect(pickDataDir).toHaveBeenCalled());
+    expect((input as HTMLInputElement).value).toBe("/old");
+    expect(setDataDir).not.toHaveBeenCalled();
+  });
+});
 
 describe("SettingsModal conflict-strategy picker", () => {
   it("persists the chosen strategy and shows it on the trigger", () => {
