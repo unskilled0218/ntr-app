@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { createRef } from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import NotePane, { type NotePaneHandle } from "./NotePane";
-import { readNoteText, setCaret } from "../lib/caret";
+import { readNoteText, setCaret, setEditorText } from "../lib/caret";
 
 // Mock only the transport seam (api.ts). getNote/putNote are controllable; errMsg stays real.
 const getNote = vi.fn<() => Promise<string>>();
@@ -165,6 +165,118 @@ describe("NotePane text key handling", () => {
 
     expect(event.defaultPrevented).toBe(false);
     expect(readNoteText(editor)).toBe("ab");
+  });
+});
+
+describe("NotePane note shortcuts", () => {
+  beforeEach(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+  });
+
+  it("Ctrl+C copies the current line and leaves the note untouched", async () => {
+    getNote.mockResolvedValue("one\ntwo\nthree");
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    setCaret(editor, 5);
+    const event = keyDown(editor, "c", { ctrlKey: true });
+    await flushMicrotasks();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("two\n");
+    expect(readNoteText(editor)).toBe("one\ntwo\nthree");
+    expect(putNote).not.toHaveBeenCalled();
+  });
+
+  it("Ctrl+X cuts the current line and saves the shortened note", async () => {
+    getNote.mockResolvedValue("one\ntwo\nthree");
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    setCaret(editor, 5);
+    keyDown(editor, "x", { ctrlKey: true });
+
+    expect(readNoteText(editor)).toBe("one\nthree");
+    expect(container.querySelector("#note-status")!.textContent).toBe("Editing…");
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("two\n");
+    expect(putNote).toHaveBeenCalledWith("one\nthree");
+  });
+
+  it("Ctrl+Z after a typed run restores the previous text and saves it", async () => {
+    getNote.mockResolvedValue("base");
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    setEditorText(editor, "basea", 5);
+    fireEvent.input(editor);
+    setEditorText(editor, "baseab", 6);
+    fireEvent.input(editor);
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    putNote.mockClear();
+    keyDown(editor, "z", { ctrlKey: true });
+
+    expect(readNoteText(editor)).toBe("base");
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(putNote).toHaveBeenCalledWith("base");
+  });
+
+  it("Ctrl+Z with nothing to undo is a no-op", async () => {
+    getNote.mockResolvedValue("base");
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    keyDown(editor, "z", { ctrlKey: true });
+
+    expect(readNoteText(editor)).toBe("base");
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(putNote).not.toHaveBeenCalled();
+  });
+
+  it("Ctrl+Z after a remote adopt does not resurrect the pre-adopt text", async () => {
+    getNote.mockResolvedValue("base");
+    const ref = createRef<NotePaneHandle>();
+    const { container } = render(<NotePane ref={ref} />);
+    await flushMicrotasks();
+
+    getNote.mockResolvedValue("remote");
+    await act(async () => {
+      ref.current!.onNoteChange();
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    keyDown(editor, "z", { ctrlKey: true });
+
+    expect(readNoteText(editor)).toBe("remote");
+  });
+
+  it("does not intercept Ctrl+Shift+Z", async () => {
+    getNote.mockResolvedValue("base");
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    const event = keyDown(editor, "z", { ctrlKey: true, shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(false);
   });
 });
 

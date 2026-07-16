@@ -11,7 +11,10 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import { errMsg, getNote, putNote } from "../api";
 import { NOTE_SAVE_DELAY_MS } from "../config";
 import { getCaret, getCaretRange, readNoteText, setEditorText } from "../lib/caret";
+import { writeClipboard } from "../lib/clipboard";
 import { setEditLine } from "../lib/editLine";
+import { createHistory, record, reset, undo } from "../lib/history";
+import { cutRange } from "../lib/noteEdit";
 import { classifyNoteEvent } from "../lib/noteSync";
 import NoteConflictDialog from "./NoteConflictDialog";
 import OpenLinkDialog from "./OpenLinkDialog";
@@ -30,6 +33,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   const noteSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savingNote = useRef(false); // single-flight guard for an in-flight PUT
   const composingNote = useRef(false); // true between compositionstart/end (IME safety)
+  const history = useRef(createHistory(""));
   // While a live update conflicts with unsaved edits, holds the incoming remote text awaiting the
   // user's choice (null = none). Truthy means the dialog owns the note: it blocks reloads and saves.
   const noteConflict = useRef<string | null>(null);
@@ -99,6 +103,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   // Make the editor show `text` as the saved, clean note: new base, render in place, clear status.
   const adoptNote = (text: string) => {
     savedNote.current = text;
+    reset(history.current, text);
     paint(text, null);
     setNoteStatus("", false);
   };
@@ -173,8 +178,38 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     }
   }
 
-  // Re-highlight in place, preserving the caret.
-  const rerenderNote = () => paint(readNoteText(editor()), getCaret(editor()));
+  const noteEdited = (text: string, caret: number | null, kind: "type" | "chunk") => {
+    record(history.current, text, caret, kind, Date.now());
+    setNoteStatus("Editing…", false);
+    scheduleNoteSave();
+  };
+
+  const undoNote = () => {
+    const entry = undo(history.current);
+    if (!entry) return;
+    paint(entry.text, entry.caret);
+    setNoteStatus("Editing…", false);
+    scheduleNoteSave();
+  };
+
+  const clipLine = async (cut: boolean) => {
+    const text = readNoteText(editor());
+    const range = getCaretRange(editor());
+    const start = range?.start ?? text.length;
+    const end = range?.end ?? start;
+    const next = cutRange(text, start, end);
+
+    if (cut) {
+      paint(next.text, next.caret);
+      noteEdited(next.text, next.caret, "chunk");
+    }
+
+    try {
+      await writeClipboard(next.copied);
+    } catch (err) {
+      setNoteStatus(`Could not copy: ${errMsg(err)}`, true);
+    }
+  };
 
   // Insert `insert` over the selected range, operating on the logical text so the DOM stays flat
   // (one div per line). Used by Enter ("\n"), Space, Tab, and paste (clipboard text/plain).
@@ -183,9 +218,10 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     const range = getCaretRange(editor());
     const start = range?.start ?? text.length;
     const end = range?.end ?? start;
-    paint(text.slice(0, start) + insert + text.slice(end), start + insert.length);
-    setNoteStatus("Editing…", false);
-    scheduleNoteSave();
+    const next = text.slice(0, start) + insert + text.slice(end);
+    const caret = start + insert.length;
+    paint(next, caret);
+    noteEdited(next, caret, "chunk");
   };
 
   // Initial load + page-close beacon. Run once.
@@ -226,12 +262,35 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
         aria-label="Note (Markdown)"
         data-placeholder="Notes (Markdown)…"
         onInput={() => {
-          setNoteStatus("Editing…", false);
-          scheduleNoteSave();
-          if (!composingNote.current) rerenderNote();
+          const text = readNoteText(editor());
+          const caret = getCaret(editor());
+          if (composingNote.current) {
+            setNoteStatus("Editing…", false);
+            scheduleNoteSave();
+            return;
+          }
+          noteEdited(text, caret, "type");
+          paint(text, caret);
         }}
         onKeyDown={(e) => {
-          if (e.nativeEvent.isComposing || composingNote.current || e.ctrlKey || e.metaKey || e.altKey) return;
+          if (e.nativeEvent.isComposing || composingNote.current) return;
+          const shortcut = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
+          if (shortcut && e.key.toLowerCase() === "z") {
+            e.preventDefault();
+            undoNote();
+            return;
+          }
+          if (shortcut && e.key.toLowerCase() === "x") {
+            e.preventDefault();
+            void clipLine(true);
+            return;
+          }
+          if (shortcut && e.key.toLowerCase() === "c") {
+            e.preventDefault();
+            void clipLine(false);
+            return;
+          }
+          if (e.ctrlKey || e.metaKey || e.altKey) return;
           if (e.key === "Enter") {
             e.preventDefault();
             spliceNote("\n");
@@ -258,7 +317,10 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
         }}
         onCompositionEnd={() => {
           composingNote.current = false;
-          rerenderNote();
+          const text = readNoteText(editor());
+          const caret = getCaret(editor());
+          paint(text, caret);
+          noteEdited(text, caret, "chunk");
         }}
       />
       <div className="note-bar">
