@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getDataDir, setDataDir } from "../api";
+import { getDataDir, getStorageKind, pickDataDir, setDataDir, type StorageKind } from "../api";
 import {
   getAllowInvalidCert,
   getCompactUi,
@@ -41,6 +41,7 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [error, setError] = useState("");
   const [dirInput, setDirInput] = useState("");
   const [dirError, setDirError] = useState("");
+  const [storageKind, setStorageKind] = useState<StorageKind>("path");
   const [strategy, setStrategy] = useState<ConflictStrategy>("ask");
   const [allowInvalidCert, setAllowInvalidCertState] = useState(false);
   const [compact, setCompactState] = useState(false);
@@ -58,7 +59,12 @@ export default function SettingsModal({ open, onClose }: Props) {
       setAllowInvalidCertState(getAllowInvalidCert());
       setCompactState(getCompactUi());
       setStartupViewState(getStartupView());
-      getDataDir().then(setDirInput).catch(() => {});
+      Promise.all([getDataDir(), getStorageKind()])
+        .then(([dir, kind]) => {
+          setDirInput(dir);
+          setStorageKind(kind);
+        })
+        .catch(() => {});
       el.showModal();
     } else {
       el.close();
@@ -94,6 +100,21 @@ export default function SettingsModal({ open, onClose }: Props) {
     try {
       await setDataDir(dir);
       onClose();
+    } catch (e) {
+      setDirError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function onChooseDir() {
+    try {
+      setDirError("");
+      const picked = await pickDataDir();
+      if (picked == null) return;
+      if (storageKind === "saf") {
+        await applyDir(picked);
+      } else {
+        setDirInput(picked);
+      }
     } catch (e) {
       setDirError(e instanceof Error ? e.message : String(e));
     }
@@ -147,26 +168,38 @@ export default function SettingsModal({ open, onClose }: Props) {
         <p className="settings-hint">
           Directory where todo.txt and Note.md are stored locally.
         </p>
-        <label>
-          Path
-          <input
-            type="text"
-            value={dirInput}
-            placeholder="/path/to/your/notes"
-            onChange={(e) => {
-              setDirInput(e.target.value);
-              setDirError("");
-            }}
-          />
-        </label>
+        {storageKind === "saf" ? (
+          <label>
+            Folder
+            <span className="settings-readonly-value">{dirInput}</span>
+          </label>
+        ) : (
+          <label>
+            Path
+            <input
+              type="text"
+              value={dirInput}
+              placeholder="/path/to/your/notes"
+              onChange={(e) => {
+                setDirInput(e.target.value);
+                setDirError("");
+              }}
+            />
+          </label>
+        )}
         {dirError && <p className="modal-error">{dirError}</p>}
         <div className="modal-actions">
           <button type="button" onClick={() => applyDir("")}>
             Reset to default
           </button>
-          <button type="button" className="primary" onClick={() => applyDir(dirInput.trim())}>
-            Save path
+          <button type="button" onClick={onChooseDir}>
+            Choose folder
           </button>
+          {storageKind === "path" && (
+            <button type="button" className="primary" onClick={() => applyDir(dirInput.trim())}>
+              Save path
+            </button>
+          )}
         </div>
 
 

@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/android-schema.json",
+  "identifier": "android-fs",
+  "description": "Android Storage Access Framework access for the main window. SAF grants are per selected URI, so no broad READ/WRITE_EXTERNAL_STORAGE manifest permission is requested.",
+  "windows": ["main"],
+  "platforms": ["android"],
+  "permissions": [
+    "android-fs:all"
+  ]
+}

@@ -2,6 +2,7 @@
 //! my-ntr-server WebUI, backed by local files instead of an HTTP server.
 
 mod atomicfile;
+mod backend;
 mod commands;
 mod dto;
 mod http;
@@ -19,13 +20,19 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
+  let builder = tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
+    .plugin(tauri_plugin_dialog::init());
+  #[cfg(target_os = "android")]
+  let builder = builder.plugin(tauri_plugin_android_fs::init());
+
+  builder
     .setup(|app| {
-      // Resolve the local data files, load both stores, and make them shared state.
-      let (todo_path, note_path) = paths::data_files(app.handle())?;
-      let store = Store::load(&todo_path)?;
-      let note = NoteStore::load(&note_path)?;
+      // Resolve the local data backend, load both stores, and make them shared state.
+      let location = paths::resolve_data_dir(app.handle())?;
+      let backend = backend::backend_for(app.handle(), Some(&location))?;
+      let store = Store::load(backend.clone(), paths::TODO_FILE)?;
+      let note = NoteStore::load(backend, paths::NOTE_FILE)?;
       app.manage(AppState::new(store, note));
 
       // The watcher is the single emitter of live-update `change` events.
@@ -45,6 +52,8 @@ pub fn run() {
       commands::get_note,
       commands::put_note,
       commands::get_data_dir,
+      commands::pick_data_dir,
+      commands::storage_kind,
       commands::set_data_dir,
       http::server_fetch,
       http::server_connect,

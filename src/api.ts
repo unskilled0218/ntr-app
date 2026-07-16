@@ -309,6 +309,16 @@ export function getDataDir(): Promise<string> {
   return invoke("get_data_dir");
 }
 
+export function pickDataDir(): Promise<string | null> {
+  return invoke("pick_data_dir");
+}
+
+export type StorageKind = "path" | "saf";
+
+export function getStorageKind(): Promise<StorageKind> {
+  return invoke("storage_kind");
+}
+
 export function setDataDir(dir: string): Promise<void> {
   return invoke("set_data_dir", { dir });
 }

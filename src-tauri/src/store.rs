@@ -10,12 +10,12 @@
 //! swaps in the new in-memory state after the write succeeds, so the file and
 //! memory never diverge.
 
-use crate::atomicfile;
+use crate::backend::FileBackend;
+use crate::paths;
 use crate::task::Task;
 use chrono::NaiveDate;
-use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// A task together with its process-stable id.
 #[derive(Debug, Clone)]
@@ -48,24 +48,21 @@ impl From<io::Error> for StoreError {
 }
 
 pub struct Store {
-  path: PathBuf,
+  backend: Arc<dyn FileBackend>,
+  name: &'static str,
   entries: Vec<Entry>,
   next_id: u64,
 }
 
 impl Store {
-  /// Load a store from `path`. A missing file is treated as an empty store.
-  pub fn load(path: impl Into<PathBuf>) -> io::Result<Store> {
-    let path = path.into();
-    let content = match fs::read_to_string(&path) {
-      Ok(c) => c,
-      Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
-      Err(e) => return Err(e),
-    };
+  /// Load a store from `backend`. A missing file is treated as an empty store.
+  pub fn load(backend: Arc<dyn FileBackend>, name: &'static str) -> io::Result<Store> {
+    let content = backend.read(name)?.unwrap_or_default();
 
     let (entries, next_id) = parse_entries(&content, 1);
     Ok(Store {
-      path,
+      backend,
+      name,
       entries,
       next_id,
     })
@@ -174,16 +171,11 @@ impl Store {
     self.save(entries, self.next_id)
   }
 
-  /// The path this store currently reads and writes.
-  pub fn path(&self) -> &Path {
-    &self.path
-  }
-
-  /// Switch to a new file path by reloading from it. The "missing = empty"
+  /// Switch to a new backend by reloading from it. The "missing = empty"
   /// semantics and ID counter reset are identical to a fresh `load`. Any task
   /// IDs held by callers before this call are invalidated.
-  pub fn set_path(&mut self, new_path: PathBuf) -> io::Result<()> {
-    *self = Store::load(new_path)?;
+  pub fn set_backend(&mut self, backend: Arc<dyn FileBackend>) -> io::Result<()> {
+    *self = Store::load(backend, self.name)?;
     Ok(())
   }
 
@@ -201,7 +193,7 @@ impl Store {
   }
 
   /// Pull the file back into memory: the mirror of [`save`](Store::save), which
-  /// pushes memory to disk. Re-reads `self.path` (a missing file is empty, as in
+  /// pushes memory to disk. Re-reads the backend (a missing file is empty, as in
   /// [`load`](Store::load)) and compares the canonical render of what is on disk
   /// against the current render. Returns `Ok(false)` and changes nothing when they
   /// match — so the store's own just-written file (and any whitespace-only edit the
@@ -209,11 +201,7 @@ impl Store {
   /// out-of-band edit: the new entries are swapped in (ids rotate, as in
   /// [`replace_raw`](Store::replace_raw)) and `Ok(true)` is returned.
   pub fn reload_from_disk(&mut self) -> io::Result<bool> {
-    let content = match fs::read_to_string(&self.path) {
-      Ok(c) => c,
-      Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
-      Err(e) => return Err(e),
-    };
+    let content = self.backend.read(self.name)?.unwrap_or_default();
     let (entries, next_id) = parse_entries(&content, self.next_id);
     if render(&entries) == render(&self.entries) {
       return Ok(false);
@@ -225,7 +213,7 @@ impl Store {
 
   /// Persist `entries` to disk, then swap them into memory on success.
   fn save(&mut self, entries: Vec<Entry>, next_id: u64) -> Result<(), StoreError> {
-    write_file(&self.path, &entries)?;
+    self.backend.write(paths::TODO_FILE, &render(&entries))?;
     self.entries = entries;
     self.next_id = next_id;
     Ok(())
@@ -259,26 +247,32 @@ fn render(entries: &[Entry]) -> String {
   out
 }
 
-/// Render entries and write them durably, so a crash never leaves a partially
-/// written todo.txt. The atomic temp-file + rename lives in [`atomicfile`], shared
-/// with the note store.
-fn write_file(path: &Path, entries: &[Entry]) -> io::Result<()> {
-  atomicfile::write(path, &render(entries))
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::backend::FsBackend;
+  use std::fs;
+  use std::path::PathBuf;
+
+  fn temp_dir(tag: &str) -> PathBuf {
+    let mut path = std::env::temp_dir();
+    path.push(format!("ntr-store-{}-{}", tag, std::process::id()));
+    let _ = fs::remove_dir_all(&path);
+    path
+  }
+
+  fn backend(tag: &str) -> (Arc<dyn FileBackend>, PathBuf) {
+    let dir = temp_dir(tag);
+    (Arc::new(FsBackend::new(dir.clone())), dir)
+  }
 
   fn today() -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 6, 19).unwrap()
   }
 
   fn temp_store(tag: &str) -> Store {
-    let mut path = std::env::temp_dir();
-    path.push(format!("ntr-store-{}-{}.txt", tag, std::process::id()));
-    let _ = fs::remove_file(&path);
-    Store::load(&path).unwrap()
+    let (backend, _) = backend(tag);
+    Store::load(backend, paths::TODO_FILE).unwrap()
   }
 
   #[test]
@@ -329,18 +323,16 @@ mod tests {
 
   #[test]
   fn persists_and_reloads_identically() {
-    let mut path = std::env::temp_dir();
-    path.push(format!("ntr-store-persist-{}.txt", std::process::id()));
-    let _ = fs::remove_file(&path);
+    let (backend, _) = backend("persist");
 
     {
-      let mut s = Store::load(&path).unwrap();
+      let mut s = Store::load(backend.clone(), paths::TODO_FILE).unwrap();
       s.add("(A) write tests", true, today()).unwrap();
       let id = s.add("ship it", true, today()).unwrap();
       s.complete(id, today()).unwrap();
     }
 
-    let reloaded = Store::load(&path).unwrap();
+    let reloaded = Store::load(backend, paths::TODO_FILE).unwrap();
     let all = reloaded.list(&Filter::default());
     assert_eq!(all.len(), 2);
     assert_eq!(all[0].task.priority, Some('A'));
@@ -365,11 +357,10 @@ mod tests {
 
   #[test]
   fn reload_from_disk_picks_up_external_edits() {
-    let mut path = std::env::temp_dir();
-    path.push(format!("ntr-store-reload-{}.txt", std::process::id()));
-    let _ = fs::remove_file(&path);
+    let (backend, dir) = backend("reload");
+    let path = dir.join(paths::TODO_FILE);
 
-    let mut s = Store::load(&path).unwrap();
+    let mut s = Store::load(backend, paths::TODO_FILE).unwrap();
     s.add("a", true, today()).unwrap();
     // The store's own write is not a change.
     assert!(!s.reload_from_disk().unwrap());
@@ -386,11 +377,10 @@ mod tests {
 
   #[test]
   fn reload_ignores_whitespace_only_difference() {
-    let mut path = std::env::temp_dir();
-    path.push(format!("ntr-store-reload-ws-{}.txt", std::process::id()));
-    let _ = fs::remove_file(&path);
+    let (backend, dir) = backend("reload-ws");
+    let path = dir.join(paths::TODO_FILE);
 
-    let mut s = Store::load(&path).unwrap();
+    let mut s = Store::load(backend, paths::TODO_FILE).unwrap();
     s.add("only task", true, today()).unwrap();
     // A blank line the parser discards renders identically, so it is not a change.
     let mut text = s.raw();
@@ -400,26 +390,24 @@ mod tests {
   }
 
   #[test]
-  fn set_path_to_empty_path_gives_empty_store() {
+  fn set_backend_to_empty_backend_gives_empty_store() {
     let mut s = temp_store("setempty-src");
     s.add("task a", true, today()).unwrap();
 
-    let mut new_path = std::env::temp_dir();
-    new_path.push(format!("ntr-store-setempty-dst-{}.txt", std::process::id()));
-    let _ = fs::remove_file(&new_path);
+    let (new_backend, _) = backend("setempty-dst");
 
-    s.set_path(new_path).unwrap();
+    s.set_backend(new_backend).unwrap();
     assert_eq!(s.list(&Filter::default()).len(), 0);
   }
 
   #[test]
-  fn set_path_loads_existing_content() {
-    let mut path = std::env::temp_dir();
-    path.push(format!("ntr-store-setpath-{}.txt", std::process::id()));
-    fs::write(&path, "(A) pre-existing\n").unwrap();
+  fn set_backend_loads_existing_content() {
+    let (new_backend, dir) = backend("setpath-dst");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(paths::TODO_FILE), "(A) pre-existing\n").unwrap();
 
     let mut s = temp_store("setpath-src");
-    s.set_path(path).unwrap();
+    s.set_backend(new_backend).unwrap();
     let all = s.list(&Filter::default());
     assert_eq!(all.len(), 1);
     assert_eq!(all[0].task.priority, Some('A'));
