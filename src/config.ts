@@ -38,6 +38,12 @@ export const PRIORITY_OPTIONS = [
 // How long after the last keystroke the note auto-saves. One named source, not a magic number.
 export const NOTE_SAVE_DELAY_MS = 800;
 
+// Typing edits closer than this are one undo step; structural edits always split.
+export const NOTE_UNDO_COALESCE_MS = 500;
+
+// Maximum note undo snapshots retained in memory.
+export const NOTE_UNDO_LIMIT = 200;
+
 // How long a touch must be held on a note link before the "Open link?" modal is raised. One named
 // source, not a magic number.
 export const LONG_PRESS_MS = 500;
