@@ -4,6 +4,10 @@
 
 import { KIND_LIST, KINDS, type Kind } from "./config";
 
+export function unionLabels(remembered: string[], derived: string[]): string[] {
+  return [...new Set([...remembered, ...derived])];
+}
+
 // Fields the add form contributes to a todo.txt line.
 export interface ComposeFields {
   priority: string;

@@ -4,6 +4,7 @@
 //! so a `Mutex` is simpler and sufficient. Both stores keep the server's write-then-swap
 //! discipline, so the file and memory never diverge.
 
+use crate::labelstore::LabelStore;
 use crate::note::NoteStore;
 use crate::store::Store;
 use std::sync::Mutex;
@@ -12,6 +13,7 @@ use tauri::async_runtime::JoinHandle;
 pub struct AppState {
   pub store: Mutex<Store>,
   pub note: Mutex<NoteStore>,
+  pub labels: Mutex<LabelStore>,
   /// Cached server-mode HTTP client + the cert policy it was built with. A reqwest client owns
   /// a connection pool and is meant to be reused, not rebuilt per call; the `bool` is the cache
   /// key — rebuilt only when `allow_invalid_cert` flips. `None` until the first server request.
@@ -22,10 +24,11 @@ pub struct AppState {
 }
 
 impl AppState {
-  pub fn new(store: Store, note: NoteStore) -> Self {
+  pub fn new(store: Store, note: NoteStore, labels: LabelStore) -> Self {
     AppState {
       store: Mutex::new(store),
       note: Mutex::new(note),
+      labels: Mutex::new(labels),
       http_client: Mutex::new(None),
       sse_task: Mutex::new(None),
     }

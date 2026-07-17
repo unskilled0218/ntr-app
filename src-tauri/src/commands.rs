@@ -7,6 +7,7 @@
 
 use crate::backend::{self, FileBackend};
 use crate::dto::TaskDto;
+use crate::labelstore::Labels;
 use crate::paths::{self, ADD_CREATION_DATE};
 use crate::state::AppState;
 use crate::store::{Filter, StoreError};
@@ -56,10 +57,12 @@ fn rollback_backend_moves(
   new_backend: &Arc<dyn FileBackend>,
   moved_todo: bool,
   moved_note: bool,
+  moved_labels: bool,
 ) {
   for (moved, name) in [
     (moved_todo, paths::TODO_FILE),
     (moved_note, paths::NOTE_FILE),
+    (moved_labels, paths::LABELS_FILE),
   ] {
     if moved {
       let _ = move_backend_file(new_backend, old_backend, name);
@@ -160,6 +163,18 @@ pub fn put_note(state: State<'_, AppState>, text: String) -> Result<(), String> 
   note.replace(&text).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn get_labels(state: State<'_, AppState>) -> Result<Labels, String> {
+  let labels = state.labels.lock().map_err(lock_err)?;
+  Ok(labels.get())
+}
+
+#[tauri::command]
+pub fn put_labels(state: State<'_, AppState>, labels: Labels) -> Result<(), String> {
+  let mut store = state.labels.lock().map_err(lock_err)?;
+  store.replace(labels).map_err(|e| e.to_string())
+}
+
 /// Return the display location currently used for todo.txt and Note.md.
 #[tauri::command]
 pub fn get_data_dir(app: AppHandle) -> Result<String, String> {
@@ -247,7 +262,18 @@ pub fn set_data_dir(app: AppHandle, state: State<'_, AppState>, dir: String) -> 
     match move_backend_file(&old_backend, &new_backend, paths::NOTE_FILE) {
       Ok(moved) => moved,
       Err(e) => {
-        rollback_backend_moves(&old_backend, &new_backend, moved_todo, false);
+        rollback_backend_moves(&old_backend, &new_backend, moved_todo, false, false);
+        return Err(e.to_string());
+      }
+    }
+  } else {
+    false
+  };
+  let moved_labels = if changed {
+    match move_backend_file(&old_backend, &new_backend, paths::LABELS_FILE) {
+      Ok(moved) => moved,
+      Err(e) => {
+        rollback_backend_moves(&old_backend, &new_backend, moved_todo, moved_note, false);
         return Err(e.to_string());
       }
     }
@@ -260,7 +286,13 @@ pub fn set_data_dir(app: AppHandle, state: State<'_, AppState>, dir: String) -> 
   {
     let mut store = state.store.lock().map_err(lock_err)?;
     if let Err(e) = store.set_backend(new_backend.clone()) {
-      rollback_backend_moves(&old_backend, &new_backend, moved_todo, moved_note);
+      rollback_backend_moves(
+        &old_backend,
+        &new_backend,
+        moved_todo,
+        moved_note,
+        moved_labels,
+      );
       return Err(e.to_string());
     }
   }
@@ -271,7 +303,33 @@ pub fn set_data_dir(app: AppHandle, state: State<'_, AppState>, dir: String) -> 
       if let Ok(mut store) = state.store.lock() {
         let _ = store.set_backend(old_backend.clone());
       }
-      rollback_backend_moves(&old_backend, &new_backend, moved_todo, moved_note);
+      rollback_backend_moves(
+        &old_backend,
+        &new_backend,
+        moved_todo,
+        moved_note,
+        moved_labels,
+      );
+      return Err(e.to_string());
+    }
+  }
+
+  {
+    let mut labels = state.labels.lock().map_err(lock_err)?;
+    if let Err(e) = labels.set_backend(new_backend.clone()) {
+      if let Ok(mut store) = state.store.lock() {
+        let _ = store.set_backend(old_backend.clone());
+      }
+      if let Ok(mut note) = state.note.lock() {
+        let _ = note.set_backend(old_backend.clone());
+      }
+      rollback_backend_moves(
+        &old_backend,
+        &new_backend,
+        moved_todo,
+        moved_note,
+        moved_labels,
+      );
       return Err(e.to_string());
     }
   }
@@ -290,7 +348,16 @@ pub fn set_data_dir(app: AppHandle, state: State<'_, AppState>, dir: String) -> 
     if let Ok(mut note) = state.note.lock() {
       let _ = note.set_backend(old_backend.clone());
     }
-    rollback_backend_moves(&old_backend, &new_backend, moved_todo, moved_note);
+    if let Ok(mut labels) = state.labels.lock() {
+      let _ = labels.set_backend(old_backend.clone());
+    }
+    rollback_backend_moves(
+      &old_backend,
+      &new_backend,
+      moved_todo,
+      moved_note,
+      moved_labels,
+    );
     return Err(e.to_string());
   }
 
@@ -333,5 +400,29 @@ mod tests {
 
     assert_eq!(dst.read(paths::TODO_FILE).unwrap().as_deref(), Some("new"));
     assert!(src.read(paths::TODO_FILE).unwrap().is_none());
+  }
+
+  #[test]
+  fn rollback_restores_all_moved_resources() {
+    let src: Arc<dyn FileBackend> = Arc::new(crate::backend::FsBackend::new(temp_dir("rb-src")));
+    let dst: Arc<dyn FileBackend> = Arc::new(crate::backend::FsBackend::new(temp_dir("rb-dst")));
+    for (name, content) in [
+      (paths::TODO_FILE, "task"),
+      (paths::NOTE_FILE, "note"),
+      (paths::LABELS_FILE, "labels"),
+    ] {
+      dst.write(name, content).unwrap();
+    }
+
+    rollback_backend_moves(&src, &dst, true, true, true);
+
+    for (name, content) in [
+      (paths::TODO_FILE, "task"),
+      (paths::NOTE_FILE, "note"),
+      (paths::LABELS_FILE, "labels"),
+    ] {
+      assert_eq!(src.read(name).unwrap().as_deref(), Some(content));
+      assert!(dst.read(name).unwrap().is_none());
+    }
   }
 }

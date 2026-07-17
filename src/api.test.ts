@@ -6,10 +6,12 @@ import {
   createTask,
   deleteTask,
   errMsg,
+  getLabels,
   getNote,
   listTasks,
   onChange,
   putNote,
+  putLabels,
   reconcileWithServer,
   resolveConflict,
   uncompleteTask,
@@ -203,6 +205,28 @@ describe("putNote (server mode)", () => {
       body: "my note text",
       contentType: "text/plain",
     });
+  });
+});
+
+describe("labels (server mode)", () => {
+  const labels = { project: ["work"], context: ["phone"] };
+
+  it("gets labels as JSON", async () => {
+    mockServer([[labels]]);
+    await expect(getLabels()).resolves.toEqual(labels);
+    expect(reqOf(0)).toMatchObject({ url: `${SERVER}/api/labels`, method: "GET" });
+  });
+
+  it("puts labels as JSON and backs them up locally", async () => {
+    mockServer([[null, 204]]);
+    await putLabels(labels);
+    expect(reqOf(0)).toMatchObject({
+      url: `${SERVER}/api/labels`,
+      method: "PUT",
+      body: JSON.stringify(labels),
+      contentType: "application/json",
+    });
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_labels", { labels });
   });
 });
 

@@ -6,6 +6,7 @@ mod backend;
 mod commands;
 mod dto;
 mod http;
+mod labelstore;
 mod note;
 mod paths;
 mod state;
@@ -13,6 +14,7 @@ mod store;
 mod task;
 mod watch;
 
+use labelstore::LabelStore;
 use note::NoteStore;
 use state::AppState;
 use store::Store;
@@ -32,8 +34,9 @@ pub fn run() {
       let location = paths::resolve_data_dir(app.handle())?;
       let backend = backend::backend_for(app.handle(), Some(&location))?;
       let store = Store::load(backend.clone(), paths::TODO_FILE)?;
-      let note = NoteStore::load(backend, paths::NOTE_FILE)?;
-      app.manage(AppState::new(store, note));
+      let note = NoteStore::load(backend.clone(), paths::NOTE_FILE)?;
+      let labels = LabelStore::load(backend, paths::LABELS_FILE)?;
+      app.manage(AppState::new(store, note, labels));
 
       // The watcher is the single emitter of live-update `change` events.
       watch::spawn(app.handle().clone());
@@ -51,6 +54,8 @@ pub fn run() {
       commands::put_raw,
       commands::get_note,
       commands::put_note,
+      commands::get_labels,
+      commands::put_labels,
       commands::get_data_dir,
       commands::pick_data_dir,
       commands::storage_kind,
