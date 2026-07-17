@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { bareDescription, composeText, parseLabelInput, planLabelRemoval, removeLabel } from "./labels";
+import { bareDescription, composeText, parseLabelInput, planLabelRemoval, removeLabel, unionLabels } from "./labels";
+
+describe("unionLabels", () => {
+  it("merges and de-duplicates remembered and derived labels", () => {
+    expect(unionLabels(["work", "home"], ["work", "errand"])).toEqual(["work", "home", "errand"]);
+  });
+
+  it("keeps a remembered-only label", () => {
+    expect(unionLabels(["orphan"], [])).toEqual(["orphan"]);
+  });
+
+  it("returns an empty list for two empty inputs", () => {
+    expect(unionLabels([], [])).toEqual([]);
+  });
+});
 
 describe("composeText", () => {
   it("puts the priority first and appends label sigils and due tag", () => {

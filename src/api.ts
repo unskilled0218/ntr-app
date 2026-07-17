@@ -30,6 +30,11 @@ export interface TaskFilter {
   context?: string | null;
 }
 
+export interface Labels {
+  project: string[];
+  context: string[];
+}
+
 // Live-update event name + payload tokens. These mirror the Rust `Change` enum / CHANGE_EVENT in
 // src-tauri/src/watch.rs — keep the two ends in sync. A typo here fails silently (no event fires).
 export const CHANGE_EVENT = "change";
@@ -101,6 +106,14 @@ async function backupNoteLocally(text: string): Promise<void> {
     await invoke("put_note", { text });
   } catch (e) {
     console.warn("local note backup failed:", e);
+  }
+}
+
+async function backupLabelsLocally(labels: Labels): Promise<void> {
+  try {
+    await invoke("put_labels", { labels });
+  } catch (e) {
+    console.warn("local labels backup failed:", e);
   }
 }
 
@@ -201,6 +214,22 @@ export async function putNote(text: string): Promise<void> {
     return;
   }
   return invoke("put_note", { text });
+}
+
+export function getLabels(): Promise<Labels> {
+  if (getServerUrl()) {
+    return httpJson<Labels>("/api/labels");
+  }
+  return invoke("get_labels");
+}
+
+export async function putLabels(labels: Labels): Promise<void> {
+  if (getServerUrl()) {
+    await serverFetch("/api/labels", "PUT", JSON.stringify(labels), "application/json");
+    await backupLabelsLocally(labels);
+    return;
+  }
+  return invoke("put_labels", { labels });
 }
 
 // Subscribe to the backend's `change` stream. Both modes now deliver tokens through Tauri's

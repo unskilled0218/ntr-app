@@ -9,9 +9,12 @@ import {
   errMsg,
   listTasks,
   createTask,
+  getLabels,
+  putLabels,
   uncompleteTask,
   updateTask,
   type Task,
+  type Labels,
 } from "../api";
 import EditTaskModal from "./EditTaskModal";
 import { sortTasks, STATUSES, type Direction, type Kind, type Status } from "../config";
@@ -23,7 +26,7 @@ import {
   getDirection,
   setDirection as persistDir,
 } from "../settings";
-import { planLabelRemoval } from "../labels";
+import { planLabelRemoval, unionLabels } from "../labels";
 import AddForm from "./AddForm";
 import FilterBar from "./FilterBar";
 import RemoveLabelDialog from "./RemoveLabelDialog";
@@ -36,8 +39,6 @@ export interface TodoPaneHandle {
 interface Props {
   compact: boolean; // collapse the add fields and filter choosers into "Options" modals
 }
-
-type Labels = { project: string[]; context: string[] };
 
 const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
   // Status / sort / direction are seeded from the local cache (lazy useState initializer runs once
@@ -69,14 +70,14 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
     }
   }, [status, project, context]);
 
-  // Rebuild the label sets from the labels currently in the store; drop a filter selection whose
-  // label has disappeared (so the dropdown and the query never disagree). Mirrors app.js
-  // loadLabels() + populateFilterSelect()'s "keep across reloads while it still exists" rule.
+  // Merge task-derived labels into the remembered backend resource. A task mutation can grow this
+  // set, but only explicit label removal shrinks it.
   // Stable (no project/context deps): a vanished filter is dropped via the functional setState
   // updater, which reads the latest value without closing over it — so this is created once and
   // is a correct dependency for the effect and the imperative handle below.
   const loadLabels = useCallback(async () => {
     let all: Task[];
+    const remembered = await getLabels().catch(() => ({ project: [], context: [] }));
     try {
       all = await listTasks({});
     } catch (err) {
@@ -89,9 +90,19 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
       for (const p of t.projects) projects.add(p);
       for (const c of t.contexts) contexts.add(c);
     }
-    setServerLabels({ project: [...projects], context: [...contexts] });
-    setProject((p) => (p && !projects.has(p) ? "" : p));
-    setContext((c) => (c && !contexts.has(c) ? "" : c));
+    const merged: Labels = {
+      project: unionLabels(remembered.project, [...projects]),
+      context: unionLabels(remembered.context, [...contexts]),
+    };
+    setServerLabels(merged);
+    setProject((p) => (p && !merged.project.includes(p) ? "" : p));
+    setContext((c) => (c && !merged.context.includes(c) ? "" : c));
+    if (
+      merged.project.length !== remembered.project.length ||
+      merged.context.length !== remembered.context.length
+    ) {
+      await putLabels(merged).catch(() => {});
+    }
   }, []);
 
   // Two reload paths only: a filter change refetches the list (refresh changes with the filters);
@@ -161,6 +172,9 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
     try {
       const all = await listTasks({});
       for (const u of planLabelRemoval(all, kind, name)) await updateTask(u.id, u.text);
+      const remembered = await getLabels().catch(() => ({ project: [], context: [] }));
+      const field = kind === "project" ? "project" : "context";
+      await putLabels({ ...remembered, [field]: remembered[field].filter((n) => n !== name) });
       await refresh();
       await loadLabels();
     } catch (err) {
