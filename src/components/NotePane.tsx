@@ -75,6 +75,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   async function flushNote() {
     if (noteSaveTimer.current) clearTimeout(noteSaveTimer.current);
     noteSaveTimer.current = null;
+    if (composingNote.current) return; // never persist an IME's transient preedit
     if (noteConflict.current) return; // a conflict is pending; don't push local up until resolved
     if (savingNote.current) return; // single-flight
     if (!noteDirty()) return;
@@ -262,13 +263,12 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
         aria-label="Note (Markdown)"
         data-placeholder="Notes (Markdown)…"
         onInput={() => {
-          const text = readNoteText(editor());
-          const caret = getCaret(editor());
           if (composingNote.current) {
             setNoteStatus("Editing…", false);
-            scheduleNoteSave();
             return;
           }
+          const text = readNoteText(editor());
+          const caret = getCaret(editor());
           noteEdited(text, caret, "type");
           paint(text, caret);
         }}

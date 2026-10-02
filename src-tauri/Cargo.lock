@@ -2139,7 +2139,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "ntr"
-version = "0.15.4"
+version = "0.15.5"
 dependencies = [
  "chrono",
  "futures-util",
@@ -2152,6 +2152,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tokio",
+ "webkit2gtk",
 ]
 
 [[package]]

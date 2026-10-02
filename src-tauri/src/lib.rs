@@ -19,6 +19,8 @@ use note::NoteStore;
 use state::AppState;
 use store::Store;
 use tauri::Manager;
+#[cfg(target_os = "linux")]
+use webkit2gtk::{InputMethodContextExt, WebViewExt};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -30,6 +32,16 @@ pub fn run() {
 
   builder
     .setup(|app| {
+      #[cfg(target_os = "linux")]
+      app
+        .get_webview_window("main")
+        .ok_or("main webview window is missing")?
+        .with_webview(|webview| {
+          if let Some(context) = webview.inner().input_method_context() {
+            context.set_enable_preedit(true);
+          }
+        })?;
+
       // Resolve the local data backend, load both stores, and make them shared state.
       let location = paths::resolve_data_dir(app.handle())?;
       let backend = backend::backend_for(app.handle(), Some(&location))?;
