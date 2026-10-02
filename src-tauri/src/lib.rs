@@ -19,6 +19,8 @@ use note::NoteStore;
 use state::AppState;
 use store::Store;
 use tauri::Manager;
+#[cfg(desktop)]
+use tauri_plugin_window_state::StateFlags;
 #[cfg(target_os = "linux")]
 use webkit2gtk::{InputMethodContextExt, WebViewExt};
 
@@ -27,6 +29,12 @@ pub fn run() {
   let builder = tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_dialog::init());
+  #[cfg(desktop)]
+  let builder = builder.plugin(
+    tauri_plugin_window_state::Builder::default()
+      .with_state_flags(StateFlags::POSITION | StateFlags::SIZE)
+      .build(),
+  );
   #[cfg(target_os = "android")]
   let builder = builder.plugin(tauri_plugin_android_fs::init());
 

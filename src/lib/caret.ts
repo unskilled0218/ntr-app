@@ -51,40 +51,48 @@ export function getCaret(root: HTMLElement): number | null {
   return getCaretRange(root)?.start ?? null;
 }
 
-// Put the caret at character offset `pos` within `line`, walking its descendant text nodes. An
-// empty line (just <br>) has no text node, so the caret collapses to the line itself.
-function placeInLine(line: Element, pos: number): void {
-  const sel = window.getSelection();
-  if (!sel) return;
-  const range = document.createRange();
+// Resolve a character offset within `line` to a DOM boundary point. An empty line (just <br>) has
+// no text node, so its endpoint is the end of the line element itself.
+function pointInLine(line: Element, pos: number): { node: Node; offset: number } {
   const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
   let acc = 0;
   for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
     if (acc + node.length >= pos) {
-      range.setStart(node, pos - acc);
-      range.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(range);
-      return;
+      return { node, offset: pos - acc };
     }
     acc += node.length;
   }
-  range.selectNodeContents(line);
-  range.collapse(false); // end of an empty/short line
+  return { node: line, offset: line.childNodes.length };
+}
+
+function pointAt(root: HTMLElement, pos: number): { node: Node; offset: number } {
+  for (const line of Array.from(root.children)) {
+    const len = (line.textContent ?? "").length;
+    if (pos <= len) return pointInLine(line, pos);
+    pos -= len + 1; // step over this line and its joining "\n" (THE LINE INVARIANT)
+  }
+  const last = root.lastElementChild;
+  return last ? pointInLine(last, (last.textContent ?? "").length) : { node: root, offset: 0 };
+}
+
+export function setCaretRange(root: HTMLElement, start: number, end: number): void {
+  const sel = window.getSelection();
+  if (!sel) return;
+  const length = readNoteText(root).length;
+  const from = Math.max(0, Math.min(start, end, length));
+  const to = Math.max(0, Math.min(Math.max(start, end), length));
+  const a = pointAt(root, from);
+  const b = pointAt(root, to);
+  const range = document.createRange();
+  range.setStart(a.node, a.offset);
+  range.setEnd(b.node, b.offset);
   sel.removeAllRanges();
   sel.addRange(range);
 }
 
 // Place the caret at logical offset `pos`, finding its line then the spot within it.
 export function setCaret(root: HTMLElement, pos: number): void {
-  for (const line of Array.from(root.children)) {
-    const len = (line.textContent ?? "").length;
-    if (pos <= len) return placeInLine(line, pos);
-    pos -= len + 1; // step over this line and its joining "\n" (THE LINE INVARIANT)
-  }
-  if (root.lastElementChild) {
-    placeInLine(root.lastElementChild, (root.lastElementChild.textContent ?? "").length);
-  }
+  setCaretRange(root, pos, pos);
 }
 
 // The single write path: render `text` into the editor and (optionally) restore the caret to

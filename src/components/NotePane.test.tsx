@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { createRef } from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import NotePane, { type NotePaneHandle } from "./NotePane";
-import { readNoteText, setCaret, setEditorText } from "../lib/caret";
+import { getCaretRange, readNoteText, setCaret, setCaretRange, setEditorText } from "../lib/caret";
 
 // Mock only the transport seam (api.ts). getNote/putNote are controllable; errMsg stays real.
 const getNote = vi.fn<() => Promise<string>>();
@@ -55,8 +55,8 @@ function keyDown(editor: Element, key: string, init: KeyboardEventInit = {}) {
   return event;
 }
 
-function composingKeyDown(editor: Element, key: string) {
-  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+function composingKeyDown(editor: Element, key: string, init: KeyboardEventInit = {}) {
+  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
   Object.defineProperty(event, "isComposing", { value: true });
   fireEvent(editor, event);
   return event;
@@ -134,7 +134,7 @@ describe("NotePane text key handling", () => {
     expect(putNote).toHaveBeenCalledWith(" ");
   });
 
-  it("inserts Tab at the caret and leaves Shift+Tab for focus navigation", async () => {
+  it("inserts Tab at the caret", async () => {
     getNote.mockResolvedValue("ab");
     const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
     await flushMicrotasks();
@@ -145,9 +145,56 @@ describe("NotePane text key handling", () => {
 
     expect(tab.defaultPrevented).toBe(true);
     expect(readNoteText(editor)).toBe("a\tb");
+  });
 
+  it("Shift+Tab dedents selected lines, preserves the range, saves, and undoes as one chunk", async () => {
+    getNote.mockResolvedValue("\tab\n\tcd");
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    setCaretRange(editor, 1, 7);
     const shiftTab = keyDown(editor, "Tab", { shiftKey: true });
+
+    expect(shiftTab.defaultPrevented).toBe(true);
+    expect(readNoteText(editor)).toBe("ab\ncd");
+    expect(getCaretRange(editor)).toEqual({ start: 0, end: 5 });
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(putNote).toHaveBeenCalledWith("ab\ncd");
+
+    keyDown(editor, "z", { ctrlKey: true });
+    expect(readNoteText(editor)).toBe("\tab\n\tcd");
+  });
+
+  it("prevents a no-op Shift+Tab without saving", async () => {
+    getNote.mockResolvedValue("ab");
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    setCaret(editor, 1);
+    const shiftTab = keyDown(editor, "Tab", { shiftKey: true });
+
+    expect(shiftTab.defaultPrevented).toBe(true);
+    expect(readNoteText(editor)).toBe("ab");
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(putNote).not.toHaveBeenCalled();
+  });
+
+  it("does not intercept composing Shift+Tab", async () => {
+    getNote.mockResolvedValue("\tab");
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    const shiftTab = composingKeyDown(editor, "Tab", { shiftKey: true });
+
     expect(shiftTab.defaultPrevented).toBe(false);
+    expect(readNoteText(editor)).toBe("\tab");
   });
 
   it("replaces a non-collapsed selection with Space", async () => {

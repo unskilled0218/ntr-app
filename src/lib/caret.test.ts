@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getCaret, getCaretRange, readNoteText, setCaret, setEditorText } from "./caret";
+import { getCaret, getCaretRange, readNoteText, setCaret, setCaretRange, setEditorText } from "./caret";
 
 function editorWith(text: string): HTMLDivElement {
   const root = document.createElement("div");
@@ -52,6 +52,20 @@ describe("caret line invariant (getCaret is the inverse of setCaret)", () => {
 
     expect(getCaretRange(root)).toEqual({ start: 6, end: 6 });
     expect(getCaret(root)).toBe(6);
+  });
+
+  it("restores a logical range across highlighted spans and lines", () => {
+    const root = editorWith("**bold**\nplain");
+    setCaretRange(root, 2, 12);
+
+    expect(getCaretRange(root)).toEqual({ start: 2, end: 12 });
+  });
+
+  it("restores ranges across an empty line and clamps endpoints", () => {
+    const root = editorWith("one\n\nthree");
+    setCaretRange(root, -10, 99);
+
+    expect(getCaretRange(root)).toEqual({ start: 0, end: 10 });
   });
 
   it("returns null when the selection is outside the editor", () => {

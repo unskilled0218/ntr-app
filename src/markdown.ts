@@ -53,6 +53,9 @@ const emph =
 // such segment back into its text and URL.
 const LINK = /\[([^\]]+)\]\(([^)]+)\)/;
 const LINK_SPLIT = /(\[[^\]]+\]\([^)]+\))/g;
+// The source is already escaped here. Stop before encoded quotes/brackets while allowing &amp;
+// inside a query string; the capturing group keeps URL runs when split() partitions the text.
+const BARE_URL_SPLIT = /(https?:\/\/(?:(?!&(?:quot|lt|gt|#39);)[^\s<])+)/gi;
 
 // Render one already-escaped [text](url) as its ONE collapsed form: the text becomes an <a> (so it reads
 // as a hyperlink and the open gestures can find it), while the `[`, `](`, URL, and `)` are kept as text
@@ -65,7 +68,7 @@ const LINK_SPLIT = /(\[[^\]]+\]\([^)]+\))/g;
 // character is still emitted, so THE LINE INVARIANT holds.
 function renderLink(link: string): string {
   const [, t, u] = link.match(LINK)!;
-  return `${linkMark("[")}<a class="md-link" data-href="${u}">${t}</a>${linkMark("](")}<span class="md-url">${u}</span>${linkMark(")")}`;
+  return `<span class="md-link-source" data-href="${u}">${linkMark("[")}<a class="md-link" data-href="${u}">${t}</a>${linkMark("](")}<span class="md-url">${u}</span>${linkMark(")")}</span>`;
 }
 
 // Wrap bold/italic emphasis on one already-escaped run that contains NO link, re-emitting every marker
@@ -79,6 +82,32 @@ function emphasize(run: string): string {
     .replace(/_([^_]+)_/g, emph("_", "md-em"));
 }
 
+function splitUrlTail(candidate: string): { url: string; tail: string } {
+  let url = candidate;
+  let tail = "";
+  while (url) {
+    const last = url[url.length - 1];
+    const prose = /[.,:!?]/.test(last) || (last === ";" && !/&(?:amp|quot|lt|gt|#39);$/.test(url));
+    const unmatchedParen = last === ")" && (url.match(/\)/g)?.length ?? 0) > (url.match(/\(/g)?.length ?? 0);
+    const unmatchedBracket = last === "]" && (url.match(/\]/g)?.length ?? 0) > (url.match(/\[/g)?.length ?? 0);
+    if (!prose && !unmatchedParen && !unmatchedBracket) break;
+    url = url.slice(0, -1);
+    tail = last + tail;
+  }
+  return { url, tail };
+}
+
+function formatBareLinks(run: string): string {
+  return run
+    .split(BARE_URL_SPLIT)
+    .map((part, i) => {
+      if (i % 2 === 0) return emphasize(part);
+      const { url, tail } = splitUrlTail(part);
+      return url ? `<a class="md-link" data-href="${url}">${url}</a>${tail}` : emphasize(part);
+    })
+    .join("");
+}
+
 // Format emphasis and links on one already-escaped, non-code run. Links are partitioned out FIRST (the
 // odd segments of the split) and rendered verbatim; emphasis is applied only to the remaining non-link
 // text. This ordering is essential: a link's URL must be emitted exactly, so running emphasis over the
@@ -86,7 +115,7 @@ function emphasize(run: string): string {
 function formatInline(run: string): string {
   return run
     .split(LINK_SPLIT)
-    .map((seg, i) => (i % 2 ? renderLink(seg) : emphasize(seg)))
+    .map((seg, i) => (i % 2 ? renderLink(seg) : formatBareLinks(seg)))
     .join("");
 }
 

@@ -8,6 +8,7 @@ const openLink = vi.fn<(url: string) => void>();
 vi.mock("../lib/openLink", () => ({ openLink: (url: string) => openLink(url) }));
 
 const URL = "https://x.io";
+const MARKDOWN_URL = "https://github.com";
 
 // A probe that spreads the gesture handlers onto a div containing a link, and surfaces `pending` so the
 // long-press path is observable.
@@ -15,9 +16,18 @@ function Probe() {
   const links = useLinkGestures();
   return (
     <div data-testid="surface" {...links.handlers}>
-      <a className="md-link" data-href={URL}>
+      <a className="md-link" data-href={URL} data-testid="bare-link">
         docs
       </a>
+      <span className="md-link-source" data-href={MARKDOWN_URL}>
+        <span data-testid="open-marker">[</span>
+        <a className="md-link" data-href={MARKDOWN_URL} data-testid="markdown-label">
+          github
+        </a>
+        <span data-testid="middle-marker">](</span>
+        <span data-testid="markdown-url">{MARKDOWN_URL}</span>
+        <span data-testid="close-marker">)</span>
+      </span>
       <span data-testid="pending">{links.pending ?? ""}</span>
     </div>
   );
@@ -30,7 +40,7 @@ afterEach(() => {
   openLink.mockReset();
 });
 
-const link = () => document.querySelector("a.md-link")!;
+const link = () => document.querySelector('[data-testid="bare-link"]')!;
 const pending = () => document.querySelector('[data-testid="pending"]')!.textContent;
 
 // jsdom has no PointerEvent, so pointerType is not carried by fireEvent's init; set it explicitly on the
@@ -55,6 +65,14 @@ describe("useLinkGestures", () => {
     const { getByTestId } = render(<Probe />);
     fireEvent.click(getByTestId("surface"), { ctrlKey: true });
     expect(openLink).not.toHaveBeenCalled();
+  });
+
+  it("opens every visible part of a Markdown link source", () => {
+    const { getByTestId } = render(<Probe />);
+    for (const id of ["open-marker", "markdown-label", "middle-marker", "markdown-url", "close-marker"]) {
+      fireEvent.click(getByTestId(id), { ctrlKey: true });
+    }
+    expect(openLink.mock.calls).toEqual(Array.from({ length: 5 }, () => [MARKDOWN_URL]));
   });
 
   it("raises the pending modal after a touch held LONG_PRESS_MS", () => {

@@ -96,11 +96,59 @@ describe("highlightMarkdown — links", () => {
 
   it("escapes a hostile URL so it cannot break out of the data-href attribute", () => {
     const html = highlightMarkdown('[x](http://e/"><img src=y onerror=z>)');
-    const a = html.slice(html.indexOf('data-href="') + 'data-href="'.length, html.indexOf('">x</a>'));
-    // No raw quote or angle bracket survives inside the attribute value — no markup injection.
-    expect(a).not.toContain('"');
-    expect(a).not.toContain("<");
-    expect(a).not.toContain(">");
+    const root = document.createElement("div");
+    root.innerHTML = html;
+    // The entities decode inside the attribute, but never become markup.
+    expect(root.querySelector("img")).toBeNull();
+    expect(root.querySelector<HTMLElement>(".md-link-source")!.dataset.href).toBe('http://e/"><img src=y onerror=z>');
+  });
+
+  it("makes every part of a Markdown link share the destination", () => {
+    const root = document.createElement("div");
+    root.innerHTML = highlightMarkdown("[github](https://github.com)");
+    const source = root.querySelector<HTMLElement>(".md-link-source")!;
+
+    expect(source.dataset.href).toBe("https://github.com");
+    expect(source.querySelector(".md-link")!.textContent).toBe("github");
+    expect(source.querySelector(".md-url")!.textContent).toBe("https://github.com");
+    expect(readNoteText(root)).toBe("[github](https://github.com)");
+  });
+
+  it("renders bare HTTP(S) URLs without changing their text", () => {
+    const src = "see https://x.io/a_b*c?one=1&two=2 and http://y.io";
+    const root = document.createElement("div");
+    root.innerHTML = highlightMarkdown(src);
+    const links = Array.from(root.querySelectorAll<HTMLElement>("a.md-link"));
+
+    expect(links.map((link) => link.dataset.href)).toEqual(["https://x.io/a_b*c?one=1&two=2", "http://y.io"]);
+    expect(root.querySelector(".md-em")).toBeNull();
+    expect(readNoteText(root)).toBe(src);
+  });
+
+  it("leaves prose punctuation and unmatched closers outside a bare URL", () => {
+    const src = "(https://x.io/a_(b)). Then https://y.io/a].";
+    const root = document.createElement("div");
+    root.innerHTML = highlightMarkdown(src);
+
+    expect(Array.from(root.querySelectorAll<HTMLElement>("a.md-link"), (link) => link.dataset.href)).toEqual([
+      "https://x.io/a_(b)",
+      "https://y.io/a",
+    ]);
+    expect(readNoteText(root)).toBe(src);
+  });
+
+  it("does not auto-link code, non-web schemes, or a Markdown destination twice", () => {
+    const html = highlightMarkdown("`https://code.io` file://local [x](https://md.io)");
+    const root = document.createElement("div");
+    root.innerHTML = html;
+
+    expect(root.querySelectorAll("a.md-link")).toHaveLength(1);
+    expect(root.querySelector<HTMLElement>("a.md-link")!.dataset.href).toBe("https://md.io");
+    expect(readNoteText(root)).toBe("`https://code.io` file://local [x](https://md.io)");
+
+    const fenced = document.createElement("div");
+    fenced.innerHTML = highlightMarkdown("```\nhttps://code.io\n```");
+    expect(fenced.querySelector("a.md-link")).toBeNull();
   });
 });
 

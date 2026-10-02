@@ -7,7 +7,9 @@ import { openLink } from "../lib/openLink";
 // (its data-href is the raw URL), so the hook needs no editor ref and stays decoupled from the caret/
 // render path.
 const linkAt = (target: EventTarget | null): HTMLElement | null =>
-  target instanceof Element ? (target.closest("a.md-link") as HTMLElement | null) : null;
+  target instanceof Element
+    ? (target.closest("a.md-link[data-href], .md-link-source[data-href]") as HTMLElement | null)
+    : null;
 
 // Open-link gestures for the note editor, kept off the plain click so a tap always edits:
 //   desktop -> Ctrl/Cmd + click opens immediately;
