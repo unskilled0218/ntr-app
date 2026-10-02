@@ -10,11 +10,11 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { errMsg, getNote, putNote } from "../api";
 import { NOTE_SAVE_DELAY_MS } from "../config";
-import { getCaret, getCaretRange, readNoteText, setEditorText } from "../lib/caret";
+import { getCaret, getCaretRange, readNoteText, setCaretRange, setEditorText } from "../lib/caret";
 import { writeClipboard } from "../lib/clipboard";
 import { setEditLine } from "../lib/editLine";
 import { createHistory, record, reset, undo } from "../lib/history";
-import { cutRange } from "../lib/noteEdit";
+import { cutRange, dedentRange } from "../lib/noteEdit";
 import { classifyNoteEvent } from "../lib/noteSync";
 import NoteConflictDialog from "./NoteConflictDialog";
 import OpenLinkDialog from "./OpenLinkDialog";
@@ -225,6 +225,19 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     noteEdited(next, caret, "chunk");
   };
 
+  const dedentNote = () => {
+    const text = readNoteText(editor());
+    const range = getCaretRange(editor());
+    const start = range?.start ?? text.length;
+    const end = range?.end ?? start;
+    const next = dedentRange(text, start, end);
+    if (!next.changed) return;
+    setEditorText(editor(), next.text, null);
+    setCaretRange(editor(), next.start, next.end);
+    markEditLine();
+    noteEdited(next.text, next.start, "chunk");
+  };
+
   // Initial load + page-close beacon. Run once.
   useEffect(() => {
     loadNote();
@@ -297,7 +310,10 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
           } else if (e.key === " ") {
             e.preventDefault();
             spliceNote(" ");
-          } else if (e.key === "Tab" && !e.shiftKey) {
+          } else if (e.key === "Tab" && e.shiftKey) {
+            e.preventDefault();
+            dedentNote();
+          } else if (e.key === "Tab") {
             e.preventDefault();
             spliceNote("\t");
           }

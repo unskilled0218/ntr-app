@@ -8,6 +8,37 @@ export function lineBounds(text: string, pos: number): { start: number; end: num
   };
 }
 
+export function dedentRange(
+  text: string,
+  start: number,
+  end: number,
+): { text: string; start: number; end: number; changed: boolean } {
+  const from = Math.max(0, Math.min(start, end, text.length));
+  const to = Math.max(0, Math.min(Math.max(start, end), text.length));
+  const firstLine = lineBounds(text, from).start;
+  const lastSelectedPos = to > from && text[to - 1] === "\n" ? to - 1 : to;
+  const lastLine = lineBounds(text, lastSelectedPos).start;
+  const removed: number[] = [];
+
+  for (let line = firstLine; line <= lastLine; ) {
+    if (text[line] === "\t") removed.push(line);
+    const nextBreak = text.indexOf("\n", line);
+    if (nextBreak === -1 || nextBreak + 1 > lastLine) break;
+    line = nextBreak + 1;
+  }
+
+  if (!removed.length) return { text, start: from, end: to, changed: false };
+  const adjust = (pos: number) => pos - removed.filter((at) => at < pos).length;
+  let nextText = text;
+  for (const at of [...removed].reverse()) nextText = nextText.slice(0, at) + nextText.slice(at + 1);
+  return {
+    text: nextText,
+    start: adjust(from),
+    end: adjust(to),
+    changed: true,
+  };
+}
+
 export function cutRange(text: string, start: number, end: number): { text: string; caret: number; copied: string } {
   const from = Math.max(0, Math.min(start, end, text.length));
   const to = Math.max(0, Math.min(Math.max(start, end), text.length));
