@@ -54,6 +54,21 @@ release_tag="v$version"
 release_dir="$project_root/release/$version"
 head_commit="$(git -C "$project_root" rev-parse HEAD)"
 
+has_artifacts() {
+  local target=$1
+  local artifact
+  local -a candidates
+  shopt -s nullglob
+  candidates=("$release_dir/$target"/*)
+  shopt -u nullglob
+  for artifact in "${candidates[@]}"; do
+    if [ -f "$artifact" ] && [[ "$artifact" != *.sha256 ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 echo "Releasing $release_tag from $head_commit"
 git -C "$project_root" push origin main
 git -C "$project_root" fetch --tags origin
@@ -67,8 +82,22 @@ fi
 (
   cd "$project_root"
   npm test
-  "$script_dir/build-release.sh" "$@"
 )
+
+build_targets=()
+for target in "${release_targets[@]}"; do
+  if has_artifacts "$target"; then
+    echo "Using existing $target artifacts in $release_dir/$target"
+  else
+    build_targets+=("$target")
+  fi
+done
+
+if [ "${#build_targets[@]}" -gt 0 ]; then
+  "$script_dir/build-release.sh" "${build_targets[@]}"
+else
+  echo "All requested artifacts are already built; skipping build"
+fi
 
 assets=()
 asset_names=()
