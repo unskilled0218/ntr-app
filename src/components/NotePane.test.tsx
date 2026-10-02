@@ -62,6 +62,14 @@ function composingKeyDown(editor: Element, key: string) {
   return event;
 }
 
+function updateComposition(editor: HTMLDivElement, text: string) {
+  const line = editor.firstElementChild!;
+  line.textContent = text;
+  setCaret(editor, text.length);
+  fireEvent.input(editor, { data: text, inputType: "insertCompositionText", isComposing: true });
+  return line;
+}
+
 function selectText(root: HTMLElement, start: number, end: number) {
   setCaret(root, start);
   const range = document.createRange();
@@ -165,6 +173,58 @@ describe("NotePane text key handling", () => {
 
     expect(event.defaultPrevented).toBe(false);
     expect(readNoteText(editor)).toBe("ab");
+  });
+});
+
+describe("NotePane IME composition", () => {
+  it("leaves preedit DOM untouched and saves only the committed Hangul", async () => {
+    getNote.mockResolvedValue("base");
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    setEditorText(editor, "base!", 5);
+    fireEvent.input(editor); // arm a pre-composition save to exercise flushNote's IME guard
+
+    fireEvent.compositionStart(editor);
+    const imeLine = updateComposition(editor, "base!ㅎ");
+    expect(editor.firstElementChild).toBe(imeLine);
+    expect(readNoteText(editor)).toBe("base!ㅎ");
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(putNote).not.toHaveBeenCalled();
+
+    expect(updateComposition(editor, "base!한")).toBe(imeLine);
+    expect(editor.firstElementChild).toBe(imeLine);
+    fireEvent.compositionEnd(editor, { data: "한" });
+
+    expect(readNoteText(editor)).toBe("base!한");
+    expect(editor.firstElementChild).not.toBe(imeLine);
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(putNote).toHaveBeenCalledTimes(1);
+    expect(putNote).toHaveBeenCalledWith("base!한");
+  });
+
+  it("still repaints and saves ordinary input", async () => {
+    getNote.mockResolvedValue("");
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    setEditorText(editor, "a", 1);
+    const browserLine = editor.firstElementChild;
+    fireEvent.input(editor);
+
+    expect(readNoteText(editor)).toBe("a");
+    expect(editor.firstElementChild).not.toBe(browserLine);
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(putNote).toHaveBeenCalledWith("a");
   });
 });
 
