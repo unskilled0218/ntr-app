@@ -24,6 +24,11 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$(cd "$script_dir/.." && pwd)"
 api_url="${FORGEJO_API_URL:-https://git.lan/api/v1/repos/ntr/ntr-app}"
+api_base="${api_url%%/repos/*}"
+if [ "$api_base" = "$api_url" ]; then
+  echo "FORGEJO_API_URL must include /repos/<owner>/<repository>" >&2
+  exit 1
+fi
 
 for command in curl git node npm sha256sum; do
   if ! command -v "$command" >/dev/null 2>&1; then
@@ -53,6 +58,38 @@ fi
 release_tag="v$version"
 release_dir="$project_root/release/$version"
 head_commit="$(git -C "$project_root" rev-parse HEAD)"
+curl_options=(--silent --show-error)
+
+auth_config="$(mktemp)"
+response="$(mktemp)"
+release_payload=""
+uploaded_asset_ids=()
+
+cleanup() {
+  local exit_status=$?
+  local asset_id
+  trap - EXIT
+  if [ "$exit_status" -ne 0 ] && [ -n "${release_id:-}" ]; then
+    for asset_id in "${uploaded_asset_ids[@]}"; do
+      if ! curl "${curl_options[@]}" --fail \
+        --config "$auth_config" \
+        --output /dev/null \
+        --request DELETE \
+        "$api_url/releases/$release_id/assets/$asset_id"; then
+        echo "Could not remove partial Forgejo asset $asset_id; delete it manually" >&2
+      fi
+    done
+  fi
+  rm -f "$auth_config" "$response"
+  if [ -n "$release_payload" ]; then
+    rm -f "$release_payload"
+  fi
+  exit "$exit_status"
+}
+
+trap cleanup EXIT
+chmod 600 "$auth_config"
+printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" > "$auth_config"
 
 has_artifacts() {
   local target=$1
@@ -69,15 +106,31 @@ has_artifacts() {
   return 1
 }
 
-echo "Releasing $release_tag from $head_commit"
-git -C "$project_root" push origin main
 git -C "$project_root" fetch --tags origin
-
 tag_commit="$(git -C "$project_root" rev-parse -q --verify "refs/tags/$release_tag^{commit}" 2>/dev/null || true)"
 if [ -n "$tag_commit" ] && [ "$tag_commit" != "$head_commit" ]; then
-  echo "Release tag $release_tag already identifies a different commit" >&2
+  if git -C "$project_root" merge-base --is-ancestor "$tag_commit" "$head_commit"; then
+    echo "Resuming $release_tag from its existing ancestor commit $tag_commit"
+  else
+    echo "Release tag $release_tag identifies an unrelated commit" >&2
+    exit 1
+  fi
+fi
+release_commit="${tag_commit:-$head_commit}"
+
+api_status="$(curl "${curl_options[@]}" \
+  --config "$auth_config" \
+  --output "$response" \
+  --write-out '%{http_code}' \
+  "$api_base/user")"
+if [ "$api_status" != "200" ]; then
+  echo "Forgejo API authentication failed with HTTP $api_status" >&2
+  cat "$response" >&2
   exit 1
 fi
+
+echo "Releasing $release_tag from $release_commit"
+git -C "$project_root" push origin main
 
 (
   cd "$project_root"
@@ -129,38 +182,7 @@ if [ -z "$tag_commit" ]; then
 fi
 git -C "$project_root" push origin "refs/tags/$release_tag"
 
-auth_config="$(mktemp)"
-response="$(mktemp)"
-release_payload=""
-uploaded_asset_ids=()
-
-cleanup() {
-  local exit_status=$?
-  local asset_id
-  trap - EXIT
-  if [ "$exit_status" -ne 0 ] && [ -n "${release_id:-}" ]; then
-    for asset_id in "${uploaded_asset_ids[@]}"; do
-      if ! curl --silent --show-error --fail \
-        --config "$auth_config" \
-        --output /dev/null \
-        --request DELETE \
-        "$api_url/releases/$release_id/assets/$asset_id"; then
-        echo "Could not remove partial Forgejo asset $asset_id; delete it manually" >&2
-      fi
-    done
-  fi
-  rm -f "$auth_config" "$response"
-  if [ -n "$release_payload" ]; then
-    rm -f "$release_payload"
-  fi
-  exit "$exit_status"
-}
-
-trap cleanup EXIT
-chmod 600 "$auth_config"
-printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" > "$auth_config"
-
-status="$(curl --silent --show-error \
+status="$(curl "${curl_options[@]}" \
   --config "$auth_config" \
   --output "$response" \
   --write-out '%{http_code}' \
@@ -168,7 +190,7 @@ status="$(curl --silent --show-error \
 
 if [ "$status" = "404" ]; then
   release_payload="$(mktemp)"
-  node - "$release_tag" "$head_commit" > "$release_payload" <<'JS'
+  node - "$release_tag" "$release_commit" > "$release_payload" <<'JS'
 const [tag, commit] = process.argv.slice(2);
 process.stdout.write(JSON.stringify({
   tag_name: tag,
@@ -178,7 +200,7 @@ process.stdout.write(JSON.stringify({
   prerelease: false,
 }));
 JS
-  status="$(curl --silent --show-error \
+  status="$(curl "${curl_options[@]}" \
     --config "$auth_config" \
     --header 'Content-Type: application/json' \
     --output "$response" \
@@ -216,7 +238,7 @@ upload_asset() {
   local name
   local upload_status
   name="$(basename "$path")"
-  upload_status="$(curl --silent --show-error \
+  upload_status="$(curl "${curl_options[@]}" \
     --config "$auth_config" \
     --output "$response" \
     --write-out '%{http_code}' \

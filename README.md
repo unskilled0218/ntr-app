@@ -67,7 +67,7 @@ FORGEJO_TOKEN="$(<"$HOME/.config/forgejo/forgejo-token")" scripts/release.sh des
 FORGEJO_TOKEN="$(<"$HOME/.config/forgejo/forgejo-token")" scripts/release.sh android
 ```
 
-Set `FORGEJO_API_URL` only when publishing to a different Forgejo API endpoint.
+Set `FORGEJO_API_URL` only when publishing to a different Forgejo API endpoint. The script uses curl's normal certificate verification, verifies API authentication before pushing a new tag, and can resume an interrupted release when the existing version tag points to an ancestor of `main`.
 
 ### Android signing
 
