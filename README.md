@@ -44,6 +44,23 @@ scripts/build-release.sh android   # android only
 
 Artifacts land in `release/<version>/{desktop,android}/`.
 
+### Publish a Forgejo release
+
+The release command requires a clean `main` checkout. It pushes `main`, runs the tests, builds the requested artifacts, creates the `v<version>` Git tag and Forgejo release for `ntr/ntr-app`, and uploads each artifact with a SHA-256 file. With no target argument it builds and uploads both desktop and Android artifacts:
+
+```sh
+install -d -m 700 "$HOME/.config/forgejo"
+umask 077
+read -rsp "Forgejo token: " token
+printf '%s' "$token" > "$HOME/.config/forgejo/forgejo-token"
+unset token
+
+FORGEJO_TOKEN="$(<"$HOME/.config/forgejo/forgejo-token")" scripts/release.sh
+FORGEJO_TOKEN="$(<"$HOME/.config/forgejo/forgejo-token")" scripts/release.sh desktop
+```
+
+Create the access token under Forgejo **Settings -> Applications -> Access Tokens** with repository-write permission. Keep it outside the repository and ensure the token file has mode `600`. Set `FORGEJO_API_URL` only when publishing to a different Forgejo API endpoint.
+
 ### Android signing
 
 A release APK/AAB must be signed or Android refuses to install it on a real device ("App not installed" / `INSTALL_PARSE_FAILED_NO_CERTIFICATES`). Create a signing keystore once:
