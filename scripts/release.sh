@@ -24,11 +24,6 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$(cd "$script_dir/.." && pwd)"
 api_url="${FORGEJO_API_URL:-https://git.lan/api/v1/repos/ntr/ntr-app}"
-api_base="${api_url%%/repos/*}"
-if [ "$api_base" = "$api_url" ]; then
-  echo "FORGEJO_API_URL must include /repos/<owner>/<repository>" >&2
-  exit 1
-fi
 
 for command in curl git node npm sha256sum; do
   if ! command -v "$command" >/dev/null 2>&1; then
@@ -122,9 +117,9 @@ api_status="$(curl "${curl_options[@]}" \
   --config "$auth_config" \
   --output "$response" \
   --write-out '%{http_code}' \
-  "$api_base/user")"
+  "$api_url")"
 if [ "$api_status" != "200" ]; then
-  echo "Forgejo API authentication failed with HTTP $api_status" >&2
+  echo "Forgejo repository API preflight failed with HTTP $api_status" >&2
   cat "$response" >&2
   exit 1
 fi
