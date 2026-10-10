@@ -10,6 +10,7 @@ A local-first desktop client for [my-ntr-server](../server/README.md), built wit
 - **Server mode** — switch to a remote `my-ntr-server` via the settings button (`[L]`/`[S]` top-right); all calls go through the server's HTTP API + SSE live updates
 - **Live sync** — file-watcher (local) or SSE stream (server) pushes changes to open panes without a reload
 - **Mobile layout** — single-pane view with bottom nav and horizontal swipe on narrow screens
+- **Desktop window state** — remembers native fullscreen across normal restarts, preserving windowed position and size when leaving restored fullscreen
 
 ## Run
 
