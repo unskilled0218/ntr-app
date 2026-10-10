@@ -1,6 +1,6 @@
 [package]
 name = "ntr"
-version = "0.15.7"
+version = "0.15.8"
 description = "Local-first desktop client for todo.txt tasks and a Markdown note — local files or a my-ntr-server over HTTP."
 authors = ["musty"]
 edition = "2021"
@@ -40,3 +40,6 @@ webkit2gtk = "2"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-window-state = "=2.4.0"
+
+[patch.crates-io]
+tauri-plugin-window-state = { path = "vendor/tauri-plugin-window-state" }

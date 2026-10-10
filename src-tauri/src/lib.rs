@@ -32,7 +32,8 @@ pub fn run() {
   #[cfg(desktop)]
   let builder = builder.plugin(
     tauri_plugin_window_state::Builder::default()
-      .with_state_flags(StateFlags::POSITION | StateFlags::SIZE)
+      // Restore desktop geometry and native fullscreen across normal restarts.
+      .with_state_flags(StateFlags::POSITION | StateFlags::SIZE | StateFlags::FULLSCREEN)
       .build(),
   );
   #[cfg(target_os = "android")]
