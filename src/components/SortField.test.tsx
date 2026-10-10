@@ -11,7 +11,6 @@ const SORT_OPTIONS: FieldOption[] = [
   { value: "due", label: "Due date" },
   { value: "created", label: "Created" },
   { value: "projects", label: "Projects" },
-  { value: "contexts", label: "Contexts" },
 ];
 const DIR_OPTIONS: FieldOption[] = [
   { value: "asc", label: "ASC" },
@@ -55,7 +54,7 @@ describe("SortField", () => {
     const dialog = openDialog();
     // Sort keys (incl. the task-16 additions, no A-Z) ...
     expect(dialog.getByRole("button", { name: "Projects" })).toBeTruthy();
-    expect(dialog.getByRole("button", { name: "Contexts" })).toBeTruthy();
+    expect(dialog.queryByRole("button", { name: "Contexts" })).toBeNull();
     expect(dialog.queryByRole("button", { name: /^a-z$/i })).toBeNull();
     // ... and the directions, in the same modal.
     expect(dialog.getByRole("button", { name: "ASC" })).toBeTruthy();

@@ -17,10 +17,9 @@ import {
   type Labels,
 } from "../api";
 import EditTaskModal from "./EditTaskModal";
-import { sortTasks, STATUSES, type Direction, type Kind, type Status } from "../config";
+import { sortTasks, type Direction } from "../config";
 import {
-  getStatus,
-  setStatus as persistStatus,
+  clearLegacyTodoPreferences,
   getSort,
   setSort as persistSort,
   getDirection,
@@ -41,38 +40,34 @@ interface Props {
 }
 
 const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
-  // Status / sort / direction are seeded from the local cache (lazy useState initializer runs once
+  // Sort / direction are seeded from the local cache (lazy useState initializer runs once
   // on mount) and written back in their change handlers below, so the view options survive relaunch.
-  const [status, setStatus] = useState<Status>(getStatus);
   const [project, setProject] = useState("");
-  const [context, setContext] = useState("");
   const [sort, setSort] = useState(getSort);
   const [dir, setDir] = useState<Direction>(getDirection);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [serverLabels, setServerLabels] = useState<Labels>({ project: [], context: [] });
   const [error, setError] = useState("");
   const [editTask, setEditTask] = useState<Task | null>(null);
-  const [removing, setRemoving] = useState<{ kind: Kind; name: string } | null>(null);
+  const [removing, setRemoving] = useState<{ kind: "project"; name: string } | null>(null);
 
-  // Fetch the list with the current filters. Status + the two label filters become query args
+  // Fetch active and completed tasks with the current project filter
   // (sort is applied client-side at render). Mirrors app.js refresh() + buildQuery().
   const refresh = useCallback(async () => {
     setError("");
     try {
       const filter = {
-        completed: STATUSES[status].completed,
         project: project || null,
-        context: context || null,
       };
       setTasks(await listTasks(filter));
     } catch (err) {
       setError(`Could not load tasks: ${errMsg(err)}`);
     }
-  }, [status, project, context]);
+  }, [project]);
 
   // Merge task-derived labels into the remembered backend resource. A task mutation can grow this
   // set, but only explicit label removal shrinks it.
-  // Stable (no project/context deps): a vanished filter is dropped via the functional setState
+  // Stable (no project deps): a vanished filter is dropped via the functional setState
   // updater, which reads the latest value without closing over it — so this is created once and
   // is a correct dependency for the effect and the imperative handle below.
   const loadLabels = useCallback(async () => {
@@ -96,7 +91,6 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
     };
     setServerLabels(merged);
     setProject((p) => (p && !merged.project.includes(p) ? "" : p));
-    setContext((c) => (c && !merged.context.includes(c) ? "" : c));
     if (
       merged.project.length !== remembered.project.length ||
       merged.context.length !== remembered.context.length
@@ -112,6 +106,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
   }, [refresh]);
 
   useEffect(() => {
+    clearLegacyTodoPreferences();
     loadLabels();
   }, [loadLabels]);
 
@@ -161,7 +156,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
     setEditTask(task);
   }
 
-  // Remove a project/context from the whole store: strip its token from every task that carries
+  // Remove a project from the whole store: strip its token from every task that carries
   // it. Fetch the full list (not the filtered view) so removal spans every task, including
   // completed ones; update each affected task sequentially (the file-backed, one-writer model);
   // then reload. loadLabels then drops the now-unused name and clears a filter that selected it.
@@ -173,8 +168,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
       const all = await listTasks({});
       for (const u of planLabelRemoval(all, kind, name)) await updateTask(u.id, u.text);
       const remembered = await getLabels().catch(() => ({ project: [], context: [] }));
-      const field = kind === "project" ? "project" : "context";
-      await putLabels({ ...remembered, [field]: remembered[field].filter((n) => n !== name) });
+      await putLabels({ ...remembered, project: remembered.project.filter((n) => n !== name) });
       await refresh();
       await loadLabels();
     } catch (err) {
@@ -202,16 +196,12 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
         <h1>todo</h1>
 
         <FilterBar
-          status={status}
           project={project}
-          context={context}
           sort={sort}
           dir={dir}
           compact={compact}
           serverLabels={serverLabels}
-          onStatus={(s) => { setStatus(s); persistStatus(s); }}
           onProject={setProject}
-          onContext={setContext}
           onSort={(s) => { setSort(s); persistSort(s); }}
           onDir={(d) => { const next = d as Direction; setDir(next); persistDir(next); }}
           onRemove={(kind, name) => setRemoving({ kind, name })}

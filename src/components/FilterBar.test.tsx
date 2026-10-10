@@ -11,28 +11,23 @@ const SERVER_LABELS = { project: ["work", "home"], context: ["phone", "store"] }
 function renderBar(overrides: Partial<ComponentProps<typeof FilterBar>> = {}) {
   const onRemove = vi.fn();
   const onProject = vi.fn();
-  const onContext = vi.fn();
   const onSort = vi.fn();
   const onDir = vi.fn();
   render(
     <FilterBar
-      status="all"
       project=""
-      context=""
       sort="file"
       dir="asc"
       compact={false}
       serverLabels={SERVER_LABELS}
-      onStatus={vi.fn()}
       onProject={onProject}
-      onContext={onContext}
       onSort={onSort}
       onDir={onDir}
       onRemove={onRemove}
       {...overrides}
     />,
   );
-  return { onRemove, onProject, onContext, onSort, onDir };
+  return { onRemove, onProject, onSort, onDir };
 }
 
 const openDialog = () => within(document.querySelector("dialog.select-modal[open]") as HTMLElement);
@@ -64,17 +59,14 @@ describe("FilterBar pickers", () => {
     expect(onRemove).toHaveBeenCalledWith("project", "work");
   });
 
-  it("removes a context label from the context picker", () => {
-    const { onRemove } = renderBar();
-    const picker = openPicker(/context filter/i);
-    fireEvent.click(picker.getByRole("button", { name: /remove phone/i }));
-    expect(onRemove).toHaveBeenCalledWith("context", "phone");
+  it("has no status or context filter", () => {
+    renderBar();
+    expect(screen.queryByRole("button", { name: /context filter/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /status filter/i })).toBeNull();
   });
 
-  it("does not offer Remove on the Status or Sort pickers", () => {
+  it("does not offer Remove on the Sort picker", () => {
     renderBar();
-    expect(openPicker(/status filter/i).queryByRole("button", { name: /remove/i })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
     expect(openPicker(/^sort$/i).queryByRole("button", { name: /remove/i })).toBeNull();
   });
 
@@ -83,7 +75,7 @@ describe("FilterBar pickers", () => {
     const picker = openPicker(/^sort$/i);
     // Sort keys (with the task-16 additions, no A-Z) and directions live in the same modal.
     expect(picker.getByRole("button", { name: "Projects" })).toBeTruthy();
-    expect(picker.getByRole("button", { name: "Contexts" })).toBeTruthy();
+    expect(picker.queryByRole("button", { name: "Contexts" })).toBeNull();
     expect(picker.queryByRole("button", { name: /^a-z$/i })).toBeNull();
     expect(picker.getByRole("button", { name: "ASC" })).toBeTruthy();
 
@@ -100,10 +92,12 @@ describe("FilterBar pickers", () => {
     expect(screen.queryByRole("button", { name: /status filter/i })).toBeNull();
     expect(screen.getByRole("button", { name: /filter options/i })).toBeTruthy();
 
-    // Open the Options modal: the four choosers live inside it.
+    // Open the Options modal: only Project and Sort live inside it.
     fireEvent.click(screen.getByRole("button", { name: /filter options/i }));
     const options = within(document.querySelector("dialog.options-modal[open]") as HTMLElement);
-    expect(options.getByRole("button", { name: /status filter/i })).toBeTruthy();
+    expect(options.queryByRole("button", { name: /status filter/i })).toBeNull();
+    expect(options.queryByRole("button", { name: /context filter/i })).toBeNull();
+    expect(options.getByRole("button", { name: /project filter/i })).toBeTruthy();
     expect(options.getByRole("button", { name: /^sort$/i })).toBeTruthy();
 
     // A chooser opened from inside the Options modal still works.

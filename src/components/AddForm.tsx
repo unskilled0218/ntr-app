@@ -1,11 +1,11 @@
-// The add form: free-text description + priority/due/project/context controls, and the label-add
+// The add form: free-text description + priority/due/project controls, and the label-add
 // modal it drives. Ported from #add-form + app.js (composeText, the label-select change handling,
 // staging). Owns its own field state and the session's staged labels (labels created in the modal
 // but not yet attached to any task; they persist for the session, exactly as app.js's module-level
 // `staged` does).
 
 import { useState } from "react";
-import { PRIORITY_OPTIONS, type Kind } from "../config";
+import { PRIORITY_OPTIONS } from "../config";
 import { composeText } from "../labels";
 import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
@@ -24,18 +24,13 @@ export default function AddForm({ serverLabels, onAdd, compact }: Props) {
   const [priority, setPriority] = useState("");
   const [due, setDue] = useState("");
   const [project, setProject] = useState("");
-  const [context, setContext] = useState("");
-  const [staged, setStaged] = useState<{ project: string[]; context: string[] }>({
-    project: [],
-    context: [],
-  });
-  const [modalKind, setModalKind] = useState<Kind | null>(null);
+  const [staged, setStaged] = useState<string[]>([]);
+  const [modalKind, setModalKind] = useState<"project" | null>(null);
 
-  // Modal confirmed: stage the new label, select it for its kind, close the modal.
-  const onConfirm = (kind: Kind, name: string) => {
-    setStaged((s) => ({ ...s, [kind]: [...new Set([...s[kind], name])] }));
-    if (kind === "project") setProject(name);
-    else setContext(name);
+  // Modal confirmed: stage the new project, select it, and close the modal.
+  const onConfirm = (name: string) => {
+    setStaged((s) => [...new Set([...s, name])]);
+    setProject(name);
     setModalKind(null);
   };
 
@@ -43,14 +38,13 @@ export default function AddForm({ serverLabels, onAdd, compact }: Props) {
     e.preventDefault();
     // A description is the one required field; without it an add is a no-op.
     if (!description.trim()) return;
-    const text = composeText({ priority, description, project, context, due });
+    const text = composeText({ priority, description, project, contexts: [], due });
     const ok = await onAdd(text);
     if (ok) {
       setDescription("");
       setPriority("");
       setDue("");
       setProject("");
-      setContext("");
     }
   }
 
@@ -59,7 +53,7 @@ export default function AddForm({ serverLabels, onAdd, compact }: Props) {
   // form's onSubmit (creating a stray task and clearing the just-picked label). Keeping it outside
   // matches EditTaskModal and the original web UI (server/web/index.html), where #label-modal is a
   // top-level sibling of #add-form.
-  // The four field controls, defined once and rendered either inline (default) or inside the
+  // The three field controls, defined once and rendered either inline (default) or inside the
   // compact Options modal — so their props and wiring live in exactly one place.
   const fields = (
     <>
@@ -77,20 +71,9 @@ export default function AddForm({ serverLabels, onAdd, compact }: Props) {
           kind="project"
           value={project}
           serverLabels={serverLabels.project}
-          staged={staged.project}
+          staged={staged}
           onChange={setProject}
           onAdd={() => setModalKind("project")}
-        />
-      </label>
-      <label>
-        Contexts
-        <LabelSelect
-          kind="context"
-          value={context}
-          serverLabels={serverLabels.context}
-          staged={staged.context}
-          onChange={setContext}
-          onAdd={() => setModalKind("context")}
         />
       </label>
     </>
@@ -113,7 +96,7 @@ export default function AddForm({ serverLabels, onAdd, compact }: Props) {
           {compact && <OptionsModal ariaLabel="Task options">{fields}</OptionsModal>}
         </div>
       </form>
-      <LabelModal kind={modalKind} onConfirm={onConfirm} onClose={() => setModalKind(null)} />
+      <LabelModal kind={modalKind} onConfirm={(_, name) => onConfirm(name)} onClose={() => setModalKind(null)} />
     </>
   );
 }

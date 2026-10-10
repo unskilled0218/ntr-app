@@ -18,7 +18,7 @@ vi.mock("../api", () => ({
   errMsg: (e: unknown) => (e instanceof Error ? e.message : String(e)),
 }));
 
-import { deleteTask, getLabels, listTasks, putLabels, updateTask } from "../api";
+import { completeTask, createTask, deleteTask, getLabels, listTasks, putLabels, uncompleteTask, updateTask } from "../api";
 
 // Open the Project filter picker and click a label row's Remove button, returning once the
 // confirm dialog can be acted on. The picker lists labels once the mount loadLabels resolves.
@@ -78,6 +78,7 @@ describe("TodoPane removal glue", () => {
     expect(vi.mocked(updateTask)).toHaveBeenCalledWith(1, "call bank @phone");
     expect(vi.mocked(updateTask)).toHaveBeenCalledWith(3, "post");
     expect(vi.mocked(updateTask).mock.calls.some(([id]) => id === 2)).toBe(false);
+    expect(vi.mocked(putLabels)).toHaveBeenCalledWith({ project: ["home"], context: ["phone"] });
 
     // And the store is re-queried afterwards (the reload).
     await waitFor(() => expect(vi.mocked(listTasks).mock.calls.length).toBeGreaterThan(callsBefore));
@@ -157,25 +158,75 @@ describe("TodoPane remembered labels", () => {
 });
 
 describe("TodoPane view-option persistence", () => {
-  it("writes a Status pick through to the local cache", async () => {
+  it.each(["active", "completed"])("ignores and removes legacy %s status, showing both task states", async (status) => {
+    localStorage.setItem("ntr.status", status);
+    const completed = { ...task(4, "finished @phone", [], ["phone"]), completed: true };
+    vi.mocked(listTasks).mockResolvedValue([...TASKS, completed]);
     render(<TodoPane compact={false} />);
-
-    // Open the Status picker and choose Active; the change handler persists it.
-    fireEvent.click(screen.getByRole("button", { name: /status filter/i }));
-    const picker = within(document.querySelector("dialog.select-modal[open]") as HTMLElement);
-    fireEvent.click(picker.getByRole("button", { name: "Active" }));
-
-    await waitFor(() => expect(localStorage.getItem("ntr.status")).toBe("active"));
+    await screen.findByText("finished");
+    expect(screen.getByText("call bank +work")).toBeTruthy();
+    expect(screen.getAllByRole("checkbox").map((el) => (el as HTMLInputElement).checked)).toEqual([false, false, false, true]);
+    expect(localStorage.getItem("ntr.status")).toBeNull();
+    expect(vi.mocked(listTasks).mock.calls.every(([filter]) => filter.completed == null && filter.context == null)).toBe(true);
   });
 
-  it("seeds the status from the cache on mount, so the first fetch uses it", async () => {
-    // A persisted Active status must drive the mount refresh's filter (completed: false),
-    // proving the lazy useState(getStatus) seed is read before the first listTasks call.
-    localStorage.setItem("ntr.status", "active");
-    render(<TodoPane compact={false} />);
+  it("falls back to file order with saved descending direction on first render", async () => {
+    localStorage.setItem("ntr.sort", "contexts");
+    localStorage.setItem("ntr.sortDir", "desc");
+    const { container } = render(<TodoPane compact={false} />);
+    await screen.findByText("call bank +work");
+    expect(screen.getByRole("button", { name: "Sort" }).textContent).toBe("File order · DESC");
+    expect([...container.querySelectorAll(".task .text")].map((el) => el.textContent)).toEqual(["post +work", "tidy +home", "call bank +work"]);
+  });
+});
 
-    await waitFor(() =>
-      expect(vi.mocked(listTasks)).toHaveBeenCalledWith(expect.objectContaining({ completed: false })),
-    );
+describe.each([false, true])("TodoPane simplified workflow (compact=%s)", (compact) => {
+  function openFilters() {
+    if (compact) fireEvent.click(screen.getByRole("button", { name: /filter options/i }));
+  }
+
+  it("project filtering includes completed tasks and offers no status/context controls", async () => {
+    const completed = { ...task(4, "finished +work @phone", ["work"], ["phone"]), completed: true };
+    vi.mocked(listTasks).mockImplementation(async (filter) => [...TASKS, completed].filter((t) => !filter.project || t.projects.includes(filter.project)));
+    render(<TodoPane compact={compact} />);
+    await screen.findByText("finished +work");
+    openFilters();
+    expect(screen.queryByRole("button", { name: /status filter|context filter/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /project filter/i }));
+    fireEvent.click(within(document.querySelector("dialog.select-modal[open]")!).getByRole("button", { name: "work" }));
+    await waitFor(() => expect(screen.queryByText("tidy +home")).toBeNull());
+    expect(screen.getByText("finished +work")).toBeTruthy();
+    expect(listTasks).toHaveBeenCalledWith({ project: "work" });
+  });
+
+  it("completes and reopens a task without hiding it", async () => {
+    let current = { ...TASKS[0] };
+    vi.mocked(listTasks).mockImplementation(async () => [current]);
+    vi.mocked(completeTask).mockImplementation(async () => { current = { ...current, completed: true }; return current; });
+    vi.mocked(uncompleteTask).mockImplementation(async () => { current = { ...current, completed: false }; return current; });
+    render(<TodoPane compact={compact} />);
+    fireEvent.click(await screen.findByRole("checkbox"));
+    await waitFor(() => expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true));
+    expect(screen.getByText("call bank +work")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox"));
+    await waitFor(() => expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false));
+    expect(completeTask).toHaveBeenCalledWith(1);
+    expect(uncompleteTask).toHaveBeenCalledWith(1);
+  });
+
+  it("adds and reloads a task", async () => {
+    let current = [...TASKS];
+    vi.mocked(listTasks).mockImplementation(async () => current);
+    vi.mocked(createTask).mockImplementation(async (text) => {
+      const created = task(4, text, [], []);
+      current = [...current, created];
+      return created;
+    });
+    render(<TodoPane compact={compact} />);
+    await screen.findByText("call bank +work");
+    fireEvent.change(screen.getByRole("textbox", { name: /new task/i }), { target: { value: "new task" } });
+    fireEvent.submit(document.getElementById("add-form")!);
+    await screen.findByText("new task");
+    expect(createTask).toHaveBeenCalledWith("new task");
   });
 });

@@ -133,6 +133,21 @@ describe("listTasks (server mode)", () => {
     expect(url).not.toContain("context=");
     expect(url).not.toContain("priority=");
   });
+
+  it("project-only requests do not restrict completion or context", async () => {
+    mockServer([[[]]]);
+    await listTasks({ project: "work" });
+    expect(reqOf(0).url).toBe(`${SERVER}/api/tasks?project=work`);
+  });
+});
+
+describe("listTasks (local mode)", () => {
+  it("project-only requests pass null completion and context restrictions", async () => {
+    localStorage.removeItem("ntr.serverUrl");
+    vi.mocked(invoke).mockResolvedValueOnce([TASK]);
+    await expect(listTasks({ project: "work" })).resolves.toEqual([TASK]);
+    expect(invoke).toHaveBeenCalledWith("list_tasks", { completed: null, priority: null, project: "work", context: null });
+  });
 });
 
 describe("createTask (server mode)", () => {

@@ -8,7 +8,7 @@ import {
   getServerUrl,
   getSort,
   getStartupView,
-  getStatus,
+  clearLegacyTodoPreferences,
   setAllowInvalidCert,
   setCompactUi,
   setConflictStrategy,
@@ -17,7 +17,6 @@ import {
   setServerUrl,
   setSort,
   setStartupView,
-  setStatus,
 } from "./settings";
 
 afterEach(() => {
@@ -120,27 +119,15 @@ describe("getCompactUi / setCompactUi", () => {
   });
 });
 
-describe("getStatus / setStatus", () => {
-  it("defaults to 'all' when nothing is stored", () => {
-    expect(getStatus()).toBe("all");
-  });
-
-  it("falls back to 'all' for a value not in STATUSES", () => {
-    localStorage.setItem("ntr.status", "bogus");
-    expect(getStatus()).toBe("all");
-  });
-
-  it("round-trips a valid non-default status", () => {
-    setStatus("active");
-    expect(localStorage.getItem("ntr.status")).toBe("active");
-    expect(getStatus()).toBe("active");
-  });
-
-  it("removes the key for 'all' (default is the absence of the key)", () => {
-    setStatus("active");
-    setStatus("all");
+describe("clearLegacyTodoPreferences", () => {
+  it.each(["active", "completed", "all", "bogus"])("removes legacy status %s without changing sort options", (status) => {
+    localStorage.setItem("ntr.status", status);
+    setSort("priority");
+    setDirection("desc");
+    clearLegacyTodoPreferences();
     expect(localStorage.getItem("ntr.status")).toBeNull();
-    expect(getStatus()).toBe("all");
+    expect(getSort()).toBe("priority");
+    expect(getDirection()).toBe("desc");
   });
 });
 
@@ -158,6 +145,13 @@ describe("getSort / setSort", () => {
     setSort("priority");
     expect(localStorage.getItem("ntr.sort")).toBe("priority");
     expect(getSort()).toBe("priority");
+  });
+
+  it("falls back from the removed contexts sort while retaining direction", () => {
+    localStorage.setItem("ntr.sort", "contexts");
+    setDirection("desc");
+    expect(getSort()).toBe("file");
+    expect(getDirection()).toBe("desc");
   });
 
   it("removes the key for 'file' (default is the absence of the key)", () => {

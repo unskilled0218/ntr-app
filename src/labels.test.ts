@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bareDescription, composeText, parseLabelInput, planLabelRemoval, removeLabel, unionLabels } from "./labels";
+import { bareDescription, composeEditedTask, composeText, getTaskPriority, hideContexts, parseLabelInput, planLabelRemoval, removeLabel, unionLabels } from "./labels";
 
 describe("unionLabels", () => {
   it("merges and de-duplicates remembered and derived labels", () => {
@@ -18,18 +18,78 @@ describe("unionLabels", () => {
 describe("composeText", () => {
   it("puts the priority first and appends label sigils and due tag", () => {
     expect(
-      composeText({ priority: "A", description: "call bank", project: "money", context: "phone", due: "2026-06-30" }),
+      composeText({ priority: "A", description: "call bank", project: "money", contexts: ["phone"], due: "2026-06-30" }),
     ).toBe("(A) call bank +money @phone due:2026-06-30");
   });
 
   it("omits empty fields and trims the description", () => {
-    expect(composeText({ priority: "", description: "  buy milk  ", project: "", context: "", due: "" })).toBe(
+    expect(composeText({ priority: "", description: "  buy milk  ", project: "", contexts: [], due: "" })).toBe(
       "buy milk",
     );
   });
 
   it("emits project before context", () => {
-    expect(composeText({ priority: "", description: "x", project: "p", context: "c", due: "" })).toBe("x +p @c");
+    expect(composeText({ priority: "", description: "x", project: "p", contexts: ["c"], due: "" })).toBe("x +p @c");
+  });
+
+  it("does not duplicate preserved contexts already typed in the description", () => {
+    expect(composeText({ priority: "", description: "call @phone", project: "", contexts: ["phone", "store", "store"], due: "" })).toBe("call @phone @store");
+  });
+});
+
+describe("composeEditedTask", () => {
+  const original = {
+    completed: false,
+    priority: "A",
+    creation_date: "2026-06-01",
+    completion_date: null,
+    description: "call bank @phone @store",
+    contexts: ["phone", "store"],
+  };
+  const fields = { priority: "B", description: "call later", project: "work", due: "2026-06-30" };
+
+  it("keeps active creation date and every hidden context while changing visible fields", () => {
+    expect(composeEditedTask(original, fields)).toBe("(B) 2026-06-01 call later +work @phone @store due:2026-06-30");
+  });
+
+  it.each([{ contexts: [] }, { contexts: ["phone"] }, { contexts: ["phone", "store"] }])("retains context values $contexts", ({ contexts }) => {
+    expect(composeEditedTask({ ...original, contexts }, { ...fields, priority: "", project: "", due: "" })).toBe(["2026-06-01 call later", ...contexts.map((c) => `@${c}`)].join(" "));
+  });
+
+  it.each(["A", "B", "Z", ""])("serializes completed effective priority '%s' without stale tags", (priority) => {
+    const completed = { ...original, completed: true, priority: null, completion_date: "2026-06-02", description: "call bank @phone @store pri:A" };
+    const text = composeEditedTask(completed, { ...fields, priority, description: "call later pri:A pri:B" });
+    expect(text).toBe(`x 2026-06-02 2026-06-01 call later +work @phone @store due:2026-06-30${priority ? ` pri:${priority}` : ""}`);
+  });
+
+  it("does not emit a creation date as a completion date", () => {
+    expect(composeEditedTask({ ...original, completed: true }, { ...fields, priority: "" })).toBe("x call later +work @phone @store due:2026-06-30");
+  });
+
+  it("supports context-only edits without inventing a description", () => {
+    expect(composeEditedTask({ ...original, creation_date: null }, { priority: "", description: "", project: "", due: "" })).toBe("@phone @store");
+  });
+});
+
+describe("getTaskPriority", () => {
+  it.each(["A", "Z"])("restores completed priority %s from its saved tag", (priority) => {
+    expect(getTaskPriority({ completed: true, priority: null, description: `task pri:${priority}` })).toBe(priority);
+  });
+
+  it("prefers a leading priority and ignores invalid or active saved tags", () => {
+    expect(getTaskPriority({ completed: true, priority: "B", description: "task pri:A" })).toBe("B");
+    expect(getTaskPriority({ completed: true, priority: null, description: "task pri:AA pri:a" })).toBe("");
+    expect(getTaskPriority({ completed: false, priority: null, description: "task pri:A" })).toBe("");
+  });
+});
+
+describe("hideContexts", () => {
+  it("removes all exact context tokens, including repeated tokens", () => {
+    expect(hideContexts("call @phone @store @phone", ["phone", "store"])).toBe("call");
+  });
+
+  it("leaves prefix collisions, email, and URL text intact", () => {
+    expect(hideContexts("@phonebook mail@phone https://example.com/@phone @phone", ["phone"])).toBe("@phonebook mail@phone https://example.com/@phone");
   });
 });
 
@@ -40,6 +100,10 @@ describe("bareDescription", () => {
 
   it("strips all projects when there are multiple", () => {
     expect(bareDescription("call bank +money +work", ["money", "work"], [], {})).toBe("call bank");
+  });
+
+  it("does not corrupt embedded metadata-like text", () => {
+    expect(bareDescription("mail@phone https://site/@phone @phone +workshop +work", ["work"], ["phone"], {})).toBe("mail@phone https://site/@phone +workshop");
   });
 
   it("returns description unchanged when there are no structured fields", () => {

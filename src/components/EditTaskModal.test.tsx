@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import EditTaskModal from "./EditTaskModal";
 
 vi.mock("../api", () => ({
@@ -27,7 +27,7 @@ beforeEach(() => { vi.clearAllMocks(); });
 afterEach(() => { cleanup(); });
 
 describe("EditTaskModal", () => {
-  it("pre-populates description, priority, due, project, context from the task", () => {
+  it("pre-populates visible fields without exposing contexts", () => {
     render(
       <EditTaskModal task={TASK} serverLabels={SERVER_LABELS} onSave={vi.fn()} onClose={() => {}} />,
     );
@@ -41,7 +41,7 @@ describe("EditTaskModal", () => {
     // The picker triggers show the pre-populated selection as their label.
     expect(screen.getByRole("button", { name: /^priority$/i }).textContent).toBe("A");
     expect(screen.getByRole("button", { name: /^project$/i }).textContent).toBe("work");
-    expect(screen.getByRole("button", { name: /^context$/i }).textContent).toBe("phone");
+    expect(screen.queryByRole("button", { name: /^context$/i })).toBeNull();
   });
 
   it("calls onSave with the composed text on submit", async () => {
@@ -53,8 +53,61 @@ describe("EditTaskModal", () => {
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
 
     await waitFor(() => {
-      expect(onSave).toHaveBeenCalledWith(7, "(A) call bank +work @phone due:2026-06-30");
+      expect(onSave).toHaveBeenCalledWith(7, "(A) 2026-06-01 call bank +work @phone due:2026-06-30");
     });
+  });
+
+  it("changes visible fields while preserving multiple contexts and creation date", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<EditTaskModal task={{ ...TASK, contexts: ["phone", "store"], description: `${TASK.description} @store` }} serverLabels={SERVER_LABELS} onSave={onSave} onClose={() => {}} />);
+    fireEvent.change(screen.getByRole("textbox", { name: /description/i }), { target: { value: "call later" } });
+    fireEvent.change(screen.getByLabelText(/due date/i), { target: { value: "2026-07-01" } });
+    fireEvent.click(screen.getByRole("button", { name: /^priority$/i }));
+    fireEvent.click(within(document.querySelector("dialog.select-modal[open]")!).getByRole("button", { name: "B" }));
+    fireEvent.click(screen.getByRole("button", { name: /^project$/i }));
+    fireEvent.click(within(document.querySelector("dialog.select-modal[open]")!).getByRole("button", { name: "home" }));
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(7, "(B) 2026-06-01 call later +home @phone @store due:2026-07-01"));
+  });
+
+  it.each(["unchanged", "B", "None"])("keeps completion dates and applies completed priority %s", async (choice) => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const completed = { ...TASK, completed: true, priority: null, completion_date: "2026-06-02", description: `${TASK.description} pri:A`, tags: { ...TASK.tags, pri: "A" } };
+    render(<EditTaskModal task={completed} serverLabels={SERVER_LABELS} onSave={onSave} onClose={() => {}} />);
+    expect(screen.getByRole("button", { name: /^priority$/i }).textContent).toBe("A");
+    if (choice !== "unchanged") {
+      fireEvent.click(screen.getByRole("button", { name: /^priority$/i }));
+      fireEvent.click(within(document.querySelector("dialog.select-modal[open]")!).getByRole("button", { name: choice }));
+    }
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    const priority = choice === "unchanged" ? "A" : choice === "None" ? "" : choice;
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(7, `x 2026-06-02 2026-06-01 call bank +work @phone due:2026-06-30${priority ? ` pri:${priority}` : ""}`));
+  });
+
+  it("shows and preserves saved completed priorities above C", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<EditTaskModal task={{ ...TASK, completed: true, priority: null, description: `${TASK.description} pri:Z`, tags: { ...TASK.tags, pri: "Z" } }} serverLabels={SERVER_LABELS} onSave={onSave} onClose={() => {}} />);
+    expect(screen.getByRole("button", { name: /^priority$/i }).textContent).toBe("Z");
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(7, "x call bank +work @phone due:2026-06-30 pri:Z"));
+  });
+
+  it("uses only the current task's hidden contexts after switching tasks", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const props = { serverLabels: SERVER_LABELS, onSave, onClose: () => {} };
+    const { rerender } = render(<EditTaskModal task={TASK} {...props} />);
+    rerender(<EditTaskModal task={{ ...TASK, id: 8, contexts: [], description: "plain", projects: [], tags: {} }} {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(8, "(A) 2026-06-01 plain"));
+  });
+
+  it("saves remaining fields on a context-only task without persisting fallback text", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<EditTaskModal task={{ ...TASK, priority: null, creation_date: null, description: "@phone", projects: [], tags: {} }} serverLabels={SERVER_LABELS} onSave={onSave} onClose={() => {}} />);
+    expect((screen.getByRole("textbox", { name: /description/i }) as HTMLInputElement).value).toBe("");
+    fireEvent.change(screen.getByLabelText(/due date/i), { target: { value: "2026-07-01" } });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(7, "@phone due:2026-07-01"));
   });
 
   it("shows an error message and stays open when onSave rejects", async () => {
