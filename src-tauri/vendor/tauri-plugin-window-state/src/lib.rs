@@ -1,7 +1,7 @@
 // Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
-// Locally modified: preserve windowed geometry while fullscreen; see ../PATCH.md.
+// Locally modified: coordinate native modes and preserve normal bounds; see ../PATCH.md.
 
 //! Save window positions and sizes and restore them when the app is reopened.
 
@@ -23,10 +23,16 @@ use std::{
   collections::{HashMap, HashSet},
   fs::create_dir_all,
   io::BufReader,
+  sync::atomic::{AtomicU64, Ordering},
   sync::{Arc, Mutex},
+  time::Instant,
 };
 
 mod cmd;
+mod restore;
+use restore::{Action, Attempt, Observation, NORMAL_SETTLE, RESTORE_POLL};
+
+static NEXT_RESTORE_ID: AtomicU64 = AtomicU64::new(1);
 
 type LabelMapperFn = dyn Fn(&str) -> &str + Send + Sync;
 type FilterCallbackFn = dyn Fn(&str) -> bool + Send + Sync;
@@ -73,7 +79,7 @@ struct PluginState {
   map_label: Option<Box<LabelMapperFn>>,
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 struct WindowState {
   width: u32,
   height: u32,
@@ -89,7 +95,11 @@ struct WindowState {
   decorated: bool,
   fullscreen: bool,
   #[serde(skip)]
-  restoring_fullscreen: bool,
+  pending_restore: Option<Attempt>,
+  #[serde(skip)]
+  protect_geometry: bool,
+  #[serde(skip)]
+  normal_candidate: Option<(Bounds, Instant)>,
 }
 
 impl Default for WindowState {
@@ -105,9 +115,198 @@ impl Default for WindowState {
       visible: true,
       decorated: true,
       fullscreen: Default::default(),
-      restoring_fullscreen: false,
+      pending_restore: None,
+      protect_geometry: false,
+      normal_candidate: None,
     }
   }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Bounds {
+  size: (u32, u32),
+  position: (i32, i32),
+}
+
+impl WindowState {
+  fn restore_position(&self) -> (i32, i32) {
+    if self.maximized {
+      (self.prev_x, self.prev_y)
+    } else {
+      (self.x, self.y)
+    }
+  }
+  fn remember_position(&mut self, position: (i32, i32)) {
+    self.x = position.0;
+    self.y = position.1;
+    self.prev_x = self.x;
+    self.prev_y = self.y;
+  }
+
+  fn next_restore(&mut self, id: u64, observed: Observation, now: Instant) -> Option<Action> {
+    let attempt = self
+      .pending_restore
+      .as_mut()
+      .filter(|attempt| attempt.id == id)?;
+    let action = attempt.next(observed, now);
+    if action == Action::Complete || action == Action::Fail {
+      self.finish_restore(id, action == Action::Complete);
+    }
+    Some(action)
+  }
+
+  fn finish_restore(&mut self, id: u64, success: bool) {
+    if let Some(attempt) = self
+      .pending_restore
+      .as_ref()
+      .filter(|attempt| attempt.id == id)
+    {
+      self.protect_geometry = !success || attempt.clamped;
+      self.normal_candidate = None;
+      self.pending_restore = None;
+    }
+  }
+
+  fn cancel_restore(&mut self) {
+    if let Some(attempt) = &self.pending_restore {
+      self.finish_restore(attempt.id, false);
+    }
+  }
+
+  fn observe_modes(&mut self, observed: Observation, flags: StateFlags) {
+    if self.pending_restore.is_some() {
+      return;
+    }
+    if let (Some(fullscreen), Some(maximized), Some(false)) =
+      (observed.fullscreen, observed.maximized, observed.minimized)
+    {
+      if flags.contains(StateFlags::FULLSCREEN) {
+        self.fullscreen = fullscreen;
+      }
+      // Fullscreen may hide the underlying maximized mode on some platforms.
+      if flags.contains(StateFlags::MAXIMIZED) && !fullscreen {
+        self.maximized = maximized;
+      }
+    }
+  }
+
+  fn capture_bounds(
+    &mut self,
+    observed: Observation,
+    bounds: Bounds,
+    flags: StateFlags,
+    now: Instant,
+  ) {
+    if self.pending_restore.is_some() || !observed.normal() {
+      self.normal_candidate = None;
+      return;
+    }
+    if self.protect_geometry {
+      match self.normal_candidate {
+        Some((previous, since))
+          if previous == bounds && now.duration_since(since) >= NORMAL_SETTLE =>
+        {
+          self.protect_geometry = false;
+          self.normal_candidate = None;
+        }
+        Some((previous, _)) if previous == bounds => return,
+        _ => {
+          self.normal_candidate = Some((bounds, now));
+          return;
+        }
+      }
+    }
+    if flags.contains(StateFlags::SIZE) && bounds.size.0 > 0 && bounds.size.1 > 0 {
+      self.width = bounds.size.0;
+      self.height = bounds.size.1;
+    }
+    if flags.contains(StateFlags::POSITION) {
+      self.remember_position(bounds.position);
+    }
+  }
+}
+
+fn observation<R: Runtime>(window: &Window<R>) -> Observation {
+  Observation {
+    size: window
+      .inner_size()
+      .ok()
+      .map(|size| (size.width, size.height)),
+    maximized: if cfg!(target_os = "macos") {
+      // Preserve upstream's special case, but never treat a failed query as false.
+      match (window.is_decorated().ok(), window.is_resizable().ok()) {
+        (Some(decorated), Some(resizable)) if !decorated || !resizable => Some(false),
+        (Some(_), Some(_)) => window.is_maximized().ok(),
+        _ => None,
+      }
+    } else {
+      window.is_maximized().ok()
+    },
+    fullscreen: window.is_fullscreen().ok(),
+    minimized: window.is_minimized().ok(),
+  }
+}
+
+// Queries and setters run without the cache mutex held. Every callback rechecks its attempt id.
+fn advance_restore<R: Runtime>(window: &Window<R>, id: u64) {
+  let cache = window.state::<WindowStateCache>().0.clone();
+  let plugin = window.state::<PluginState>();
+  let label = plugin
+    .map_label
+    .as_ref()
+    .map(|map| map(window.label()))
+    .unwrap_or_else(|| window.label());
+  for _ in 0..4 {
+    let observed = observation(window);
+    let action = cache
+      .lock()
+      .unwrap()
+      .get_mut(label)
+      .and_then(|state| state.next_restore(id, observed, Instant::now()));
+    let result = match action {
+      Some(Action::Maximize(true)) => window.maximize(),
+      Some(Action::Maximize(false)) => window.unmaximize(),
+      Some(Action::Fullscreen(value)) => window.set_fullscreen(value),
+      Some(Action::Fail) => {
+        log::warn!("Window mode restoration failed or timed out: {label}");
+        return;
+      }
+      _ => return,
+    };
+    if let Err(error) = result {
+      if let Some(state) = cache.lock().unwrap().get_mut(label) {
+        state.finish_restore(id, false);
+      }
+      log::warn!("Window mode restoration request failed for {label}: {error}");
+      return;
+    }
+  }
+}
+
+fn start_restore_poll<R: Runtime>(window: Window<R>, label: String, id: u64) {
+  let cache = window.state::<WindowStateCache>().0.clone();
+  std::thread::spawn(move || loop {
+    std::thread::sleep(RESTORE_POLL);
+    let active = cache
+      .lock()
+      .unwrap()
+      .get(&label)
+      .and_then(|state| state.pending_restore.as_ref())
+      .is_some_and(|attempt| attempt.id == id);
+    if !active {
+      break;
+    }
+    let callback_window = window.clone();
+    if window
+      .run_on_main_thread(move || advance_restore(&callback_window, id))
+      .is_err()
+    {
+      if let Some(state) = cache.lock().unwrap().get_mut(&label) {
+        state.finish_restore(id, false);
+      }
+      break;
+    }
+  });
 }
 
 struct WindowStateCache(Arc<Mutex<HashMap<String, WindowState>>>);
@@ -173,91 +372,82 @@ impl<R: Runtime> WindowExt for Window<R> {
       .map_label
       .as_ref()
       .map(|map| map(self.label()))
-      .unwrap_or_else(|| self.label());
+      .unwrap_or_else(|| self.label())
+      .to_string();
 
     let restoring_window_state = self.state::<RestoringWindowState>();
     let _restoring_window_lock = restoring_window_state.0.lock().unwrap();
-    let cache = self.state::<WindowStateCache>();
-    let mut c = cache.0.lock().unwrap();
+    let cache = self.state::<WindowStateCache>().0.clone();
+    let saved = cache
+      .lock()
+      .unwrap()
+      .get(&label)
+      .cloned()
+      .filter(|state| *state != WindowState::default());
 
     let mut should_show = true;
 
-    if let Some(state) = c
-      .get_mut(label)
-      .filter(|state| **state != WindowState::default())
-    {
-      if flags.contains(StateFlags::DECORATIONS) {
-        self.set_decorations(state.decorated)?;
-      }
+    if let Some(mut state) = saved {
+      // Existing maximized entries store their normal position in prev_x/prev_y.
+      let position = state.restore_position();
+      state.remember_position(position);
+      let size = if flags.contains(StateFlags::SIZE) {
+        (state.width, state.height)
+      } else {
+        let size = self.inner_size()?;
+        (size.width, size.height)
+      };
+      let id = NEXT_RESTORE_ID.fetch_add(1, Ordering::Relaxed);
+      let maximized = flags.contains(StateFlags::MAXIMIZED) && state.maximized;
+      let fullscreen = flags.contains(StateFlags::FULLSCREEN) && state.fullscreen;
+      state.pending_restore = Some(Attempt::new(
+        id,
+        size,
+        maximized,
+        fullscreen,
+        Instant::now(),
+      ));
+      state.protect_geometry = false;
+      state.normal_candidate = None;
+      should_show = state.visible;
+      cache.lock().unwrap().insert(label.clone(), state.clone());
+      let geometry_result = (|| -> tauri::Result<()> {
+        if flags.contains(StateFlags::DECORATIONS) {
+          self.set_decorations(state.decorated)?;
+        }
 
-      if flags.contains(StateFlags::POSITION) {
-        let position = (state.x, state.y).into();
-        let size = (state.width, state.height).into();
-        // restore position to saved value if saved monitor exists
-        // otherwise, let the OS decide where to place the window
-        for m in self.available_monitors()? {
-          if m.intersects(position, size) {
-            self.set_position(PhysicalPosition {
-              x: if state.maximized {
-                state.prev_x
-              } else {
-                state.x
-              },
-              y: if state.maximized {
-                state.prev_y
-              } else {
-                state.y
-              },
-            })?;
+        if flags.contains(StateFlags::POSITION) {
+          let position = (state.x, state.y).into();
+          let size = (state.width, state.height).into();
+          // restore position to saved value if saved monitor exists
+          // otherwise, let the OS decide where to place the window
+          for m in self.available_monitors()? {
+            if m.intersects(position, size) {
+              self.set_position(PhysicalPosition {
+                x: state.x,
+                y: state.y,
+              })?;
+            }
           }
         }
-      }
 
-      if flags.contains(StateFlags::SIZE) {
-        self.set_size(PhysicalSize {
-          width: state.width,
-          height: state.height,
-        })?;
-      }
-
-      if flags.contains(StateFlags::MAXIMIZED) && state.maximized {
-        self.maximize()?;
-      }
-
-      if flags.contains(StateFlags::FULLSCREEN) {
-        let saved_size = PhysicalSize {
-          width: state.width,
-          height: state.height,
-        };
-        if state.fullscreen && flags.contains(StateFlags::SIZE) && self.inner_size()? != saved_size
-        {
-          // GTK applies set_size asynchronously. Entering fullscreen before the
-          // resize completes would preserve the default bounds for later exit.
-          state.restoring_fullscreen = true;
-          let window = self.clone();
-          let cache = cache.0.clone();
-          let label = label.to_string();
-          self.on_window_event(move |event| {
-            if let WindowEvent::Resized(size) = event {
-              if *size == saved_size {
-                let mut states = cache.lock().unwrap();
-                if let Some(state) = states.get_mut(&label) {
-                  if state.restoring_fullscreen {
-                    if window.set_fullscreen(true).is_err() {
-                      state.fullscreen = false;
-                    }
-                    state.restoring_fullscreen = false;
-                  }
-                }
-              }
-            }
-          });
-        } else {
-          self.set_fullscreen(state.fullscreen)?;
+        if flags.contains(StateFlags::SIZE) {
+          self.set_size(PhysicalSize {
+            width: state.width,
+            height: state.height,
+          })?;
         }
+        Ok(())
+      })();
+      if let Err(error) = geometry_result {
+        if let Some(state) = cache.lock().unwrap().get_mut(&label) {
+          state.finish_restore(id, false);
+        }
+        return Err(error);
       }
 
-      should_show = state.visible;
+      advance_restore(self, id);
+      start_restore_poll(self.clone(), label.clone(), id);
     } else {
       let mut metadata = WindowState::default();
 
@@ -269,8 +459,7 @@ impl<R: Runtime> WindowExt for Window<R> {
 
       if flags.contains(StateFlags::POSITION) {
         let pos = self.outer_position()?;
-        metadata.x = pos.x;
-        metadata.y = pos.y;
+        metadata.remember_position((pos.x, pos.y));
       }
 
       if flags.contains(StateFlags::MAXIMIZED) {
@@ -289,7 +478,7 @@ impl<R: Runtime> WindowExt for Window<R> {
         metadata.fullscreen = self.is_fullscreen()?;
       }
 
-      c.insert(label.into(), metadata);
+      cache.lock().unwrap().insert(label, metadata);
     }
 
     if flags.contains(StateFlags::VISIBLE) && should_show {
@@ -305,11 +494,6 @@ trait WindowExtInternal {
   fn update_state(&self, state: &mut WindowState, flags: StateFlags) -> tauri::Result<()>;
 }
 
-// A failed fullscreen query must not replace normal bounds with a fullscreen sample.
-fn can_capture_geometry(fullscreen: Option<bool>, maximized: bool, minimized: bool) -> bool {
-  fullscreen == Some(false) && !maximized && !minimized
-}
-
 impl<R: Runtime> WindowExtInternal for WebviewWindow<R> {
   fn update_state(&self, state: &mut WindowState, flags: StateFlags) -> tauri::Result<()> {
     self.as_ref().window().update_state(state, flags)
@@ -318,22 +502,8 @@ impl<R: Runtime> WindowExtInternal for WebviewWindow<R> {
 
 impl<R: Runtime> WindowExtInternal for Window<R> {
   fn update_state(&self, state: &mut WindowState, flags: StateFlags) -> tauri::Result<()> {
-    let is_maximized = flags
-      .intersects(StateFlags::MAXIMIZED | StateFlags::POSITION | StateFlags::SIZE)
-      && self.is_maximized()?;
-    let is_minimized =
-      flags.intersects(StateFlags::POSITION | StateFlags::SIZE) && self.is_minimized()?;
-    let is_fullscreen = flags
-      .intersects(StateFlags::FULLSCREEN | StateFlags::POSITION | StateFlags::SIZE)
-      && self.is_fullscreen()?;
-
-    if flags.contains(StateFlags::MAXIMIZED) {
-      state.maximized = is_maximized;
-    }
-
-    if flags.contains(StateFlags::FULLSCREEN) {
-      state.fullscreen = is_fullscreen;
-    }
+    let observed = observation(self);
+    state.observe_modes(observed, flags);
 
     if flags.contains(StateFlags::DECORATIONS) {
       state.decorated = self.is_decorated()?;
@@ -343,21 +513,16 @@ impl<R: Runtime> WindowExtInternal for Window<R> {
       state.visible = self.is_visible()?;
     }
 
-    let capture_geometry = !state.restoring_fullscreen
-      && can_capture_geometry(Some(is_fullscreen), is_maximized, is_minimized);
-    if flags.contains(StateFlags::SIZE) && capture_geometry {
-      let size = self.inner_size()?;
-      // It doesn't make sense to save a window with 0 height or width
-      if size.width > 0 && size.height > 0 {
-        state.width = size.width;
-        state.height = size.height;
-      }
-    }
-
-    if flags.contains(StateFlags::POSITION) && capture_geometry {
-      let position = self.outer_position()?;
-      state.x = position.x;
-      state.y = position.y;
+    if let (Some(size), Ok(position)) = (observed.size, self.outer_position()) {
+      state.capture_bounds(
+        observed,
+        Bounds {
+          size,
+          position: (position.x, position.y),
+        },
+        flags,
+        Instant::now(),
+      );
     }
 
     Ok(())
@@ -491,64 +656,42 @@ impl Builder {
           WindowEvent::CloseRequested { .. } => {
             let mut c = cache.lock().unwrap();
             if let Some(state) = c.get_mut(&label) {
+              state.cancel_restore();
               let _ = window_clone.update_state(state, state_flags);
             }
           }
 
-          WindowEvent::Moved(position) if state_flags.contains(StateFlags::POSITION) => {
-            if window_clone
-              .state::<RestoringWindowState>()
-              .0
-              .try_lock()
-              .is_ok()
-              && can_capture_geometry(
-                window_clone.is_fullscreen().ok(),
-                false,
-                window_clone.is_minimized().unwrap_or_default(),
-              )
-            {
-              let mut c = cache.lock().unwrap();
-              if let Some(state) = c
-                .get_mut(&label)
-                .filter(|state| !state.restoring_fullscreen)
-              {
-                state.prev_x = state.x;
-                state.prev_y = state.y;
-
-                state.x = position.x;
-                state.y = position.y;
-              }
+          WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+            let id = cache
+              .lock()
+              .unwrap()
+              .get(&label)
+              .and_then(|state| state.pending_restore.as_ref())
+              .map(|attempt| attempt.id);
+            if let Some(id) = id {
+              advance_restore(&window_clone, id);
             }
-          }
-          WindowEvent::Resized(size) if state_flags.contains(StateFlags::SIZE) => {
             if window_clone
               .state::<RestoringWindowState>()
               .0
               .try_lock()
               .is_ok()
             {
-              // TODO: Remove once https://github.com/tauri-apps/tauri/issues/5812 is resolved.
-              let is_maximized = if cfg!(target_os = "macos")
-                && (!window_clone.is_decorated().unwrap_or_default()
-                  || !window_clone.is_resizable().unwrap_or_default())
-              {
-                false
-              } else {
-                window_clone.is_maximized().unwrap_or_default()
-              };
-
-              if can_capture_geometry(
-                window_clone.is_fullscreen().ok(),
-                is_maximized,
-                window_clone.is_minimized().unwrap_or_default(),
-              ) {
-                let mut c = cache.lock().unwrap();
-                if let Some(state) = c
-                  .get_mut(&label)
-                  .filter(|state| !state.restoring_fullscreen)
-                {
-                  state.width = size.width;
-                  state.height = size.height;
+              let observed = observation(&window_clone);
+              let position = window_clone.outer_position().ok();
+              let mut c = cache.lock().unwrap();
+              if let Some(state) = c.get_mut(&label) {
+                state.observe_modes(observed, state_flags);
+                if let (Some(size), Some(position)) = (observed.size, position) {
+                  state.capture_bounds(
+                    observed,
+                    Bounds {
+                      size,
+                      position: (position.x, position.y),
+                    },
+                    state_flags,
+                    Instant::now(),
+                  );
                 }
               }
             }
@@ -607,7 +750,188 @@ impl MonitorExt for Monitor {
 
 #[cfg(test)]
 mod tests {
-  use super::{can_capture_geometry, WindowState};
+  use super::*;
+
+  fn normal() -> Observation {
+    Observation {
+      size: Some((720, 480)),
+      maximized: Some(false),
+      fullscreen: Some(false),
+      minimized: Some(false),
+    }
+  }
+
+  fn saved() -> WindowState {
+    WindowState {
+      width: 720,
+      height: 480,
+      x: 220,
+      y: 180,
+      prev_x: 220,
+      prev_y: 180,
+      ..WindowState::default()
+    }
+  }
+
+  fn flags() -> StateFlags {
+    StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED | StateFlags::FULLSCREEN
+  }
+
+  #[test]
+  fn mode_samples_keep_normal_bounds_and_preserve_underlying_maximization() {
+    let mut state = saved();
+    let now = Instant::now();
+    let monitor = Bounds {
+      size: (3840, 2160),
+      position: (0, 0),
+    };
+    let maximized = Observation {
+      maximized: Some(true),
+      size: Some(monitor.size),
+      ..normal()
+    };
+    state.observe_modes(maximized, flags());
+    state.capture_bounds(maximized, monitor, flags(), now);
+    assert!(state.maximized);
+    let fullscreen = Observation {
+      fullscreen: Some(true),
+      maximized: Some(false),
+      ..maximized
+    };
+    state.observe_modes(fullscreen, flags());
+    state.capture_bounds(fullscreen, monitor, flags(), now);
+    assert!(state.maximized && state.fullscreen);
+    assert_eq!(
+      (state.width, state.height, state.restore_position()),
+      (720, 480, (220, 180))
+    );
+    state.observe_modes(normal(), flags());
+    state.capture_bounds(
+      normal(),
+      Bounds {
+        size: (720, 480),
+        position: (300, 240),
+      },
+      flags(),
+      now,
+    );
+    assert!(!state.maximized && !state.fullscreen);
+    assert_eq!(
+      (state.x, state.y, state.prev_x, state.prev_y),
+      (300, 240, 300, 240)
+    );
+  }
+
+  #[test]
+  fn unknown_mode_queries_preserve_cached_modes_and_geometry() {
+    for unknown in 0..3 {
+      let mut state = saved();
+      state.maximized = true;
+      state.fullscreen = true;
+      let original = state.clone();
+      let mut observed = normal();
+      match unknown {
+        0 => observed.fullscreen = None,
+        1 => observed.maximized = None,
+        _ => observed.minimized = None,
+      }
+      state.observe_modes(observed, flags());
+      state.capture_bounds(
+        observed,
+        Bounds {
+          size: (3840, 2160),
+          position: (0, 0),
+        },
+        flags(),
+        Instant::now(),
+      );
+      assert_eq!(state, original, "unknown query index {unknown}");
+    }
+  }
+
+  #[test]
+  fn closes_failures_and_superseded_attempts_make_old_callbacks_inert() {
+    let now = Instant::now();
+    let mut state = saved();
+    state.pending_restore = Some(Attempt::new(1, (720, 480), true, true, now));
+    assert_eq!(
+      state.next_restore(1, normal(), now),
+      Some(Action::Maximize(true))
+    );
+    // The native setter failed; no late observation may continue its attempt.
+    state.finish_restore(1, false);
+    assert_eq!(state.next_restore(1, normal(), now), None);
+    assert!(state.protect_geometry);
+    state.pending_restore = Some(Attempt::new(2, (720, 480), false, true, now));
+    assert_eq!(state.next_restore(1, normal(), now), None);
+    assert_eq!(
+      state.next_restore(2, normal(), now),
+      Some(Action::Fullscreen(true))
+    );
+    state.cancel_restore();
+    assert_eq!(state.next_restore(2, normal(), now), None);
+    assert_eq!(
+      (state.width, state.height, state.restore_position()),
+      (720, 480, (220, 180))
+    );
+  }
+
+  #[test]
+  fn deadline_failure_keeps_bounds_until_confirmed_normal_samples_settle() {
+    let now = Instant::now();
+    let mut state = saved();
+    state.pending_restore = Some(Attempt::new(1, (720, 480), true, true, now));
+    assert_eq!(
+      state.next_restore(1, normal(), now),
+      Some(Action::Maximize(true))
+    );
+    let expired = now + restore::RESTORE_TIMEOUT;
+    assert_eq!(state.next_restore(1, normal(), expired), Some(Action::Fail));
+    assert!(state.pending_restore.is_none());
+    let intermediate = Bounds {
+      size: (1600, 1200),
+      position: (0, 0),
+    };
+    state.capture_bounds(
+      Observation {
+        size: Some(intermediate.size),
+        ..normal()
+      },
+      intermediate,
+      flags(),
+      expired,
+    );
+    assert_eq!(
+      (state.width, state.height, state.x, state.y),
+      (720, 480, 220, 180)
+    );
+    let settled = Bounds {
+      size: (720, 480),
+      position: (300, 240),
+    };
+    state.capture_bounds(normal(), settled, flags(), expired + NORMAL_SETTLE);
+    assert_eq!((state.x, state.y), (220, 180));
+    state.capture_bounds(normal(), settled, flags(), expired + NORMAL_SETTLE * 2);
+    assert_eq!((state.x, state.y), (300, 240));
+    assert!(!state.protect_geometry);
+  }
+
+  #[test]
+  fn fresh_normal_position_initializes_previous_fields_and_legacy_maximized_position_restores() {
+    let mut state = WindowState::default();
+    state.remember_position((140, 140));
+    state.maximized = true;
+    assert_eq!(state.restore_position(), (140, 140));
+    let legacy = WindowState {
+      x: 0,
+      y: 0,
+      prev_x: 220,
+      prev_y: 180,
+      maximized: true,
+      ..saved()
+    };
+    assert_eq!(legacy.restore_position(), (220, 180));
+  }
 
   #[test]
   fn pending_restore_is_not_persisted_and_normal_bounds_survive() {
@@ -617,13 +941,17 @@ mod tests {
       x: 220,
       y: 180,
       fullscreen: true,
-      restoring_fullscreen: true,
+      pending_restore: Some(Attempt::new(1, (720, 480), true, true, Instant::now())),
+      protect_geometry: true,
       ..WindowState::default()
     };
     let json = serde_json::to_value(&state).unwrap();
-    assert!(json.get("restoring_fullscreen").is_none());
+    assert!(json.get("pending_restore").is_none());
+    assert!(json.get("protect_geometry").is_none());
+    assert!(json.get("normal_candidate").is_none());
     let restored: WindowState = serde_json::from_value(json).unwrap();
-    assert!(!restored.restoring_fullscreen);
+    assert!(restored.pending_restore.is_none());
+    assert!(!restored.protect_geometry);
     assert!(restored.fullscreen);
     assert_eq!(
       (restored.width, restored.height, restored.x, restored.y),
@@ -648,7 +976,13 @@ mod tests {
       (None, true, true, false),
     ] {
       assert_eq!(
-        can_capture_geometry(fullscreen, maximized, minimized),
+        Observation {
+          fullscreen,
+          maximized: Some(maximized),
+          minimized: Some(minimized),
+          size: None
+        }
+        .normal(),
         expected,
         "fullscreen={fullscreen:?}, maximized={maximized}, minimized={minimized}"
       );

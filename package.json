@@ -1,7 +1,7 @@
 {
   "name": "ntr",
   "private": true,
-  "version": "0.15.8",
+  "version": "0.15.9",
   "description": "Local-first desktop client for todo.txt tasks and a Markdown note — local files or a my-ntr-server over HTTP.",
   "author": "musty",
   "type": "module",
