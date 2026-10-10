@@ -57,11 +57,9 @@ describe("sortTasks", () => {
     expect(sortTasks([a, b, c], "projects").map((t) => t.id)).toEqual([3, 1, 2]);
   });
 
-  it("contexts sort keys off the alphabetically-first context, missing-context tasks last", () => {
-    const a = task({ id: 1, contexts: ["phone"] });
-    const b = task({ id: 2, contexts: [] });
-    const c = task({ id: 3, contexts: ["store", "home"] }); // keys off "home"
-    expect(sortTasks([a, b, c], "contexts").map((t) => t.id)).toEqual([3, 1, 2]);
+  it("created sort orders dates with missing dates last", () => {
+    const tasks = [task({ id: 1, creation_date: "2026-07-01" }), task({ id: 2 }), task({ id: 3, creation_date: "2026-06-01" })];
+    expect(sortTasks(tasks, "created").map((t) => t.id)).toEqual([3, 1, 2]);
   });
 
   it("desc reverses a comparator sort, putting missing-key tasks first", () => {
@@ -92,7 +90,7 @@ describe("sortTasks", () => {
     expect(tasks.map((t) => t.id)).toEqual(before);
   });
 
-  it("offers exactly the file/priority/due/created/projects/contexts sorts (no alpha)", () => {
-    expect(Object.keys(SORTS)).toEqual(["file", "priority", "due", "created", "projects", "contexts"]);
+  it("offers exactly the file/priority/due/created/projects sorts", () => {
+    expect(Object.keys(SORTS)).toEqual(["file", "priority", "due", "created", "projects"]);
   });
 });

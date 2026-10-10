@@ -1,10 +1,9 @@
-import { DIRECTIONS, SORTS, STATUSES, VIEWS, type Direction, type Status, type View } from "./config";
+import { DIRECTIONS, SORTS, VIEWS, type Direction, type View } from "./config";
 
 const KEY = "ntr.serverUrl";
 const STRATEGY_KEY = "ntr.conflictStrategy";
 const ALLOW_INVALID_CERT_KEY = "ntr.allowInvalidCert";
 const COMPACT_UI_KEY = "ntr.compactUi";
-const STATUS_KEY = "ntr.status";
 const SORT_KEY = "ntr.sort";
 const SORT_DIR_KEY = "ntr.sortDir";
 const STARTUP_VIEW_KEY = "ntr.startupView";
@@ -56,20 +55,15 @@ export function setConflictStrategy(s: ConflictStrategy): void {
   s === "ask" ? localStorage.removeItem(STRATEGY_KEY) : localStorage.setItem(STRATEGY_KEY, s);
 }
 
-// The todo view options — status filter, sort key, sort direction — persisted to the local cache
+// The todo view options — sort key and sort direction — persisted to the local cache
 // only (never sent to the server): they describe how THIS client views the list, not the tasks
 // themselves. Each is validated against its config table on read, so a stored value that no longer
 // exists (e.g. a sort key dropped in a later version, as `alpha` was in task 16) degrades to the
 // default instead of throwing in sortTasks. The default is the absence of the key, exactly as
 // setServerUrl / setConflictStrategy represent theirs.
 
-export function getStatus(): Status {
-  const v = localStorage.getItem(STATUS_KEY);
-  return v && v in STATUSES ? (v as Status) : "all";
-}
-
-export function setStatus(s: Status): void {
-  s === "all" ? localStorage.removeItem(STATUS_KEY) : localStorage.setItem(STATUS_KEY, s);
+export function clearLegacyTodoPreferences(): void {
+  localStorage.removeItem("ntr.status");
 }
 
 export function getSort(): string {

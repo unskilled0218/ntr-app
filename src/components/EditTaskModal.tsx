@@ -1,11 +1,12 @@
 // Edit modal for an existing task. Pre-populates the same structured fields as AddForm
-// (description, priority, due, project, context). The task prop drives open/close: non-null
+// (description, priority, due, project). Hidden task metadata is retained on save.
+// The task prop drives open/close: non-null
 // opens the dialog; null closes it. Uses the same native-<dialog> pattern as LabelModal.
 
 import { useEffect, useRef, useState } from "react";
 import { errMsg, type Task } from "../api";
-import { PRIORITY_OPTIONS, type Kind } from "../config";
-import { bareDescription, composeText } from "../labels";
+import { PRIORITY_OPTIONS } from "../config";
+import { bareDescription, composeEditedTask, getTaskPriority } from "../labels";
 import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
 import SelectField from "./SelectField";
@@ -24,9 +25,8 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
   const [priority, setPriority] = useState("");
   const [due, setDue] = useState("");
   const [project, setProject] = useState("");
-  const [context, setContext] = useState("");
-  const [staged, setStaged] = useState<{ project: string[]; context: string[] }>({ project: [], context: [] });
-  const [modalKind, setModalKind] = useState<Kind | null>(null);
+  const [staged, setStaged] = useState<string[]>([]);
+  const [modalKind, setModalKind] = useState<"project" | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -34,29 +34,29 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
     if (!el) return;
     if (task) {
       setDescription(bareDescription(task.description, task.projects, task.contexts, task.tags));
-      setPriority(task.priority ?? "");
+      setPriority(getTaskPriority(task));
       setDue(task.tags.due ?? "");
       setProject(task.projects[0] ?? "");
-      setContext(task.contexts[0] ?? "");
-      setStaged({ project: [], context: [] });
+      setStaged([]);
+      setModalKind(null);
       setError("");
-      el.showModal();
+      if (!el.open) el.showModal();
     } else {
       el.close();
     }
   }, [task]);
 
-  const onConfirm = (kind: Kind, name: string) => {
-    setStaged((s) => ({ ...s, [kind]: [...new Set([...s[kind], name])] }));
-    if (kind === "project") setProject(name);
-    else setContext(name);
+  const onConfirm = (name: string) => {
+    setStaged((s) => [...new Set([...s, name])]);
+    setProject(name);
     setModalKind(null);
   };
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!task || !description.trim()) return;
-    const text = composeText({ priority, description, project, context, due });
+    if (!task || (!description.trim() && !task.contexts.length)) return;
+    const text = composeEditedTask(task, { priority, description, project, due });
+    if (!text.trim()) return;
     try {
       await onSave(task.id, text);
     } catch (err) {
@@ -72,6 +72,10 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
   // Click outside the box closes it via onClose (not a raw dialog.close()), so the parent's `task`
   // state — the source of truth here — stays in step, exactly as Escape does.
   useBackdropClose(dialogRef, onClose);
+
+  const priorityOptions = PRIORITY_OPTIONS.some((option) => option.value === priority)
+    ? PRIORITY_OPTIONS
+    : [...PRIORITY_OPTIONS, { value: priority, label: priority }];
 
   return (
     <dialog id="edit-task-modal" ref={dialogRef} onCancel={onCancel}>
@@ -89,7 +93,7 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
         <div className="add-fields">
           <label>
             Priority
-            <SelectField ariaLabel="Priority" value={priority} options={PRIORITY_OPTIONS} onChange={setPriority} />
+            <SelectField ariaLabel="Priority" value={priority} options={priorityOptions} onChange={setPriority} />
           </label>
           <label>
             Due
@@ -101,20 +105,9 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
               kind="project"
               value={project}
               serverLabels={serverLabels.project}
-              staged={staged.project}
+              staged={staged}
               onChange={setProject}
               onAdd={() => setModalKind("project")}
-            />
-          </label>
-          <label>
-            Context
-            <LabelSelect
-              kind="context"
-              value={context}
-              serverLabels={serverLabels.context}
-              staged={staged.context}
-              onChange={setContext}
-              onAdd={() => setModalKind("context")}
             />
           </label>
         </div>
@@ -124,7 +117,7 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
           <button type="submit" className="primary">Save</button>
         </div>
       </form>
-      <LabelModal kind={modalKind} onConfirm={onConfirm} onClose={() => setModalKind(null)} />
+      <LabelModal kind={modalKind} onConfirm={(_, name) => onConfirm(name)} onClose={() => setModalKind(null)} />
     </dialog>
   );
 }

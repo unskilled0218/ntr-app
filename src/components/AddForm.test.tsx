@@ -9,13 +9,10 @@ const EMPTY_LABELS = { project: [], context: [] };
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(() => { cleanup(); });
 
-// The accessible name SelectField gives the label picker trigger ("Project" / "Context").
-const triggerName = (kind: "project" | "context") => (kind === "project" ? /^project$/i : /^context$/i);
-
 // Open the label picker for `kind`, choose its "+ Add..." row to open the label modal, and confirm
 // `name` through it. Scoped to #label-modal because the add form has its own "Add" submit button.
-function addLabelViaModal(kind: "project" | "context", name: string) {
-  fireEvent.click(screen.getByRole("button", { name: triggerName(kind) }));
+function addLabelViaModal(kind: "project", name: string) {
+  fireEvent.click(screen.getByRole("button", { name: /^project$/i }));
   const picker = within(document.querySelector("dialog.select-modal[open]") as HTMLElement);
   fireEvent.click(picker.getByRole("button", { name: new RegExp(`\\+ add ${kind}`, "i") }));
   const modal = within(document.getElementById("label-modal") as HTMLElement);
@@ -41,13 +38,15 @@ describe("AddForm", () => {
     expect(onAdd).not.toHaveBeenCalled();
   });
 
-  it("adding a context from the modal does not fire onAdd even with an empty description", () => {
+  it("requires a description even after creating a project", () => {
     const onAdd = vi.fn().mockResolvedValue(true);
     render(<AddForm serverLabels={EMPTY_LABELS} onAdd={onAdd} compact={false} />);
 
-    addLabelViaModal("context", "errands");
+    addLabelViaModal("project", "errands");
+    fireEvent.submit(document.getElementById("add-form")!);
 
-    expect(screen.getByRole("button", { name: /^context$/i }).textContent).toBe("errands");
+    expect(screen.getByRole("button", { name: /^project$/i }).textContent).toBe("errands");
+    expect(screen.queryByRole("button", { name: /^context$/i })).toBeNull();
     expect(onAdd).not.toHaveBeenCalled();
   });
 
@@ -68,17 +67,18 @@ describe("AddForm", () => {
   it("compact: hides the inline fields behind a Task options modal, keeping the add row", () => {
     render(<AddForm serverLabels={EMPTY_LABELS} onAdd={vi.fn()} compact={true} />);
 
-    // The add row keeps the input + Add; the four fields are not inline.
+    // The add row keeps the input + Add; the three fields are not inline.
     expect(screen.getByRole("textbox", { name: /new task/i })).toBeTruthy();
     const form = within(document.getElementById("add-form") as HTMLElement);
     expect(form.getByRole("button", { name: /^add$/i })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^priority$/i })).toBeNull();
 
-    // Opening the Options modal reveals the Priority / Projects / Contexts controls.
+    // Opening the Options modal reveals only Priority / Project / Due controls.
     fireEvent.click(screen.getByRole("button", { name: /task options/i }));
     const options = within(document.querySelector("dialog.options-modal[open]") as HTMLElement);
     expect(options.getByRole("button", { name: /^priority$/i })).toBeTruthy();
     expect(options.getByRole("button", { name: /^project$/i })).toBeTruthy();
-    expect(options.getByRole("button", { name: /^context$/i })).toBeTruthy();
+    expect(options.queryByRole("button", { name: /^context$/i })).toBeNull();
+    expect(options.getByLabelText(/due date/i)).toBeTruthy();
   });
 });

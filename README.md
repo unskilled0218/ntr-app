@@ -5,7 +5,7 @@ A local-first desktop client for [my-ntr-server](../server/README.md), built wit
 ## Features
 
 - **Note pane** — single Markdown editor with in-place live preview, auto-save, and conflict detection when the file changes elsewhere
-- **Todo pane** — add, complete, edit, and delete tasks; filter by status, project, and context; sort by priority, due date, created date, or alphabetically
+- **Todo pane** — add, complete, reopen, edit, and delete tasks; show active and completed tasks with project filtering; sort by file order, priority, due date, created date, or project, ascending or descending
 - **Local-first** — reads and writes `todo.txt` / `Note.md` directly via Tauri commands; no server required
 - **Server mode** — switch to a remote `my-ntr-server` via the settings button (`[L]`/`[S]` top-right); all calls go through the server's HTTP API + SSE live updates
 - **Live sync** — file-watcher (local) or SSE stream (server) pushes changes to open panes without a reload

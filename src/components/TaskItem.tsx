@@ -2,13 +2,13 @@
 // taskElement; class names match style.css.
 
 import type { Task } from "../api";
+import { hideContexts } from "../labels";
 
 function renderMeta(task: Task): string {
   const bits: string[] = [];
   if (task.creation_date) bits.push(`created ${task.creation_date}`);
   if (task.completion_date) bits.push(`done ${task.completion_date}`);
   if (task.projects.length) bits.push(task.projects.map((p) => `+${p}`).join(" "));
-  if (task.contexts.length) bits.push(task.contexts.map((c) => `@${c}`).join(" "));
   return bits.join(" · ");
 }
 
@@ -27,7 +27,7 @@ export default function TaskItem({ task, onToggle, onEdit, onDelete }: Props) {
       <div className="body">
         <span className="text">
           {task.priority && <span className="priority">({task.priority})</span>}
-          {task.description}
+          {hideContexts(task.description, task.contexts) || "Task without description"}
         </span>
         {meta && <span className="meta">{meta}</span>}
       </div>

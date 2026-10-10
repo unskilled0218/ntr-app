@@ -1,5 +1,5 @@
 // Shared configuration tables, ported from web/app.js. Each is the single source of truth for
-// its concern (label kinds, status/sort options, the add-form sentinels, timings, view order),
+// its concern (label kinds, sort options, the add-form sentinels, timings, view order),
 // so wording and behaviour never drift between components.
 
 import type { Task } from "./api";
@@ -48,17 +48,6 @@ export const NOTE_UNDO_LIMIT = 200;
 // source, not a magic number.
 export const LONG_PRESS_MS = 500;
 
-// Status filter options keyed by their <select> value. `completed` is the query param the
-// option maps to (null = omit it), kept beside the label so the query builder never re-decides
-// what a status means.
-export const STATUSES = {
-  all: { label: "All", completed: null as boolean | null },
-  active: { label: "Active", completed: false as boolean | null },
-  completed: { label: "Completed", completed: true as boolean | null },
-} as const;
-
-export type Status = keyof typeof STATUSES;
-
 // Compare two optional sort keys ascending, with absent values (null/undefined) always ordering
 // after present ones — so "no priority" / "no due date" sink to the bottom. ISO date strings and
 // single-char priorities compare correctly with <, so no parsing is needed.
@@ -70,7 +59,7 @@ export function cmpMissingLast(a: string | null | undefined, b: string | null | 
 }
 
 // The alphabetically-first label of a task, or null when it has none — so tasks with no
-// project/context sort to the bottom like any other missing key. Reduces to the min rather
+// project sort to the bottom like any other missing key. Reduces to the min rather
 // than sorting a copy: no allocation, no full sort, and the task's own label array is never
 // mutated.
 function firstLabel(labels: string[]): string | null {
@@ -79,18 +68,17 @@ function firstLabel(labels: string[]): string | null {
 
 // Client-side sort orders. compare:null keeps the server's file order. Every comparator sorts
 // ascending and sends tasks missing the key to the bottom; JS's stable sort keeps file order
-// among ties. The label sorts (projects/contexts) key off the task's alphabetically-first label.
+// among ties. The project sort keys off the task's alphabetically-first project.
 export const SORTS: Record<string, { label: string; compare: ((a: Task, b: Task) => number) | null }> = {
   file: { label: "File order", compare: null },
   priority: { label: "Priority", compare: (a, b) => cmpMissingLast(a.priority, b.priority) },
   due: { label: "Due date", compare: (a, b) => cmpMissingLast(a.tags.due, b.tags.due) },
   created: { label: "Created", compare: (a, b) => cmpMissingLast(a.creation_date, b.creation_date) },
   projects: { label: "Projects", compare: (a, b) => cmpMissingLast(firstLabel(a.projects), firstLabel(b.projects)) },
-  contexts: { label: "Contexts", compare: (a, b) => cmpMissingLast(firstLabel(a.contexts), firstLabel(b.contexts)) },
 };
 
 // Sort direction. asc is each comparator's natural (ascending) order; desc reverses the
-// comparator. Keyed by <select> value, label beside it — mirrors STATUSES so the text lives once.
+// comparator. Keyed by <select> value, label beside it so the text lives once.
 export const DIRECTIONS = {
   asc: { label: "ASC" },
   desc: { label: "DESC" },

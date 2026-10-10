@@ -2,7 +2,7 @@
 // DOM, no side effects, so they are trivially unit-testable (the behaviours most likely to
 // regress subtly). Depends only on config — never on the transport shim (api.ts).
 
-import { KIND_LIST, KINDS, type Kind } from "./config";
+import { KINDS, type Kind } from "./config";
 
 export function unionLabels(remembered: string[], derived: string[]): string[] {
   return [...new Set([...remembered, ...derived])];
@@ -13,7 +13,7 @@ export interface ComposeFields {
   priority: string;
   description: string;
   project: string;
-  context: string;
+  contexts: string[];
   due: string;
 }
 
@@ -24,12 +24,61 @@ export function composeText(f: ComposeFields): string {
   if (f.priority) parts.push(`(${f.priority})`);
   const desc = f.description.trim();
   if (desc) parts.push(desc);
-  for (const kind of KIND_LIST) {
-    const value = kind === "project" ? f.project : f.context;
-    if (value) parts.push(`${KINDS[kind].prefix}${value}`);
+  if (f.project) parts.push(`+${f.project}`);
+  const descriptionTokens = new Set(desc.split(/\s+/));
+  for (const context of new Set(f.contexts)) {
+    if (!descriptionTokens.has(`@${context}`)) parts.push(`@${context}`);
   }
   if (f.due) parts.push(`due:${f.due}`);
   return parts.join(" ").trim();
+}
+
+// Only the metadata needed for editing: no transport dependency or duplicate form state.
+interface EditableTask {
+  completed: boolean;
+  priority: string | null;
+  completion_date: string | null;
+  creation_date: string | null;
+  description: string;
+  contexts: string[];
+}
+
+export function getTaskPriority(task: Pick<EditableTask, "completed" | "priority" | "description">): string {
+  if (task.priority) return task.priority;
+  if (!task.completed) return "";
+  const saved = task.description.split(/\s+/).find((token) => /^pri:[A-Z]$/.test(token));
+  return saved?.slice(4) ?? "";
+}
+
+// Updates replace whole task lines. Keep lifecycle metadata and hidden contexts here,
+// with completed priority stored as pri:X so the existing backend can restore it.
+export function composeEditedTask(task: EditableTask, fields: Omit<ComposeFields, "contexts">): string {
+  const parts: string[] = [];
+  if (task.completed) parts.push("x");
+  else if (fields.priority) parts.push(`(${fields.priority})`);
+  if (task.completed && task.completion_date) {
+    parts.push(task.completion_date);
+    if (task.creation_date) parts.push(task.creation_date);
+  } else if (!task.completed && task.creation_date) {
+    parts.push(task.creation_date);
+  }
+  const description = task.completed
+    ? fields.description.split(/\s+/).filter((token) => !/^pri:[A-Z]$/.test(token)).join(" ")
+    : fields.description;
+  const body = composeText({ ...fields, description, priority: "", contexts: task.contexts });
+  if (body) parts.push(body);
+  if (task.completed && fields.priority) parts.push(`pri:${fields.priority}`);
+  return parts.join(" ");
+}
+
+// Whole-token matching keeps email addresses, URLs, and similarly named labels intact.
+function stripTokens(description: string, tokens: string[]): string {
+  const hidden = new Set(tokens);
+  return description.split(/\s+/).filter((token) => !hidden.has(token)).join(" ").trim();
+}
+
+export function hideContexts(description: string, contexts: string[]): string {
+  return stripTokens(description, contexts.map((context) => `@${context}`));
 }
 
 // Strip the structured tokens already parsed into projects/contexts/tags from the raw
@@ -41,11 +90,11 @@ export function bareDescription(
   contexts: string[],
   tags: Record<string, string>,
 ): string {
-  let desc = description;
-  for (const p of projects) desc = desc.replace(`+${p}`, "");
-  for (const c of contexts) desc = desc.replace(`@${c}`, "");
-  for (const [k, v] of Object.entries(tags)) desc = desc.replace(`${k}:${v}`, "");
-  return desc.trim().replace(/\s+/g, " ");
+  return stripTokens(description, [
+    ...projects.map((p) => `+${p}`),
+    ...contexts.map((c) => `@${c}`),
+    ...Object.entries(tags).map(([k, v]) => `${k}:${v}`),
+  ]);
 }
 
 // Validate a label name typed in the modal. Returns { name } on success or { error } on
@@ -54,8 +103,8 @@ export function bareDescription(
 export function parseLabelInput(raw: string): { name: string } | { error: string } {
   const name = raw.trim().replace(/^[+@]+/, "");
   if (!name) return { error: "Name is required." };
-  if (/\s/.test(name)) return { error: "No spaces allowed in a project or context." };
-  if (/[+@:]/.test(name)) return { error: "A project or context cannot contain + @ or :" };
+  if (/\s/.test(name)) return { error: "No spaces allowed in a project." };
+  if (/[+@:]/.test(name)) return { error: "A project cannot contain + @ or :" };
   return { name };
 }
 

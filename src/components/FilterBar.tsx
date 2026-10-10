@@ -1,39 +1,29 @@
-// The Status / Project / Context / Sort choosers. Status + the two label filters drive the
-// backend query (TodoPane refetches); Sort is client-side (re-render only). Status/Project/Context
-// are SelectFields (a trigger that opens a single-choice modal); Sort is a SortField — one trigger
+// The Project / Sort choosers. Project drives the backend query (TodoPane refetches);
+// Sort is client-side (re-render only). Project is a SelectField; Sort is a SortField — one trigger
 // that opens one modal holding both the sort key and the direction (ASC/DESC). When `compact`, all
-// four collapse behind a single "Options" button (an OptionsModal); the choosers are identical
+// choosers collapse behind a single "Options" button (an OptionsModal); they are identical
 // either way — only where they render changes.
 //
-// The Project/Context pickers mark each concrete label row `removable` and pass onRemove, so each
+// The Project picker marks each concrete label row `removable` and passes onRemove, so each
 // label item carries a Remove button on its right; onRemove only opens the confirm dialog in
 // TodoPane, so removal is still the deliberate, confirmed task-12 flow.
 
-import { DIRECTIONS, KINDS, SORTS, STATUSES, type Kind, type Status } from "../config";
+import { DIRECTIONS, SORTS } from "../config";
 import OptionsModal from "./OptionsModal";
 import SelectField, { type FieldOption } from "./SelectField";
 import SortField from "./SortField";
 
 interface Props {
-  status: Status;
   project: string;
-  context: string;
   sort: string;
   dir: string;
   compact: boolean; // when true, the choosers collapse behind one "Options" button
   serverLabels: { project: string[]; context: string[] };
-  onStatus: (s: Status) => void;
   onProject: (p: string) => void;
-  onContext: (c: string) => void;
   onSort: (s: string) => void;
   onDir: (d: string) => void;
-  onRemove: (kind: Kind, name: string) => void;
+  onRemove: (kind: "project", name: string) => void;
 }
-
-const STATUS_OPTIONS: FieldOption[] = Object.entries(STATUSES).map(([value, s]) => ({
-  value,
-  label: s.label,
-}));
 
 const SORT_OPTIONS: FieldOption[] = Object.entries(SORTS).map(([value, s]) => ({
   value,
@@ -45,60 +35,37 @@ const DIRECTION_OPTIONS: FieldOption[] = Object.entries(DIRECTIONS).map(([value,
   label: d.label,
 }));
 
-// "All <kind>s" first, then each concrete label as a removable row.
-function labelOptions(kind: Kind, names: string[]): FieldOption[] {
+// All projects first, then each concrete project as a removable row.
+function labelOptions(names: string[]): FieldOption[] {
   return [
-    { value: "", label: `All ${KINDS[kind].singular}s` },
+    { value: "", label: "All projects" },
     ...[...names].sort().map((name) => ({ value: name, label: name, removable: true })),
   ];
 }
 
 export default function FilterBar({
-  status,
   project,
-  context,
   sort,
   dir,
   compact,
   serverLabels,
-  onStatus,
   onProject,
-  onContext,
   onSort,
   onDir,
   onRemove,
 }: Props) {
-  // The four choosers, defined once and rendered either inline (default) or inside the compact
+  // The two choosers, defined once and rendered either inline (default) or inside the compact
   // Options modal — so each chooser's props and wiring live in exactly one place.
   const fields = (
     <>
-      <label>
-        Status
-        <SelectField
-          ariaLabel="Status filter"
-          value={status}
-          options={STATUS_OPTIONS}
-          onChange={(v) => onStatus(v as Status)}
-        />
-      </label>
       <label>
         Project
         <SelectField
           ariaLabel="Project filter"
           value={project}
-          options={labelOptions("project", serverLabels.project)}
+          options={labelOptions(serverLabels.project)}
           onChange={onProject}
           onRemove={(name) => onRemove("project", name)}
-        />
-      </label>
-      <label>
-        Context
-        <SelectField
-          ariaLabel="Context filter"
-          value={context}
-          options={labelOptions("context", serverLabels.context)}
-          onChange={onContext}
-          onRemove={(name) => onRemove("context", name)}
         />
       </label>
       <label>
