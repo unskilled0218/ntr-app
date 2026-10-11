@@ -26,8 +26,15 @@ export function usePickerDialog() {
     if (dialogWasDismissed(event)) setOpen(false);
   }
 
-  // Click outside the box closes the picker and routes through its owned close handler.
-  useBackdropClose(dialogRef);
+  // Remove native modal state before a caller can open a replacement dialog.
+  function closePicker() {
+    const dialog = dialogRef.current;
+    if (dialog?.open) dialog.close();
+    setOpen(false);
+  }
 
-  return { dialogRef, open, setOpen, onClose, onCancel: ownDialogEvent };
+  // Click outside the box closes the picker and routes through its owned close handler.
+  useBackdropClose(dialogRef, closePicker);
+
+  return { dialogRef, open, setOpen, closePicker, onClose, onCancel: ownDialogEvent };
 }

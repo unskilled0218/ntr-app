@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import SelectField, { type FieldOption } from "./SelectField";
-import { cancelDialog, deferDialogCloseEvents } from "../test/dialog";
+import { cancelDialog, clickWithRemovedTargetLabelActivation, deferDialogCloseEvents } from "../test/dialog";
 
 // The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
 
@@ -114,5 +114,45 @@ describe("SelectField", () => {
     } finally {
       deferred.restore();
     }
+  });
+
+  it.each(["choice", "removal"])("is natively closed before handing off a %s action", (action) => {
+    const observed: boolean[] = [];
+    const onAction = vi.fn(() => observed.push((document.querySelector("dialog.select-modal") as HTMLDialogElement).open));
+    render(<SelectField ariaLabel="Project" value="work" options={OPTIONS} onChange={onAction} onRemove={onAction} />);
+    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+    fireEvent.click(openDialog().getByRole("button", { name: action === "choice" ? "home" : "Remove work" }));
+    expect(observed).toEqual([false]);
+    expect(onAction).toHaveBeenCalledOnce();
+    expect(onAction).toHaveBeenCalledWith(action === "choice" ? "home" : "work");
+  });
+
+  it.each(["Priority", "Project"])("keeps label-wrapped %s closed under modeled removed-target label activation", (name) => {
+    const onChange = vi.fn();
+    render(<label>{name}<SelectField ariaLabel={name} value="work" options={OPTIONS} onChange={onChange} /></label>);
+    const trigger = screen.getByRole("button", { name });
+    for (let cycle = 0; cycle < 2; cycle++) {
+      fireEvent.click(trigger);
+      const dialog = document.querySelector("dialog.select-modal") as HTMLDialogElement;
+      expect(dialog.open).toBe(true);
+      clickWithRemovedTargetLabelActivation(within(dialog).getByRole("button", { name: "Cancel" }));
+      expect(dialog.open).toBe(false);
+      expect(trigger.textContent).toBe("work");
+      expect(onChange).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each(["choice", "removal"])("does not reactivate a label-wrapped picker after a modeled %s click", (action) => {
+    const onChange = vi.fn();
+    const onRemove = vi.fn();
+    render(<label>Project<SelectField ariaLabel="Project" value="work" options={OPTIONS} onChange={onChange} onRemove={onRemove} /></label>);
+    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+    const dialog = document.querySelector("dialog.select-modal") as HTMLDialogElement;
+    clickWithRemovedTargetLabelActivation(within(dialog).getByRole("button", { name: action === "choice" ? "home" : "Remove work" }));
+    expect(dialog.open).toBe(false);
+    expect(onChange).toHaveBeenCalledTimes(action === "choice" ? 1 : 0);
+    expect(onRemove).toHaveBeenCalledTimes(action === "removal" ? 1 : 0);
+    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+    expect(dialog.open).toBe(true);
   });
 });

@@ -14,7 +14,7 @@ interface Props {
 }
 
 export default function OptionsModal({ ariaLabel, children }: Props) {
-  const { dialogRef, open, setOpen, onClose, onCancel } = usePickerDialog();
+  const { dialogRef, open, setOpen, closePicker, onClose, onCancel } = usePickerDialog();
 
   return (
     <>
@@ -34,7 +34,10 @@ export default function OptionsModal({ ariaLabel, children }: Props) {
             <h2 className="select-modal-title">{ariaLabel}</h2>
             <div className="options-fields">{children}</div>
             <div className="modal-actions">
-              <button type="button" onClick={() => setOpen(false)}>
+              <button type="button" onClick={(event) => {
+                event.preventDefault();
+                closePicker();
+              }}>
                 Done
               </button>
             </div>

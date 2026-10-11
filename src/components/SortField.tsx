@@ -18,7 +18,7 @@ interface Props {
 }
 
 export default function SortField({ sort, dir, sortOptions, dirOptions, onSort, onDir }: Props) {
-  const { dialogRef, open, setOpen, onClose, onCancel } = usePickerDialog();
+  const { dialogRef, open, setOpen, closePicker, onClose, onCancel } = usePickerDialog();
 
   // Both choices on the trigger, so the merged control still shows everything the two old triggers did.
   const summary = `${optionLabel(sortOptions, sort)} · ${optionLabel(dirOptions, dir)}`;
@@ -44,7 +44,10 @@ export default function SortField({ sort, dir, sortOptions, dirOptions, onSort, 
             <h3 className="picker-group-title">Direction</h3>
             <PickerList options={dirOptions} value={dir} onChoose={onDir} />
             <div className="modal-actions">
-              <button type="button" onClick={() => setOpen(false)}>
+              <button type="button" onClick={(event) => {
+                event.preventDefault();
+                closePicker();
+              }}>
                 Done
               </button>
             </div>

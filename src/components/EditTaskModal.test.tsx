@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import EditTaskModal from "./EditTaskModal";
 import { useState } from "react";
-import { cancelDialog } from "../test/dialog";
+import { cancelDialog, clickWithRemovedTargetLabelActivation, deferDialogCloseEvents, observeProjectHandoffs } from "../test/dialog";
 
 vi.mock("../api", () => ({
   errMsg: (e: unknown) => (e instanceof Error ? e.message : String(e)),
@@ -195,5 +195,58 @@ describe("EditTaskModal nested dismissal", () => {
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Project" }));
     expect(document.querySelector("dialog.select-modal[open]")).not.toBeNull();
+  });
+
+  it("preserves Edit task through Cancel and project replacement under modeled label activation", () => {
+    const deferred = deferDialogCloseEvents();
+    const handoffs = observeProjectHandoffs();
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    try {
+      render(<EditTaskModal task={TASK} serverLabels={SERVER_LABELS} onSave={onSave} onClose={onClose} />);
+      const description = screen.getByRole("textbox", { name: "Task description" }) as HTMLInputElement;
+      fireEvent.change(description, { target: { value: "unfinished edit" } });
+      fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2026-12-01" } });
+      const parent = document.getElementById("edit-task-modal") as HTMLDialogElement;
+      for (const field of ["Priority", "Project"]) {
+        for (let cycle = 0; cycle < 2; cycle++) {
+          fireEvent.click(screen.getByRole("button", { name: field }));
+          const picker = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
+          clickWithRemovedTargetLabelActivation(within(picker).getByRole("button", { name: "Cancel" }));
+          deferred.flush();
+          expect(picker.open).toBe(false);
+          expect(parent.open).toBe(true);
+        }
+      }
+      for (const action of ["Cancel", "Add"]) {
+        fireEvent.click(screen.getByRole("button", { name: "Project" }));
+        const picker = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
+        clickWithRemovedTargetLabelActivation(within(picker).getByRole("button", { name: /\+ add project/i }));
+        const label = document.getElementById("label-modal") as HTMLDialogElement;
+        expect(picker.open).toBe(false);
+        expect(label.open).toBe(true);
+        deferred.flush();
+        expect(label.open).toBe(true);
+        const input = within(label).getByRole("textbox", { name: "New label name" });
+        expect(document.activeElement).toBe(input);
+        fireEvent.change(input, { target: { value: "garden" } });
+        fireEvent.click(within(label).getByRole("button", { name: action }));
+        deferred.flush();
+        expect(label.open).toBe(false);
+        expect(parent.open).toBe(true);
+        expect(screen.getByRole("button", { name: "Project" }).textContent).toBe(action === "Cancel" ? "work" : "garden");
+      }
+      expect(handoffs.pickerClosedAtOpen).toEqual([true, true]);
+      expect(description.value).toBe("unfinished edit");
+      expect((screen.getByLabelText("Due date") as HTMLInputElement).value).toBe("2026-12-01");
+      expect(screen.getByRole("button", { name: "Priority" }).textContent).toBe("A");
+      expect(onSave).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Project" }));
+      expect(within(document.querySelector("dialog.select-modal[open]")!).getByRole("button", { name: "garden" })).toBeTruthy();
+    } finally {
+      handoffs.restore();
+      deferred.restore();
+    }
   });
 });

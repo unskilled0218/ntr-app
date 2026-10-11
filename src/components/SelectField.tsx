@@ -23,16 +23,16 @@ interface Props {
 }
 
 export default function SelectField({ ariaLabel, value, options, onChange, onRemove }: Props) {
-  const { dialogRef, open, setOpen, onClose, onCancel } = usePickerDialog();
+  const { dialogRef, open, setOpen, closePicker, onClose, onCancel } = usePickerDialog();
 
   function choose(v: string) {
-    setOpen(false);
+    closePicker();
     onChange(v);
   }
 
   function remove(v: string) {
     // Close first so a confirm dialog the parent opens from onRemove is not stacked under us.
-    setOpen(false);
+    closePicker();
     onRemove?.(v);
   }
 
@@ -60,7 +60,10 @@ export default function SelectField({ ariaLabel, value, options, onChange, onRem
               onRemove={onRemove ? remove : undefined}
             />
             <div className="modal-actions">
-              <button type="button" onClick={() => setOpen(false)}>
+              <button type="button" onClick={(event) => {
+                event.preventDefault();
+                closePicker();
+              }}>
                 Cancel
               </button>
             </div>
