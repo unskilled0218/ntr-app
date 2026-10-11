@@ -18,7 +18,7 @@ interface Props {
 }
 
 export default function SortField({ sort, dir, sortOptions, dirOptions, onSort, onDir }: Props) {
-  const { dialogRef, open, setOpen } = usePickerDialog();
+  const { dialogRef, open, setOpen, onClose, onCancel } = usePickerDialog();
 
   // Both choices on the trigger, so the merged control still shows everything the two old triggers did.
   const summary = `${optionLabel(sortOptions, sort)} · ${optionLabel(dirOptions, dir)}`;
@@ -35,7 +35,7 @@ export default function SortField({ sort, dir, sortOptions, dirOptions, onSort, 
         {summary}
       </button>
       {/* Contents only while open, so a closed dialog leaves no stray focusable buttons in the DOM. */}
-      <dialog className="select-modal" aria-label="Sort" ref={dialogRef} onClose={() => setOpen(false)}>
+      <dialog className="select-modal" aria-label="Sort" ref={dialogRef} onClose={onClose} onCancel={onCancel}>
         {open && (
           <>
             <h2 className="select-modal-title">Sort</h2>

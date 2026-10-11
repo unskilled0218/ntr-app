@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { useBackdropClose } from "./useBackdropClose";
+import { dialogWasDismissed, ownDialogEvent } from "./dialogEvents";
 
 // Self-owned open state for a native <dialog> opened as a modal: returns the ref to attach, the
 // current `open` flag, and its setter, keeping the element in step with `open` (showModal/close).
@@ -20,9 +21,13 @@ export function usePickerDialog() {
     }
   }, [open]);
 
-  // Click outside the box closes the picker; the default dialog.close() runs each picker's
-  // onClose={() => setOpen(false)}, so all three pickers get it here with no per-component change.
+  // Only this dialog's close event updates its state, including native cancellation.
+  function onClose(event: SyntheticEvent<HTMLDialogElement>) {
+    if (dialogWasDismissed(event)) setOpen(false);
+  }
+
+  // Click outside the box closes the picker and routes through its owned close handler.
   useBackdropClose(dialogRef);
 
-  return { dialogRef, open, setOpen };
+  return { dialogRef, open, setOpen, onClose, onCancel: ownDialogEvent };
 }

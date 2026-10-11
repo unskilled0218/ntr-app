@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import SortField from "./SortField";
 import type { FieldOption } from "./PickerList";
+import { cancelDialog } from "../test/dialog";
 
 // The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
 
@@ -88,5 +89,18 @@ describe("SortField", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sort" }));
     fireEvent.click(openDialog().getByRole("button", { name: "Done" }));
     expect(isOpen()).toBe(false);
+  });
+
+  it.each(["backdrop", "native cancel"])("closes standalone Sort through %s without changing values", (method) => {
+    const { onSort, onDir } = renderField();
+    fireEvent.click(screen.getByRole("button", { name: "Sort" }));
+    const dialog = document.querySelector("dialog.select-modal") as HTMLDialogElement;
+    if (method === "backdrop") fireEvent.click(dialog);
+    else cancelDialog(dialog);
+    expect(isOpen()).toBe(false);
+    expect(onSort).not.toHaveBeenCalled();
+    expect(onDir).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Sort" }));
+    expect(isOpen()).toBe(true);
   });
 });

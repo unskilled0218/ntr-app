@@ -6,6 +6,7 @@
 
 import { useEffect, useRef } from "react";
 import { useBackdropClose } from "./useBackdropClose";
+import { dialogWasDismissed, ownDialogEvent } from "./dialogEvents";
 
 interface Props {
   url: string | null; // null = closed
@@ -28,7 +29,9 @@ export default function OpenLinkDialog({ url, onConfirm, onCancel }: Props) {
   useBackdropClose(dialogRef);
 
   return (
-    <dialog id="open-link-dialog" ref={dialogRef} aria-label="Open link" onClose={onCancel}>
+    <dialog id="open-link-dialog" ref={dialogRef} aria-label="Open link" onCancel={ownDialogEvent} onClose={(event) => {
+      if (dialogWasDismissed(event) && open) onCancel();
+    }}>
       <h2>Open link?</h2>
       <p className="note-conflict-msg">
         Open <strong>{url}</strong> in your browser.

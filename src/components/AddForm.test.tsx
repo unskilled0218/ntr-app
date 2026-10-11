@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import AddForm from "./AddForm";
+import { cancelDialog, deferDialogCloseEvents } from "../test/dialog";
 
 // The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
 
@@ -80,5 +81,40 @@ describe("AddForm", () => {
     expect(options.getByRole("button", { name: /^project$/i })).toBeTruthy();
     expect(options.queryByRole("button", { name: /^context$/i })).toBeNull();
     expect(options.getByLabelText(/due date/i)).toBeTruthy();
+  });
+
+  it("compact: label handoff and cancellation preserve Options and unfinished task input", () => {
+    const deferred = deferDialogCloseEvents();
+    const onAdd = vi.fn();
+    try {
+      render(<AddForm serverLabels={{ project: ["work"], context: [] }} onAdd={onAdd} compact />);
+      const input = screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "unfinished task" } });
+      fireEvent.click(screen.getByRole("button", { name: "Task options" }));
+      fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2026-12-01" } });
+      fireEvent.click(screen.getByRole("button", { name: "Project" }));
+      const picker = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
+      fireEvent.click(within(picker).getByRole("button", { name: "work" }));
+      deferred.flush();
+      fireEvent.click(screen.getByRole("button", { name: "Project" }));
+      fireEvent.click(within(picker).getByRole("button", { name: /\+ add project/i }));
+      const label = document.getElementById("label-modal") as HTMLDialogElement;
+      expect(label.open).toBe(true);
+      deferred.flush();
+      expect(label.open).toBe(true);
+      expect((document.querySelector("dialog.options-modal") as HTMLDialogElement).open).toBe(true);
+      cancelDialog(label);
+      deferred.flush();
+      expect(label.open).toBe(false);
+      expect((document.querySelector("dialog.options-modal") as HTMLDialogElement).open).toBe(true);
+      expect(input.value).toBe("unfinished task");
+      expect((screen.getByLabelText("Due date") as HTMLInputElement).value).toBe("2026-12-01");
+      expect(screen.getByRole("button", { name: "Project" }).textContent).toBe("work");
+      expect(onAdd).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Project" }));
+      expect(picker.open).toBe(true);
+    } finally {
+      deferred.restore();
+    }
   });
 });

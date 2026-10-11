@@ -16,6 +16,7 @@ import {
 } from "../settings";
 import SelectField, { type FieldOption } from "./SelectField";
 import { useBackdropClose } from "./useBackdropClose";
+import { ownDialogEvent } from "./dialogEvents";
 
 // The conflict-resolution strategies, in display order. value is the stored ConflictStrategy.
 const STRATEGY_OPTIONS: FieldOption[] = [
@@ -72,7 +73,8 @@ export default function SettingsModal({ open, onClose }: Props) {
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close on native dialog cancel (Escape key).
-  function onCancel(e: React.SyntheticEvent) {
+  function onCancel(e: React.SyntheticEvent<HTMLDialogElement>) {
+    if (!ownDialogEvent(e)) return;
     e.preventDefault();
     onClose();
   }
@@ -121,7 +123,7 @@ export default function SettingsModal({ open, onClose }: Props) {
   }
 
   return (
-    <dialog id="settings-modal" ref={dialogRef} onCancel={onCancel}>
+    <dialog id="settings-modal" ref={dialogRef} onCancel={onCancel} onClose={ownDialogEvent}>
       <form id="settings-form" method="dialog" onSubmit={(e) => e.preventDefault()}>
         <h2>Connection</h2>
         <p className="settings-current">

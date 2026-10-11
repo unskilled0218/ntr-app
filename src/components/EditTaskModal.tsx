@@ -11,6 +11,7 @@ import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
 import SelectField from "./SelectField";
 import { useBackdropClose } from "./useBackdropClose";
+import { ownDialogEvent } from "./dialogEvents";
 
 interface Props {
   task: Task | null;
@@ -64,7 +65,8 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
     }
   }
 
-  function onCancel(e: React.SyntheticEvent) {
+  function onCancel(e: React.SyntheticEvent<HTMLDialogElement>) {
+    if (!ownDialogEvent(e)) return;
     e.preventDefault();
     onClose();
   }
@@ -78,7 +80,7 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
     : [...PRIORITY_OPTIONS, { value: priority, label: priority }];
 
   return (
-    <dialog id="edit-task-modal" ref={dialogRef} onCancel={onCancel}>
+    <dialog id="edit-task-modal" ref={dialogRef} onCancel={onCancel} onClose={ownDialogEvent}>
       <form id="edit-task-form" autoComplete="off" onSubmit={submit}>
         <h2>Edit task</h2>
         <label>

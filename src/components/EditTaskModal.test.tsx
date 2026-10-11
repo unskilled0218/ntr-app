@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import EditTaskModal from "./EditTaskModal";
+import { useState } from "react";
+import { cancelDialog } from "../test/dialog";
 
 vi.mock("../api", () => ({
   errMsg: (e: unknown) => (e instanceof Error ? e.message : String(e)),
@@ -144,5 +146,54 @@ describe("EditTaskModal", () => {
     );
     const dialog = document.getElementById("edit-task-modal") as HTMLDialogElement;
     expect(dialog?.open).toBeFalsy();
+  });
+});
+
+describe("EditTaskModal nested dismissal", () => {
+  it.each(["Priority", "Project", "New label"])("retains edits after cancelling %s", (field) => {
+    const onClose = vi.fn();
+    const onSave = vi.fn();
+    function Owner() {
+      const [task, setTask] = useState<typeof TASK | null>(TASK);
+      return <EditTaskModal task={task} serverLabels={SERVER_LABELS} onSave={onSave} onClose={() => { onClose(); setTask(null); }} />;
+    }
+    render(<Owner />);
+    const input = screen.getByRole("textbox", { name: "Task description" }) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "unfinished edit" } });
+    fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2026-12-01" } });
+    fireEvent.click(screen.getByRole("button", { name: field === "Priority" ? "Priority" : "Project" }));
+    let child = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
+    if (field === "New label") {
+      fireEvent.click(within(child).getByRole("button", { name: /\+ add project/i }));
+      child = document.getElementById("label-modal") as HTMLDialogElement;
+      expect(child.open).toBe(true);
+    }
+    expect(cancelDialog(child).defaultPrevented).toBe(false);
+    expect(child.open).toBe(false);
+    const parent = document.getElementById("edit-task-modal") as HTMLDialogElement;
+    expect(parent.open).toBe(true);
+    expect(input.value).toBe("unfinished edit");
+    expect((screen.getByLabelText("Due date") as HTMLInputElement).value).toBe("2026-12-01");
+    expect(screen.getByRole("button", { name: "Project" }).textContent).toBe("work");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    fireEvent.click(within(parent).getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(parent.open).toBe(false);
+  });
+
+  it.each(["Cancel", "backdrop"])("closes a nested label through %s without closing Edit task", (method) => {
+    const onClose = vi.fn();
+    render(<EditTaskModal task={TASK} serverLabels={SERVER_LABELS} onSave={vi.fn()} onClose={onClose} />);
+    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+    fireEvent.click(within(document.querySelector("dialog.select-modal[open]")!).getByRole("button", { name: /\+ add project/i }));
+    const label = document.getElementById("label-modal") as HTMLDialogElement;
+    if (method === "backdrop") fireEvent.click(label);
+    else fireEvent.click(within(label).getByRole("button", { name: "Cancel" }));
+    expect(label.open).toBe(false);
+    expect((document.getElementById("edit-task-modal") as HTMLDialogElement).open).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+    expect(document.querySelector("dialog.select-modal[open]")).not.toBeNull();
   });
 });
