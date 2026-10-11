@@ -2,7 +2,7 @@
 // taskElement; class names match style.css.
 
 import type { Task } from "../api";
-import { hideContexts } from "../labels";
+import { bareDescription } from "../labels";
 
 function renderMeta(task: Task): string {
   const bits: string[] = [];
@@ -27,7 +27,8 @@ export default function TaskItem({ task, onToggle, onEdit, onDelete }: Props) {
       <div className="body">
         <span className="text">
           {task.priority && <span className="priority">({task.priority})</span>}
-          {hideContexts(task.description, task.contexts) || "Task without description"}
+          {/* List rows retain tags; only the edit form strips those structured tokens. */}
+          {bareDescription(task.description, task.projects, task.contexts, {}) || "Task without description"}
         </span>
         {meta && <span className="meta">{meta}</span>}
       </div>
