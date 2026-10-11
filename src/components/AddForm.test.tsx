@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import AddForm from "./AddForm";
-import { cancelDialog, deferDialogCloseEvents } from "../test/dialog";
+import { cancelDialog, clickWithRemovedTargetLabelActivation, deferDialogCloseEvents, observeProjectHandoffs } from "../test/dialog";
 
 // The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
 
@@ -114,6 +114,67 @@ describe("AddForm", () => {
       fireEvent.click(screen.getByRole("button", { name: "Project" }));
       expect(picker.open).toBe(true);
     } finally {
+      deferred.restore();
+    }
+  });
+
+  it.each([false, true])("Cancel and project handoff preserve pending input under modeled activation (compact=%s)", (compact) => {
+    const deferred = deferDialogCloseEvents();
+    const handoffs = observeProjectHandoffs();
+    const onAdd = vi.fn();
+    try {
+      render(<AddForm serverLabels={{ project: ["work"], context: [] }} onAdd={onAdd} compact={compact} />);
+      const description = screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement;
+      fireEvent.change(description, { target: { value: "unfinished task" } });
+      if (compact) fireEvent.click(screen.getByRole("button", { name: "Task options" }));
+      fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2026-12-01" } });
+      for (const [field, value] of [["Priority", "A"], ["Project", "work"]]) {
+        fireEvent.click(screen.getByRole("button", { name: field }));
+        clickWithRemovedTargetLabelActivation(within(document.querySelector("dialog.select-modal[open]")!).getByRole("button", { name: value }));
+        deferred.flush();
+        const trigger = screen.getByRole("button", { name: field });
+        for (let cycle = 0; cycle < 2; cycle++) {
+          fireEvent.click(trigger);
+          const picker = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
+          clickWithRemovedTargetLabelActivation(within(picker).getByRole("button", { name: "Cancel" }));
+          expect(picker.open).toBe(false);
+          expect(trigger.textContent).toBe(value);
+          // Deliver the old close only after an explicit reopening.
+          fireEvent.click(trigger);
+          deferred.flush();
+          expect(picker.open).toBe(true);
+          clickWithRemovedTargetLabelActivation(within(picker).getByRole("button", { name: "Cancel" }));
+          deferred.flush();
+          expect(picker.open).toBe(false);
+        }
+      }
+      for (const action of ["Cancel", "Add"]) {
+        fireEvent.click(screen.getByRole("button", { name: "Project" }));
+        const picker = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
+        clickWithRemovedTargetLabelActivation(within(picker).getByRole("button", { name: /\+ add project/i }));
+        const label = document.getElementById("label-modal") as HTMLDialogElement;
+        expect(picker.open).toBe(false);
+        expect(label.open).toBe(true);
+        deferred.flush();
+        expect(label.open).toBe(true);
+        const name = within(label).getByRole("textbox", { name: "New label name" });
+        expect(document.activeElement).toBe(name);
+        fireEvent.change(name, { target: { value: "garden" } });
+        fireEvent.click(within(label).getByRole("button", { name: action }));
+        deferred.flush();
+        expect(label.open).toBe(false);
+        expect(screen.getByRole("button", { name: "Project" }).textContent).toBe(action === "Cancel" ? "work" : "garden");
+      }
+      expect(handoffs.pickerClosedAtOpen).toEqual([true, true]);
+      expect(description.value).toBe("unfinished task");
+      expect((screen.getByLabelText("Due date") as HTMLInputElement).value).toBe("2026-12-01");
+      expect(screen.getByRole("button", { name: "Priority" }).textContent).toBe("A");
+      expect(onAdd).not.toHaveBeenCalled();
+      if (compact) expect((document.querySelector("dialog.options-modal") as HTMLDialogElement).open).toBe(true);
+      fireEvent.click(screen.getByRole("button", { name: "Project" }));
+      expect(within(document.querySelector("dialog.select-modal[open]")!).getByRole("button", { name: "garden" })).toBeTruthy();
+    } finally {
+      handoffs.restore();
       deferred.restore();
     }
   });

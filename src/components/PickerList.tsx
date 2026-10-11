@@ -32,7 +32,11 @@ export default function PickerList({ options, value, onChoose, onRemove }: Props
             type="button"
             className="picker-choice"
             aria-current={o.value === value ? "true" : undefined}
-            onClick={() => onChoose(o.value)}
+            onClick={(event) => {
+              // Closing a picker can remove this button before its label's default activation.
+              event.preventDefault();
+              onChoose(o.value);
+            }}
           >
             {o.label}
           </button>
@@ -41,7 +45,10 @@ export default function PickerList({ options, value, onChoose, onRemove }: Props
               type="button"
               className="picker-remove"
               aria-label={`Remove ${o.label}`}
-              onClick={() => onRemove(o.value)}
+              onClick={(event) => {
+                event.preventDefault();
+                onRemove(o.value);
+              }}
             >
               Remove
             </button>

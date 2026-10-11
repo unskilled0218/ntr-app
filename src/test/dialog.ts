@@ -10,6 +10,29 @@ export function cancelDialog(dialog: HTMLDialogElement) {
   return event;
 }
 
+// Model label default activation after discrete React updates remove the clicked control.
+// jsdom batches the click and does not reproduce this browser timing on its own. This is
+// a controlled hypothesis test, not evidence of actual device label activation/hit testing.
+export function clickWithRemovedTargetLabelActivation(control: HTMLElement) {
+  const label = control.closest("label");
+  const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+  fireEvent(control, event);
+  if (label && !event.defaultPrevented && !label.contains(control)) fireEvent.click(label);
+}
+
+// Observe native visibility at the replacement's opening boundary, not just after effects settle.
+export function observeProjectHandoffs() {
+  const pickerClosedAtOpen: boolean[] = [];
+  const showModal = HTMLDialogElement.prototype.showModal;
+  const show = vi.spyOn(HTMLDialogElement.prototype, "showModal").mockImplementation(function (this: HTMLDialogElement) {
+    if (this.id === "label-modal") {
+      pickerClosedAtOpen.push([...document.querySelectorAll<HTMLDialogElement>("dialog.select-modal")].every((picker) => !picker.open));
+    }
+    showModal.call(this);
+  });
+  return { pickerClosedAtOpen, restore: () => show.mockRestore() };
+}
+
 // Control the browser's queued close-event delivery independently of native visibility.
 export function deferDialogCloseEvents() {
   const pending: HTMLDialogElement[] = [];
