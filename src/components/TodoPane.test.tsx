@@ -164,7 +164,7 @@ describe("TodoPane view-option persistence", () => {
     vi.mocked(listTasks).mockResolvedValue([...TASKS, completed]);
     render(<TodoPane compact={false} />);
     await screen.findByText("finished");
-    expect(screen.getByText("call bank +work")).toBeTruthy();
+    expect(screen.getByText("call bank")).toBeTruthy();
     expect(screen.getAllByRole("checkbox").map((el) => (el as HTMLInputElement).checked)).toEqual([false, false, false, true]);
     expect(localStorage.getItem("ntr.status")).toBeNull();
     expect(vi.mocked(listTasks).mock.calls.every(([filter]) => filter.completed == null && filter.context == null)).toBe(true);
@@ -174,9 +174,9 @@ describe("TodoPane view-option persistence", () => {
     localStorage.setItem("ntr.sort", "contexts");
     localStorage.setItem("ntr.sortDir", "desc");
     const { container } = render(<TodoPane compact={false} />);
-    await screen.findByText("call bank +work");
+    await screen.findByText("call bank");
     expect(screen.getByRole("button", { name: "Sort" }).textContent).toBe("File order · DESC");
-    expect([...container.querySelectorAll(".task .text")].map((el) => el.textContent)).toEqual(["post +work", "tidy +home", "call bank +work"]);
+    expect([...container.querySelectorAll(".task .text")].map((el) => el.textContent)).toEqual(["post", "tidy", "call bank"]);
   });
 });
 
@@ -189,13 +189,14 @@ describe.each([false, true])("TodoPane simplified workflow (compact=%s)", (compa
     const completed = { ...task(4, "finished +work @phone", ["work"], ["phone"]), completed: true };
     vi.mocked(listTasks).mockImplementation(async (filter) => [...TASKS, completed].filter((t) => !filter.project || t.projects.includes(filter.project)));
     render(<TodoPane compact={compact} />);
-    await screen.findByText("finished +work");
+    await screen.findByText("finished");
     openFilters();
     expect(screen.queryByRole("button", { name: /status filter|context filter/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /project filter/i }));
     fireEvent.click(within(document.querySelector("dialog.select-modal[open]")!).getByRole("button", { name: "work" }));
-    await waitFor(() => expect(screen.queryByText("tidy +home")).toBeNull());
-    expect(screen.getByText("finished +work")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText("tidy")).toBeNull());
+    const finished = screen.getByText("finished").closest("li")!;
+    expect(finished.querySelector(".meta")!.textContent).toBe("+work");
     expect(listTasks).toHaveBeenCalledWith({ project: "work" });
   });
 
@@ -207,7 +208,7 @@ describe.each([false, true])("TodoPane simplified workflow (compact=%s)", (compa
     render(<TodoPane compact={compact} />);
     fireEvent.click(await screen.findByRole("checkbox"));
     await waitFor(() => expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true));
-    expect(screen.getByText("call bank +work")).toBeTruthy();
+    expect(screen.getByText("call bank")).toBeTruthy();
     fireEvent.click(screen.getByRole("checkbox"));
     await waitFor(() => expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false));
     expect(completeTask).toHaveBeenCalledWith(1);
@@ -223,7 +224,7 @@ describe.each([false, true])("TodoPane simplified workflow (compact=%s)", (compa
       return created;
     });
     render(<TodoPane compact={compact} />);
-    await screen.findByText("call bank +work");
+    await screen.findByText("call bank");
     fireEvent.change(screen.getByRole("textbox", { name: /new task/i }), { target: { value: "new task" } });
     fireEvent.submit(document.getElementById("add-form")!);
     await screen.findByText("new task");
