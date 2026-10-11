@@ -84,11 +84,42 @@ impl SafBackend {
     if let Some(uri) = self.file_uri(name)? {
       return Ok(uri);
     }
-    self
-      .app
-      .android_fs()
-      .create_new_file(&self.tree_uri, name, Some("text/plain"))
-      .map_err(android_io)
+    // Forcing plain-text MIME can append .txt to Note.md and defeat exact-name reuse.
+    let mime_type = if name == paths::NOTE_FILE {
+      None
+    } else {
+      Some("text/plain")
+    };
+    let fs = self.app.android_fs();
+    let uri = fs
+      .create_new_file(&self.tree_uri, name, mime_type)
+      .map_err(android_io)?;
+    if name != paths::NOTE_FILE {
+      return Ok(uri);
+    }
+
+    let error = match fs.get_name(&uri) {
+      Ok(actual_name) if actual_name == paths::NOTE_FILE => return Ok(uri),
+      Ok(actual_name) => io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("Android provider created {actual_name:?} instead of {name:?}"),
+      ),
+      Err(e) => io::Error::new(
+        io::ErrorKind::Other,
+        format!("Could not verify the newly created {name:?} filename: {e}"),
+      ),
+    };
+    // Only this attempt's new, still-empty document is eligible for cleanup.
+    match fs.remove_file(&uri) {
+      Ok(()) => Err(error),
+      Err(cleanup_error) => Err(io::Error::new(
+        error.kind(),
+        format!(
+          "{error}; could not remove newly created document {}: {cleanup_error}",
+          uri.uri
+        ),
+      )),
+    }
   }
 }
 
