@@ -7,6 +7,7 @@
 import { useEffect, useRef } from "react";
 import { KINDS, type Kind } from "../config";
 import { useBackdropClose } from "./useBackdropClose";
+import { dialogWasDismissed, ownDialogEvent } from "./dialogEvents";
 
 interface Props {
   target: { kind: Kind; name: string } | null; // null = closed
@@ -32,7 +33,9 @@ export default function RemoveLabelDialog({ target, onConfirm, onCancel }: Props
   const token = target ? KINDS[target.kind].prefix + target.name : "";
 
   return (
-    <dialog id="remove-label-dialog" ref={dialogRef} aria-label="Remove label" onClose={onCancel}>
+    <dialog id="remove-label-dialog" ref={dialogRef} aria-label="Remove label" onCancel={ownDialogEvent} onClose={(event) => {
+      if (dialogWasDismissed(event) && open) onCancel();
+    }}>
       <h2>Remove {singular}?</h2>
       <p className="note-conflict-msg">
         Remove <strong>{token}</strong> from every task that uses it. This rewrites those tasks and

@@ -5,6 +5,7 @@
 
 import { useEffect, useRef } from "react";
 import { useBackdropClose } from "./useBackdropClose";
+import { dialogWasDismissed, ownDialogEvent } from "./dialogEvents";
 
 interface Props {
   open: boolean;
@@ -29,7 +30,9 @@ export default function NoteConflictDialog({ open, mine, theirs, onKeepMine, onU
   useBackdropClose(dialogRef);
 
   return (
-    <dialog id="note-conflict" ref={dialogRef} aria-labelledby="note-conflict-title" onClose={onClose}>
+    <dialog id="note-conflict" ref={dialogRef} aria-labelledby="note-conflict-title" onCancel={ownDialogEvent} onClose={(event) => {
+      if (dialogWasDismissed(event) && open) onClose();
+    }}>
       <h2 id="note-conflict-title">Note changed on another device</h2>
       <p className="note-conflict-msg">
         You have unsaved edits and the note was changed elsewhere. Choose which version to keep.

@@ -23,7 +23,7 @@ interface Props {
 }
 
 export default function SelectField({ ariaLabel, value, options, onChange, onRemove }: Props) {
-  const { dialogRef, open, setOpen } = usePickerDialog();
+  const { dialogRef, open, setOpen, onClose, onCancel } = usePickerDialog();
 
   function choose(v: string) {
     setOpen(false);
@@ -49,7 +49,7 @@ export default function SelectField({ ariaLabel, value, options, onChange, onRem
       </button>
       {/* Render the contents only while open: a closed dialog leaves no stray focusable buttons in
           the DOM (each field would otherwise contribute an always-present "Cancel"). */}
-      <dialog className="select-modal" aria-label={ariaLabel} ref={dialogRef} onClose={() => setOpen(false)}>
+      <dialog className="select-modal" aria-label={ariaLabel} ref={dialogRef} onClose={onClose} onCancel={onCancel}>
         {open && (
           <>
             <h2 className="select-modal-title">{ariaLabel}</h2>

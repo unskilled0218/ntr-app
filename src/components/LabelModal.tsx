@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { KINDS, type Kind } from "../config";
 import { parseLabelInput } from "../labels";
 import { useBackdropClose } from "./useBackdropClose";
+import { dialogWasDismissed, ownDialogEvent } from "./dialogEvents";
 
 interface Props {
   kind: Kind | null; // non-null while open; which kind the new label belongs to
@@ -49,7 +50,9 @@ export default function LabelModal({ kind, onConfirm, onClose }: Props) {
   }
 
   return (
-    <dialog id="label-modal" ref={dialogRef} onClose={onClose}>
+    <dialog id="label-modal" ref={dialogRef} onCancel={ownDialogEvent} onClose={(event) => {
+      if (dialogWasDismissed(event) && kind) onClose();
+    }}>
       <form id="label-form" autoComplete="off" onSubmit={submit}>
         <h2 id="label-modal-title">{kind ? `Add ${KINDS[kind].singular}` : "Add"}</h2>
         <label>

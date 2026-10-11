@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRef } from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import NotePane, { type NotePaneHandle } from "./NotePane";
@@ -12,18 +12,6 @@ vi.mock("../api", () => ({
   putNote: (t: string) => putNote(t),
   errMsg: (e: unknown) => (e instanceof Error ? e.message : String(e)),
 }));
-
-// jsdom doesn't implement <dialog>.showModal/close; provide minimal versions so the conflict
-// dialog can open/close and still fire its `close` event.
-beforeAll(() => {
-  HTMLDialogElement.prototype.showModal = function () {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function () {
-    this.open = false;
-    this.dispatchEvent(new Event("close"));
-  };
-});
 
 beforeEach(() => {
   vi.useFakeTimers();

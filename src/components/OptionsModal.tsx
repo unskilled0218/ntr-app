@@ -14,7 +14,7 @@ interface Props {
 }
 
 export default function OptionsModal({ ariaLabel, children }: Props) {
-  const { dialogRef, open, setOpen } = usePickerDialog();
+  const { dialogRef, open, setOpen, onClose, onCancel } = usePickerDialog();
 
   return (
     <>
@@ -28,7 +28,7 @@ export default function OptionsModal({ ariaLabel, children }: Props) {
         Options
       </button>
       {/* Contents only while open, so a closed dialog leaves no stray focusable triggers in the DOM. */}
-      <dialog className="options-modal" aria-label={ariaLabel} ref={dialogRef} onClose={() => setOpen(false)}>
+      <dialog className="options-modal" aria-label={ariaLabel} ref={dialogRef} onClose={onClose} onCancel={onCancel}>
         {open && (
           <>
             <h2 className="select-modal-title">{ariaLabel}</h2>

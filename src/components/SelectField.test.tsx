@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import SelectField, { type FieldOption } from "./SelectField";
+import { cancelDialog, deferDialogCloseEvents } from "../test/dialog";
 
 // The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
 
@@ -85,5 +86,33 @@ describe("SelectField", () => {
     fireEvent.click(screen.getByRole("button", { name: /project filter/i }));
     fireEvent.click(openDialog().getByText("Project filter")); // the title <h2>, target !== dialog
     expect(document.querySelector("dialog.select-modal[open]")).not.toBeNull();
+  });
+
+  it.each(["Cancel", "native cancel"])("closes and reopens a standalone picker through %s", (method) => {
+    const onChange = vi.fn();
+    render(<SelectField ariaLabel="Project filter" value="work" options={OPTIONS} onChange={onChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "Project filter" }));
+    const dialog = document.querySelector("dialog.select-modal") as HTMLDialogElement;
+    if (method === "native cancel") cancelDialog(dialog);
+    else fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(dialog.open).toBe(false);
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Project filter" }));
+    expect(dialog.open).toBe(true);
+  });
+
+  it("ignores a deferred close when its trigger has reopened the picker", () => {
+    const deferred = deferDialogCloseEvents();
+    try {
+      render(<SelectField ariaLabel="Project filter" value="work" options={OPTIONS} onChange={vi.fn()} />);
+      fireEvent.click(screen.getByRole("button", { name: "Project filter" }));
+      fireEvent.click(openDialog().getByRole("button", { name: "Cancel" }));
+      fireEvent.click(screen.getByRole("button", { name: "Project filter" }));
+      deferred.flush();
+      expect((document.querySelector("dialog.select-modal") as HTMLDialogElement).open).toBe(true);
+      expect(openDialog().getByRole("button", { name: "work" })).toBeTruthy();
+    } finally {
+      deferred.restore();
+    }
   });
 });

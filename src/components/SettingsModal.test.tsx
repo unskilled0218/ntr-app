@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import SettingsModal from "./SettingsModal";
+import { useState } from "react";
+import { cancelDialog } from "../test/dialog";
 import { getDataDir, getStorageKind, pickDataDir, setDataDir } from "../api";
 import { getStartupView, setCompactUi, setConflictStrategy, setStartupView, type StartupView } from "../settings";
 
@@ -163,5 +165,34 @@ describe("SettingsModal backdrop close", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /on conflict/i })); // inner trigger
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("SettingsModal nested dismissal", () => {
+  it.each(["Cancel", "backdrop", "native cancel", "selection"])("retains Settings input when a picker closes through %s", async (method) => {
+    const onClose = vi.fn();
+    function Owner() {
+      const [open, setOpen] = useState(true);
+      return <SettingsModal open={open} onClose={() => { onClose(); setOpen(false); }} />;
+    }
+    render(<Owner />);
+    await waitFor(() => expect(getDataDir).toHaveBeenCalled());
+    const input = screen.getByRole("textbox", { name: "Server URL" }) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "https://pending.example" } });
+    fireEvent.click(screen.getByRole("button", { name: "Startup page" }));
+    const picker = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
+    if (method === "native cancel") expect(cancelDialog(picker).defaultPrevented).toBe(false);
+    else if (method === "backdrop") fireEvent.click(picker);
+    else fireEvent.click(within(picker).getByRole("button", { name: method === "selection" ? "Todo" : "Cancel" }));
+    expect(picker.open).toBe(false);
+    expect((document.getElementById("settings-modal") as HTMLDialogElement).open).toBe(true);
+    expect(input.value).toBe("https://pending.example");
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Startup page" }));
+    expect(picker.open).toBe(true);
+    cancelDialog(picker);
+    cancelDialog(document.getElementById("settings-modal") as HTMLDialogElement);
+    expect(onClose).toHaveBeenCalledOnce();
+    expect((document.getElementById("settings-modal") as HTMLDialogElement).open).toBe(false);
   });
 });

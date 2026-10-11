@@ -9,6 +9,7 @@
 import { useEffect, useRef } from "react";
 import type { Conflict, ConflictChoice } from "../api";
 import { useBackdropClose } from "./useBackdropClose";
+import { dialogWasDismissed, ownDialogEvent } from "./dialogEvents";
 
 interface Props {
   conflict: Conflict | null; // null = closed
@@ -18,14 +19,23 @@ interface Props {
 
 export default function ConflictDialog({ conflict, onChoose, onDismiss }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const open = conflict !== null;
+  const handled = useRef<Conflict | null>(null);
 
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    else if (!open && dialog.open) dialog.close();
-  }, [open]);
+    handled.current = null;
+    if (conflict && !dialog.open) dialog.showModal();
+    else if (!conflict && dialog.open) dialog.close();
+  }, [conflict]);
+
+  // A choice/dismissal belongs to one queue entry, not to later close events.
+  function finish(choice?: ConflictChoice) {
+    if (!conflict || handled.current === conflict) return;
+    handled.current = conflict;
+    if (choice) onChoose(choice);
+    else onDismiss();
+  }
 
   // Click outside the box dismisses it (non-destructive, same as Escape) via the onClose below.
   useBackdropClose(dialogRef);
@@ -33,7 +43,9 @@ export default function ConflictDialog({ conflict, onChoose, onDismiss }: Props)
   const label = conflict?.resource === "tasks" ? "Tasks" : "Note";
 
   return (
-    <dialog id="conflict-dialog" ref={dialogRef} aria-labelledby="conflict-title" onClose={onDismiss}>
+    <dialog id="conflict-dialog" ref={dialogRef} aria-labelledby="conflict-title" onCancel={ownDialogEvent} onClose={(event) => {
+      if (dialogWasDismissed(event)) finish();
+    }}>
       <h2 id="conflict-title">{label} out of sync with the server</h2>
       <p className="note-conflict-msg">
         Your local {label.toLowerCase()} and the server's copy have diverged. Choose which version to keep.
@@ -53,10 +65,10 @@ export default function ConflictDialog({ conflict, onChoose, onDismiss }: Props)
         </section>
       </div>
       <div className="modal-actions">
-        <button type="button" id="conflict-server-btn" onClick={() => onChoose("server")}>
+        <button type="button" id="conflict-server-btn" onClick={() => finish("server")}>
           Use server
         </button>
-        <button type="button" id="conflict-local-btn" className="primary" onClick={() => onChoose("local")}>
+        <button type="button" id="conflict-local-btn" className="primary" onClick={() => finish("local")}>
           Use local
         </button>
       </div>
