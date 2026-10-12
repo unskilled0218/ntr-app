@@ -412,4 +412,102 @@ mod tests {
     assert_eq!(all.len(), 1);
     assert_eq!(all[0].task.priority, Some('A'));
   }
+
+  #[test]
+  fn edit_dates_survive_updates_lifecycle_raw_replace_and_reload() {
+    use crate::dto::TaskDto;
+
+    let (backend, dir) = backend("edit-dates");
+    let mut store = Store::load(backend.clone(), paths::TODO_FILE).unwrap();
+    let id = store
+      .add(
+        "(A) 2026-10-10 Do something +cart @phone due:2026-10-12 custom:old",
+        true,
+        today(),
+      )
+      .unwrap();
+    for stamp in ["2026-10-11", "2026-10-12"] {
+      let line = format!(
+        "(A) 2026-10-10 Do something +cart @phone due:2026-10-12 custom:new updated:{stamp}"
+      );
+      store.update(id, &line).unwrap();
+      let dto = TaskDto::from_entry(store.get(id).unwrap());
+      assert_eq!(dto.creation_date.as_deref(), Some("2026-10-10"));
+      assert_eq!(dto.tags["updated"], stamp);
+      assert_eq!(dto.tags["custom"], "new");
+      assert_eq!(dto.raw, line);
+      let reloaded = Store::load(backend.clone(), paths::TODO_FILE).unwrap();
+      assert_eq!(reloaded.raw(), store.raw());
+    }
+    let completion_day = NaiveDate::from_ymd_opt(2026, 10, 13).unwrap();
+    store.complete(id, completion_day).unwrap();
+    let completed = TaskDto::from_entry(store.get(id).unwrap());
+    assert_eq!(completed.creation_date.as_deref(), Some("2026-10-10"));
+    assert_eq!(completed.completion_date, Some(completion_day.to_string()));
+    assert_eq!(completed.tags["updated"], "2026-10-12");
+    store.uncomplete(id).unwrap();
+    let before = store.raw();
+    store.replace_raw(&before).unwrap();
+    let reloaded = Store::load(backend, paths::TODO_FILE).unwrap();
+    let dto = TaskDto::from_entry(reloaded.list(&Filter::default())[0]);
+    assert_eq!(dto.creation_date.as_deref(), Some("2026-10-10"));
+    assert_eq!(dto.tags["due"], "2026-10-12");
+    assert_eq!(dto.tags["updated"], "2026-10-12");
+    assert_eq!(dto.tags["custom"], "new");
+    assert_eq!(dto.priority, Some('A'));
+    assert_eq!(dto.projects, ["cart"]);
+    assert_eq!(dto.contexts, ["phone"]);
+    assert_eq!(
+      std::fs::read_to_string(dir.join(paths::TODO_FILE)).unwrap(),
+      before
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+  }
+
+  #[test]
+  fn rejected_date_updates_leave_cached_and_persisted_metadata_unchanged() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct RejectWrites {
+      files: FsBackend,
+      reject: AtomicBool,
+    }
+    impl FileBackend for RejectWrites {
+      fn read(&self, name: &str) -> io::Result<Option<String>> {
+        self.files.read(name)
+      }
+      fn write(&self, name: &str, data: &str) -> io::Result<()> {
+        if self.reject.load(Ordering::SeqCst) {
+          return Err(io::Error::other("fixture write rejected"));
+        }
+        self.files.write(name, data)
+      }
+      fn remove(&self, name: &str) -> io::Result<()> {
+        self.files.remove(name)
+      }
+    }
+    let dir = temp_dir("rejected-dates");
+    let backend = Arc::new(RejectWrites {
+      files: FsBackend::new(dir.clone()),
+      reject: AtomicBool::new(false),
+    });
+    let mut store = Store::load(backend.clone(), paths::TODO_FILE).unwrap();
+    let id = store
+      .add("2026-10-10 original updated:2026-10-11", false, today())
+      .unwrap();
+    let before = store.raw();
+    backend.reject.store(true, Ordering::SeqCst);
+    assert!(matches!(
+      store.update(id, "2026-10-10 edited updated:2026-10-12"),
+      Err(StoreError::Io(_))
+    ));
+    assert_eq!(store.raw(), before);
+    assert_eq!(
+      std::fs::read_to_string(dir.join(paths::TODO_FILE)).unwrap(),
+      before
+    );
+    let reloaded = Store::load(backend, paths::TODO_FILE).unwrap();
+    assert_eq!(reloaded.raw(), before);
+    std::fs::remove_dir_all(dir).unwrap();
+  }
 }

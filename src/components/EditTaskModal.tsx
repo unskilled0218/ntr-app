@@ -12,6 +12,7 @@ import LabelSelect from "./LabelSelect";
 import SelectField from "./SelectField";
 import { useBackdropClose } from "./useBackdropClose";
 import { ownDialogEvent } from "./dialogEvents";
+import { formatLocalTaskDate } from "../lib/taskDates";
 
 interface Props {
   task: Task | null;
@@ -56,9 +57,9 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!task || (!description.trim() && !task.contexts.length)) return;
-    const text = composeEditedTask(task, { priority, description, project, due });
-    if (!text.trim()) return;
     try {
+      const text = composeEditedTask(task, { priority, description, project, due }, formatLocalTaskDate(new Date()));
+      if (!text.trim()) return;
       await onSave(task.id, text);
     } catch (err) {
       setError(errMsg(err));

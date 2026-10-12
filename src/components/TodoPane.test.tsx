@@ -180,6 +180,45 @@ describe("TodoPane view-option persistence", () => {
   });
 });
 
+describe("TodoPane edit-date refresh", () => {
+  it("retains created across successful edits and rejected saves", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 11, 12));
+    const description = "Do something +cart due:2026-10-12";
+    let current: Task = { ...task(1, description, ["cart"], []), creation_date: "2026-10-10", tags: { due: "2026-10-12" }, raw: `2026-10-10 ${description}` };
+    vi.mocked(listTasks).mockImplementation(async () => [current]);
+    vi.mocked(updateTask).mockImplementation(async (_id, text) => {
+      const updated = text.match(/updated:(\d{4}-\d{2}-\d{2})/)![1];
+      current = { ...current, description: text.slice(11), raw: text, tags: { ...current.tags, updated } };
+      return current;
+    });
+    try {
+      render(<TodoPane compact={false} />);
+      await screen.findByText("Do something");
+      const metadata = () => document.querySelector("li.task .meta")!.textContent;
+      expect(metadata()).toBe("+cart due:2026-10-12 created:2026-10-10");
+      for (const day of [11, 12]) {
+        vi.setSystemTime(new Date(2026, 9, day, 12));
+        fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+        fireEvent.click(within(document.getElementById("edit-task-modal")!).getByRole("button", { name: "Save" }));
+        await waitFor(() => expect(metadata()).toBe(`+cart due:2026-10-12 created:2026-10-10 updated:2026-10-${day}`));
+        expect(current.creation_date).toBe("2026-10-10");
+      }
+      const snapshot = structuredClone(current);
+      vi.mocked(updateTask).mockRejectedValueOnce(new Error("disk full"));
+      vi.setSystemTime(new Date(2026, 9, 13, 12));
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      fireEvent.click(within(document.getElementById("edit-task-modal")!).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(screen.getAllByRole("alert").some((el) => el.textContent?.includes("disk full"))).toBe(true));
+      expect(metadata()).toBe("+cart due:2026-10-12 created:2026-10-10 updated:2026-10-12");
+      expect(current).toEqual(snapshot);
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe.each([false, true])("TodoPane simplified workflow (compact=%s)", (compact) => {
   function openFilters() {
     if (compact) fireEvent.click(screen.getByRole("button", { name: /filter options/i }));

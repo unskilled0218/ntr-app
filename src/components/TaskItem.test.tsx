@@ -15,7 +15,7 @@ describe("TaskItem", () => {
   it("hides project/context tokens from description while retaining project metadata and ordinary @ text", () => {
     const { container } = render(<TaskItem task={task} onToggle={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />);
     expect(container.querySelector(".text")!.textContent).toBe("(A)call mail@phone https://site/@phone");
-    expect(container.querySelector(".meta")!.textContent).toBe("created 2026-06-01 · +work");
+    expect(container.querySelector(".meta")!.textContent).toBe("+work created:2026-06-01");
   });
 
   it("shows fallback text for context-only tasks and retains edit/delete/complete actions", () => {
@@ -44,14 +44,14 @@ describe("TaskItem", () => {
     const boundaries = { ...task, priority: null, description: "C++ +workshop mail+work@example.com https://site/+work +work @phone" };
     const { container } = render(<TaskItem task={boundaries} onToggle={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />);
     expect(container.querySelector(".text")!.textContent).toBe("C++ +workshop mail+work@example.com https://site/+work");
-    expect(container.querySelector(".meta")!.textContent).toBe("created 2026-06-01 · +work");
+    expect(container.querySelector(".meta")!.textContent).toBe("+work created:2026-06-01");
   });
 
-  it("keeps parsed tags visible when hiding labels", () => {
+  it("relocates due while keeping unrelated parsed tags visible", () => {
     const tagged = { ...task, priority: null, description: "call +work @phone due:2026-06-30 pri:A custom:value", tags: { due: "2026-06-30", pri: "A", custom: "value" } };
     const { container } = render(<TaskItem task={tagged} onToggle={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />);
-    expect(container.querySelector(".text")!.textContent).toBe("call due:2026-06-30 pri:A custom:value");
-    expect(container.querySelector(".meta")!.textContent).toBe("created 2026-06-01 · +work");
+    expect(container.querySelector(".text")!.textContent).toBe("call pri:A custom:value");
+    expect(container.querySelector(".meta")!.textContent).toBe("+work due:2026-06-30 created:2026-06-01");
   });
 
   it.each(["+work", "+work @phone"])("shows fallback text and project metadata for '%s'", (description) => {
@@ -81,8 +81,8 @@ describe("TaskItem", () => {
     const { container } = render(<TaskItem task={original} onToggle={onToggle} onEdit={onEdit} onDelete={onDelete} />);
     expect(container.querySelector("li.task")!.classList.contains("completed")).toBe(completed);
     expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(completed);
-    expect(container.querySelector(".text")!.textContent).toBe(`${completed ? "" : "(A)"}call due:2026-06-30`);
-    expect(container.querySelector(".meta")!.textContent).toBe(`created 2026-06-01${completed ? " · done 2026-06-02" : ""} · +work`);
+    expect(container.querySelector(".text")!.textContent).toBe(`${completed ? "" : "(A)"}call`);
+    expect(container.querySelector(".meta")!.textContent).toBe(`+work due:2026-06-30 created:2026-06-01${completed ? " done:2026-06-02" : ""}`);
     fireEvent.click(screen.getByRole("checkbox"));
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -93,5 +93,42 @@ describe("TaskItem", () => {
     expect(onDelete).toHaveBeenCalledOnce();
     expect(onDelete.mock.calls[0][0]).toBe(original);
     expect(original).toEqual(snapshot);
+  });
+
+  it("renders the supplied example with creation and update dates together", () => {
+    const example = { ...task, priority: null, creation_date: "2026-10-10", projects: ["cart"], contexts: [],
+      description: "Do something +cart due:2026-10-12 updated:2026-10-11", tags: { due: "2026-10-12", updated: "2026-10-11" } };
+    const { container } = render(<TaskItem task={example} onToggle={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />);
+    expect(container.querySelector(".text")!.textContent).toBe("Do something");
+    expect(container.querySelector(".meta")!.textContent).toBe("+cart due:2026-10-12 created:2026-10-10 updated:2026-10-11");
+  });
+
+  it.each(["due", "updated"])("uses effective %s tag precedence without losing invalid legacy text", (key) => {
+    for (const invalidLast of [false, true]) {
+      const tokens = invalidLast ? [`${key}:2026-10-11`, `${key}:later`] : [`${key}:later`, `${key}:2026-10-11`];
+      const source = { ...task, priority: null, creation_date: null, projects: [], contexts: [], description: `call ${tokens.join(" ")}`, tags: { [key]: invalidLast ? "later" : "2026-10-11" } };
+      const snapshot = structuredClone(source);
+      const { container, unmount } = render(<TaskItem task={source} onToggle={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />);
+      expect(container.querySelector(".text")!.textContent).toBe(invalidLast ? source.description : `call ${key}:later`);
+      expect(container.querySelector(".meta")?.textContent ?? "").toBe(invalidLast ? "" : `${key}:2026-10-11`);
+      expect(source).toEqual(snapshot);
+      unmount();
+    }
+  });
+
+  it("hides duplicate valid housekeeping only for displayed keys and preserves boundaries", () => {
+    const source = { ...task, priority: null, creation_date: null, projects: [], contexts: [],
+      description: "call due:2026-10-10 due:2026-10-11 updated:2026-10-11 updated:2026-10-11 updated:bad updatedAt:2026-10-11 https://site/updated:2026-10-11 custom:value",
+      tags: { due: "2026-10-11", updated: "bad", custom: "value" } };
+    const { container } = render(<TaskItem task={source} onToggle={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />);
+    expect(container.querySelector(".text")!.textContent).toBe("call updated:2026-10-11 updated:2026-10-11 updated:bad updatedAt:2026-10-11 https://site/updated:2026-10-11 custom:value");
+    expect(container.querySelector(".meta")!.textContent).toBe("due:2026-10-11");
+  });
+
+  it("shows a date-only fallback without inventing a creation date", () => {
+    const source = { ...task, priority: null, creation_date: null, description: "+work @phone updated:2026-10-11", tags: { updated: "2026-10-11" } };
+    const { container } = render(<TaskItem task={source} onToggle={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />);
+    expect(container.querySelector(".text")!.textContent).toBe("Task without description");
+    expect(container.querySelector(".meta")!.textContent).toBe("+work updated:2026-10-11");
   });
 });

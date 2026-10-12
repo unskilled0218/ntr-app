@@ -25,8 +25,12 @@ const TASK = {
   raw: "(A) 2026-06-01 call bank +work @phone due:2026-06-30",
 };
 
-beforeEach(() => { vi.clearAllMocks(); });
-afterEach(() => { cleanup(); });
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 9, 11, 12));
+});
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe("EditTaskModal", () => {
   it("pre-populates visible fields without exposing contexts", () => {
@@ -55,7 +59,7 @@ describe("EditTaskModal", () => {
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
 
     await waitFor(() => {
-      expect(onSave).toHaveBeenCalledWith(7, "(A) 2026-06-01 call bank +work @phone due:2026-06-30");
+      expect(onSave).toHaveBeenCalledWith(7, "(A) 2026-06-01 call bank +work @phone due:2026-06-30 updated:2026-10-11");
     });
   });
 
@@ -69,7 +73,7 @@ describe("EditTaskModal", () => {
     fireEvent.click(screen.getByRole("button", { name: /^project$/i }));
     fireEvent.click(within(document.querySelector("dialog.select-modal[open]")!).getByRole("button", { name: "home" }));
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith(7, "(B) 2026-06-01 call later +home @phone @store due:2026-07-01"));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(7, "(B) 2026-06-01 call later +home @phone @store due:2026-07-01 updated:2026-10-11"));
   });
 
   it.each(["unchanged", "B", "None"])("keeps completion dates and applies completed priority %s", async (choice) => {
@@ -83,15 +87,15 @@ describe("EditTaskModal", () => {
     }
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
     const priority = choice === "unchanged" ? "A" : choice === "None" ? "" : choice;
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith(7, `x 2026-06-02 2026-06-01 call bank +work @phone due:2026-06-30${priority ? ` pri:${priority}` : ""}`));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(7, `x 2026-06-02 2026-06-01 call bank +work @phone due:2026-06-30${priority ? ` pri:${priority}` : ""} updated:2026-10-11`));
   });
 
   it("shows and preserves saved completed priorities above C", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
-    render(<EditTaskModal task={{ ...TASK, completed: true, priority: null, description: `${TASK.description} pri:Z`, tags: { ...TASK.tags, pri: "Z" } }} serverLabels={SERVER_LABELS} onSave={onSave} onClose={() => {}} />);
+    render(<EditTaskModal task={{ ...TASK, completed: true, creation_date: null, priority: null, description: `${TASK.description} pri:Z`, tags: { ...TASK.tags, pri: "Z" } }} serverLabels={SERVER_LABELS} onSave={onSave} onClose={() => {}} />);
     expect(screen.getByRole("button", { name: /^priority$/i }).textContent).toBe("Z");
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith(7, "x call bank +work @phone due:2026-06-30 pri:Z"));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(7, "x call bank +work @phone due:2026-06-30 pri:Z updated:2026-10-11"));
   });
 
   it("uses only the current task's hidden contexts after switching tasks", async () => {
@@ -100,7 +104,7 @@ describe("EditTaskModal", () => {
     const { rerender } = render(<EditTaskModal task={TASK} {...props} />);
     rerender(<EditTaskModal task={{ ...TASK, id: 8, contexts: [], description: "plain", projects: [], tags: {} }} {...props} />);
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith(8, "(A) 2026-06-01 plain"));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(8, "(A) 2026-06-01 plain updated:2026-10-11"));
   });
 
   it("saves remaining fields on a context-only task without persisting fallback text", async () => {
@@ -109,7 +113,7 @@ describe("EditTaskModal", () => {
     expect((screen.getByRole("textbox", { name: /description/i }) as HTMLInputElement).value).toBe("");
     fireEvent.change(screen.getByLabelText(/due date/i), { target: { value: "2026-07-01" } });
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith(7, "@phone due:2026-07-01"));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(7, "@phone due:2026-07-01 updated:2026-10-11"));
   });
 
   it("shows an error message and stays open when onSave rejects", async () => {
@@ -146,6 +150,45 @@ describe("EditTaskModal", () => {
     );
     const dialog = document.getElementById("edit-task-modal") as HTMLDialogElement;
     expect(dialog?.open).toBeFalsy();
+  });
+
+  it("stamps Save and retry days without mutating original metadata on failure", async () => {
+    const original = { ...TASK, tags: { ...TASK.tags, updated: "2026-10-09", custom: "old" } };
+    const snapshot = structuredClone(original);
+    const onSave = vi.fn().mockRejectedValueOnce(new Error("disk full")).mockResolvedValueOnce(undefined);
+    render(<EditTaskModal task={original} serverLabels={SERVER_LABELS} onSave={onSave} onClose={vi.fn()} />);
+    expect(onSave).not.toHaveBeenCalled();
+    vi.setSystemTime(new Date(2026, 9, 12, 12));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("disk full"));
+    expect(onSave.mock.calls[0][1]).toContain("2026-06-01 call bank");
+    expect(onSave.mock.calls[0][1]).toContain("custom:old updated:2026-10-12");
+    expect(original).toEqual(snapshot);
+    expect((document.getElementById("edit-task-modal") as HTMLDialogElement).open).toBe(true);
+    vi.setSystemTime(new Date(2026, 9, 13, 12));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
+    expect(onSave.mock.calls[1][1]).toContain("updated:2026-10-13");
+    expect(onSave.mock.calls[1][1]).not.toContain("updated:2026-10-09");
+    expect(original).toEqual(snapshot);
+  });
+
+  it("catches inconsistent completed dates before save instead of losing creation", async () => {
+    const original = { ...TASK, completed: true };
+    const onSave = vi.fn();
+    render(<EditTaskModal task={original} serverLabels={SERVER_LABELS} onSave={onSave} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("without a completion date"));
+    expect(onSave).not.toHaveBeenCalled();
+    expect(original.creation_date).toBe("2026-06-01");
+  });
+
+  it("does not submit an updated-only description", () => {
+    const onSave = vi.fn();
+    render(<EditTaskModal task={{ ...TASK, contexts: [], description: "plain", projects: [], tags: {} }} serverLabels={SERVER_LABELS} onSave={onSave} onClose={vi.fn()} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Task description" }), { target: { value: "updated:2026-10-10" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).not.toHaveBeenCalled();
   });
 });
 

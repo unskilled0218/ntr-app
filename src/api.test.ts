@@ -175,6 +175,25 @@ describe("updateTask (server mode)", () => {
       contentType: "application/json",
     });
   });
+
+  it("roundtrips persisted dates and backs up the server's raw line without restamping", async () => {
+    const raw = "2026-10-10 Do something +cart due:2026-10-12 custom:new updated:2026-10-11";
+    const saved = { ...TASK, creation_date: "2026-10-10", description: raw.slice(11), projects: ["cart"], tags: { due: "2026-10-12", custom: "new", updated: "2026-10-11" }, raw };
+    mockServer([[saved], [raw + "\n"]]);
+    expect(await updateTask(1, raw)).toEqual(saved);
+    expect(reqOf(0).body).toBe(JSON.stringify({ text: raw }));
+    expect(invoke).toHaveBeenCalledWith("put_raw", { text: raw + "\n" });
+  });
+
+  it("sends the same canonical edit metadata through local transport", async () => {
+    localStorage.removeItem("ntr.serverUrl");
+    const raw = "2026-10-10 Do something +cart updated:2026-10-11";
+    const saved = { ...TASK, creation_date: "2026-10-10", tags: { updated: "2026-10-11" }, raw };
+    vi.mocked(invoke).mockResolvedValue(saved);
+    expect(await updateTask(1, raw)).toEqual(saved);
+    expect(invoke).toHaveBeenCalledWith("update_task", { id: 1, text: raw });
+    expect(invoke).toHaveBeenCalledOnce();
+  });
 });
 
 describe("completeTask (server mode)", () => {
