@@ -45,29 +45,70 @@ describe("composeEditedTask", () => {
     completion_date: null,
     description: "call bank @phone @store",
     contexts: ["phone", "store"],
+    projects: [],
+    tags: {} as Record<string, string>,
   };
   const fields = { priority: "B", description: "call later", project: "work", due: "2026-06-30" };
 
   it("keeps active creation date and every hidden context while changing visible fields", () => {
-    expect(composeEditedTask(original, fields)).toBe("(B) 2026-06-01 call later +work @phone @store due:2026-06-30");
+    expect(composeEditedTask(original, fields, "2026-10-11")).toBe("(B) 2026-06-01 call later +work @phone @store due:2026-06-30 updated:2026-10-11");
   });
 
   it.each([{ contexts: [] }, { contexts: ["phone"] }, { contexts: ["phone", "store"] }])("retains context values $contexts", ({ contexts }) => {
-    expect(composeEditedTask({ ...original, contexts }, { ...fields, priority: "", project: "", due: "" })).toBe(["2026-06-01 call later", ...contexts.map((c) => `@${c}`)].join(" "));
+    expect(composeEditedTask({ ...original, contexts }, { ...fields, priority: "", project: "", due: "" }, "2026-10-11")).toBe(["2026-06-01 call later", ...contexts.map((c) => `@${c}`), "updated:2026-10-11"].join(" "));
   });
 
   it.each(["A", "B", "Z", ""])("serializes completed effective priority '%s' without stale tags", (priority) => {
     const completed = { ...original, completed: true, priority: null, completion_date: "2026-06-02", description: "call bank @phone @store pri:A" };
-    const text = composeEditedTask(completed, { ...fields, priority, description: "call later pri:A pri:B" });
-    expect(text).toBe(`x 2026-06-02 2026-06-01 call later +work @phone @store due:2026-06-30${priority ? ` pri:${priority}` : ""}`);
+    const text = composeEditedTask(completed, { ...fields, priority, description: "call later pri:A pri:B" }, "2026-10-11");
+    expect(text).toBe(`x 2026-06-02 2026-06-01 call later +work @phone @store due:2026-06-30${priority ? ` pri:${priority}` : ""} updated:2026-10-11`);
   });
 
-  it("does not emit a creation date as a completion date", () => {
-    expect(composeEditedTask({ ...original, completed: true }, { ...fields, priority: "" })).toBe("x call later +work @phone @store due:2026-06-30");
+  it("rejects inconsistent completed dates instead of losing creation", () => {
+    expect(() => composeEditedTask({ ...original, completed: true }, { ...fields, priority: "" }, "2026-10-11")).toThrow("without a completion date");
   });
 
   it("supports context-only edits without inventing a description", () => {
-    expect(composeEditedTask({ ...original, creation_date: null }, { priority: "", description: "", project: "", due: "" })).toBe("@phone @store");
+    expect(composeEditedTask({ ...original, creation_date: null }, { priority: "", description: "", project: "", due: "" }, "2026-10-11")).toBe("@phone @store updated:2026-10-11");
+  });
+
+  it("replaces old stamps while preserving original dates, multiple projects, and hidden tags", () => {
+    const source = { ...original, projects: ["work", "cart"], tags: { updated: "2026-10-10", custom: "old", url: "https://old:443/path" } };
+    const snapshot = structuredClone(source);
+    const first = composeEditedTask(source, { ...fields, description: "call later custom:new updated:2026-10-09 updated:bad due:old +work @phone @phone" }, "2026-10-11");
+    expect(first).toBe("(B) 2026-06-01 call later custom:new +work @phone +cart @store due:2026-06-30 url:https://old:443/path updated:2026-10-11");
+    expect(first).not.toContain("custom:old");
+    const second = composeEditedTask({ ...source, tags: { ...source.tags, custom: "new", updated: "2026-10-11" } }, { ...fields, description: "call again" }, "2026-10-12");
+    expect(second).toContain("2026-06-01 call again +work +cart");
+    expect(second).toContain("custom:new");
+    expect(second.match(/updated:/g)).toHaveLength(1);
+    expect(second).toContain("updated:2026-10-12");
+    expect(source).toEqual(snapshot);
+  });
+
+  it("preserves unmentioned keys and honors submitted exact keys and colon-containing values", () => {
+    const source = { ...original, tags: { custom: "old", url: "https://old/path" } };
+    const text = composeEditedTask(source, { ...fields, description: "call customized:new url:https://new:443/path" }, "2026-10-11");
+    expect(text).toContain("customized:new url:https://new:443/path");
+    expect(text).toContain("custom:old");
+    expect(text).not.toContain("url:https://old/path");
+    const same = composeEditedTask(source, { ...fields, description: "call custom:old custom:new" }, "2026-10-11");
+    expect(same.match(/custom:old/g)).toHaveLength(1);
+    expect(same.indexOf("custom:old")).toBeLessThan(same.indexOf("custom:new"));
+  });
+
+  it.each(["home", ""])("applies explicit single-project selection '%s'", (project) => {
+    const text = composeEditedTask({ ...original, projects: ["work", "cart"] }, { ...fields, project }, "2026-10-11");
+    expect(text).not.toContain("+work");
+    expect(text).not.toContain("+cart");
+    expect(text.includes("+home")).toBe(project === "home");
+  });
+
+  it("edits no-date legacy records without inventing history and rejects an updated-only body", () => {
+    const source = { ...original, completed: true, creation_date: null, contexts: [] };
+    expect(composeEditedTask(source, { ...fields, priority: "" }, "2026-10-11")).toBe("x call later +work due:2026-06-30 updated:2026-10-11");
+    expect(composeEditedTask(source, { ...fields, description: "updated:old" }, "2026-10-11")).toBe("");
+    expect(() => composeEditedTask(original, fields, "2026-02-30")).toThrow("Invalid task edit date");
   });
 });
 
@@ -177,5 +218,12 @@ describe("planLabelRemoval", () => {
 
   it("returns an empty plan when no task carries the name", () => {
     expect(planLabelRemoval(tasks, "project", "ghost")).toEqual([]);
+  });
+
+  it("retains creation and update metadata during bulk project removal", () => {
+    const raw = "2026-10-10 call +work due:2026-10-12 updated:2026-10-11 custom:new";
+    expect(planLabelRemoval([{ id: 1, projects: ["work"], contexts: [], raw }], "project", "work")).toEqual([
+      { id: 1, text: "2026-10-10 call due:2026-10-12 updated:2026-10-11 custom:new" },
+    ]);
   });
 });

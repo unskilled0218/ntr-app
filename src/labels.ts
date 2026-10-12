@@ -1,8 +1,9 @@
 // Pure helpers for the add form, the label modal, and label removal, ported from web/app.js. No
 // DOM, no side effects, so they are trivially unit-testable (the behaviours most likely to
-// regress subtly). Depends only on config — never on the transport shim (api.ts).
+// regress subtly). Depends only on config and pure date helpers — never on the transport shim (api.ts).
 
 import { KINDS, type Kind } from "./config";
+import { isTaskDate, type TaskDateMetadata } from "./lib/taskDates";
 
 export function unionLabels(remembered: string[], derived: string[]): string[] {
   return [...new Set([...remembered, ...derived])];
@@ -41,6 +42,8 @@ interface EditableTask {
   creation_date: string | null;
   description: string;
   contexts: string[];
+  projects: string[];
+  tags: Record<string, string>;
 }
 
 export function getTaskPriority(task: Pick<EditableTask, "completed" | "priority" | "description">): string {
@@ -52,7 +55,36 @@ export function getTaskPriority(task: Pick<EditableTask, "completed" | "priority
 
 // Updates replace whole task lines. Keep lifecycle metadata and hidden contexts here,
 // with completed priority stored as pri:X so the existing backend can restore it.
-export function composeEditedTask(task: EditableTask, fields: Omit<ComposeFields, "contexts">): string {
+export function composeEditedTask(task: EditableTask, fields: Omit<ComposeFields, "contexts">, editDate: string): string {
+  if (!isTaskDate(editDate)) throw new Error("Invalid task edit date");
+  if (task.completed && task.creation_date && !task.completion_date) {
+    throw new Error("Cannot preserve creation date on a completed task without a completion date");
+  }
+  const descriptionTokens = fields.description.split(/\s+/).filter((token) => token &&
+    !token.startsWith("updated:") && !token.startsWith("due:") &&
+    !(task.completed && /^pri:[A-Z]$/.test(token)));
+  if (!descriptionTokens.length && !task.contexts.length) return "";
+
+  const submittedKeys = new Set(descriptionTokens.map(tagEntry).filter((entry) => entry !== null).map(([key]) => key));
+  const projects = fields.project === (task.projects[0] ?? "")
+    ? task.projects
+    : fields.project ? [fields.project] : [];
+  const labels = new Set([...projects.map((p) => `+${p}`), ...task.contexts.map((c) => `@${c}`)]);
+  const seenLabels = new Set<string>();
+  const body = descriptionTokens.filter((token) => {
+    if (!labels.has(token)) return true;
+    if (seenLabels.has(token)) return false;
+    seenLabels.add(token);
+    return true;
+  });
+  for (const token of labels) if (!seenLabels.has(token)) body.push(token);
+  if (fields.due) body.push(`due:${fields.due}`);
+  for (const [key, value] of Object.entries(task.tags)) {
+    if (!["due", "updated", "pri"].includes(key) && !submittedKeys.has(key)) body.push(`${key}:${value}`);
+  }
+  if (task.completed && fields.priority) body.push(`pri:${fields.priority}`);
+  body.push(`updated:${editDate}`);
+
   const parts: string[] = [];
   if (task.completed) parts.push("x");
   else if (fields.priority) parts.push(`(${fields.priority})`);
@@ -62,13 +94,15 @@ export function composeEditedTask(task: EditableTask, fields: Omit<ComposeFields
   } else if (!task.completed && task.creation_date) {
     parts.push(task.creation_date);
   }
-  const description = task.completed
-    ? fields.description.split(/\s+/).filter((token) => !/^pri:[A-Z]$/.test(token)).join(" ")
-    : fields.description;
-  const body = composeText({ ...fields, description, priority: "", contexts: task.contexts });
-  if (body) parts.push(body);
-  if (task.completed && fields.priority) parts.push(`pri:${fields.priority}`);
+  parts.push(body.join(" "));
   return parts.join(" ");
+}
+
+// Match the backend's nonempty, case-sensitive, first-colon tag contract.
+function tagEntry(token: string): [string, string] | null {
+  if (token.startsWith("+") || token.startsWith("@")) return null;
+  const colon = token.indexOf(":");
+  return colon > 0 && colon < token.length - 1 ? [token.slice(0, colon), token.slice(colon + 1)] : null;
 }
 
 // Whole-token matching keeps email addresses, URLs, and similarly named labels intact.
@@ -79,6 +113,15 @@ function stripTokens(description: string, tokens: string[]): string {
 
 export function hideContexts(description: string, contexts: string[]): string {
   return stripTokens(description, contexts.map((context) => `@${context}`));
+}
+
+export function listDescription(description: string, projects: string[], contexts: string[], displayedDates: TaskDateMetadata): string {
+  const dateTokens = description.split(/\s+/).filter((token) => {
+    const entry = tagEntry(token);
+    return entry !== null && (entry[0] === "due" || entry[0] === "updated") &&
+      displayedDates[entry[0]] !== undefined && isTaskDate(entry[1]);
+  });
+  return stripTokens(description, [...projects.map((p) => `+${p}`), ...contexts.map((c) => `@${c}`), ...dateTokens]);
 }
 
 // Strip the structured tokens already parsed into projects/contexts/tags from the raw
