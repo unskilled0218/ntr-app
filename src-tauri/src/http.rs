@@ -10,11 +10,12 @@
 //! So this module is the one place that owns the native HTTP client. It mirrors the seam in
 //! src/api.ts: `server_fetch` is the single request/response primitive, and the
 //! `server_connect`/`server_disconnect` pair bridges the server's SSE `change` stream onto the
-//! very same Tauri `change` event the file-watcher already emits (see `watch.rs`) — so the
-//! frontend's live-update handler is identical in both modes.
+//! scoped Tauri `server-live` event. Local watcher events remain separate, so obsolete
+//! connections and local backup writes cannot impersonate the current server.
 
-use crate::state::AppState;
+use crate::state::{AppState, SseConnection};
 use futures_util::StreamExt;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
 /// One server-mode request. Travels as a single struct (not five positional args) so a future
@@ -72,8 +73,19 @@ pub async fn server_fetch(
   req: ServerRequest,
 ) -> Result<HttpResponse, String> {
   let client = client_for(state.inner(), req.allow_invalid_cert)?;
+  fetch_response(&client, req, Duration::from_secs(30)).await
+}
+
+async fn fetch_response(
+  client: &reqwest::Client,
+  req: ServerRequest,
+  read_timeout: Duration,
+) -> Result<HttpResponse, String> {
   let method = reqwest::Method::from_bytes(req.method.as_bytes()).map_err(|e| e.to_string())?;
   let mut builder = client.request(method, &req.url);
+  if req.method.eq_ignore_ascii_case("GET") {
+    builder = builder.timeout(read_timeout);
+  }
   if let Some(body) = req.body {
     if let Some(ct) = req.content_type {
       builder = builder.header(reqwest::header::CONTENT_TYPE, ct);
@@ -117,58 +129,177 @@ fn sse_tokens(buf: &mut String) -> Vec<String> {
   out
 }
 
-/// The SSE bridge body: GET the events URL and re-emit each `data:` token as the Tauri `change`
-/// event, reusing the file-watcher's event name and "tasks"/"note" payloads so the frontend
-/// handler is identical to local mode. Ends quietly on stream end or error (best-effort, like
-/// the old `EventSource`); reconnect happens via the frontend's re-subscribe on settings change.
-async fn run_sse(app: AppHandle, client: reqwest::Client, url: String) {
-  let res = match client.get(&url).send().await {
-    Ok(r) => r,
-    Err(_) => return, // best-effort, like the file-watcher; reconnect via re-subscribe
-  };
-  let mut stream = res.bytes_stream();
-  let mut buf = String::new();
-  while let Some(chunk) = stream.next().await {
-    let bytes = match chunk {
-      Ok(b) => b,
-      Err(_) => break,
-    };
-    buf.push_str(&String::from_utf8_lossy(&bytes));
-    for token in sse_tokens(&mut buf) {
-      let _ = app.emit(crate::watch::CHANGE_EVENT, token);
+// Internal event only: the server API still emits its original string tokens.
+const SERVER_LIVE_EVENT: &str = "server-live";
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LiveEvent {
+  connection_id: String,
+  kind: String,
+}
+
+#[derive(Clone, Copy)]
+struct SseTiming {
+  handshake: Duration,
+  idle: Duration,
+  healthy: Duration,
+  retry: Duration,
+  cap: Duration,
+}
+
+impl Default for SseTiming {
+  fn default() -> Self {
+    Self {
+      handshake: Duration::from_secs(15),
+      idle: Duration::from_secs(60),
+      healthy: Duration::from_secs(30),
+      retry: Duration::from_secs(1),
+      cap: Duration::from_secs(30),
     }
   }
 }
 
-/// Abort the live SSE bridge task if one is running. Idempotent.
-fn abort_sse(state: &AppState) -> Result<(), String> {
-  if let Some(handle) = state.sse_task.lock().map_err(|e| e.to_string())?.take() {
-    handle.abort();
+fn next_delay(delay: Duration, timing: SseTiming) -> Duration {
+  delay.saturating_mul(2).min(timing.cap)
+}
+
+// Each attempt owns its buffer. Comments reset the idle deadline, even though
+// they carry no resource change. Errors never log URLs, credentials, or bodies.
+async fn sse_attempt(
+  client: &reqwest::Client,
+  url: &str,
+  timing: SseTiming,
+  emit: &(impl Fn(&str) + Sync),
+) -> Result<(), String> {
+  let response = tokio::time::timeout(timing.handshake, client.get(url).send())
+    .await
+    .map_err(|_| "SSE handshake timed out".to_string())?
+    .map_err(|_| "SSE connection failed".to_string())?;
+  if !response.status().is_success() {
+    return Err(format!("SSE HTTP status {}", response.status()));
   }
-  Ok(())
+  let content_type = response
+    .headers()
+    .get(reqwest::header::CONTENT_TYPE)
+    .and_then(|value| value.to_str().ok())
+    .unwrap_or("");
+  if !content_type
+    .split(';')
+    .next()
+    .unwrap_or("")
+    .trim()
+    .eq_ignore_ascii_case("text/event-stream")
+  {
+    return Err("SSE response has an invalid content type".to_string());
+  }
+  emit("connected");
+  consume_stream(response.bytes_stream(), timing.idle, emit).await
+}
+
+async fn consume_stream<S, B, E>(
+  mut stream: S,
+  idle: Duration,
+  emit: &(impl Fn(&str) + Sync),
+) -> Result<(), String>
+where
+  S: futures_util::Stream<Item = Result<B, E>> + Unpin,
+  B: AsRef<[u8]>,
+{
+  let mut buffer = String::new();
+  loop {
+    let chunk = tokio::time::timeout(idle, stream.next())
+      .await
+      .map_err(|_| "SSE stream idle deadline exceeded".to_string())?
+      .ok_or_else(|| "SSE stream closed".to_string())?
+      .map_err(|_| "SSE stream read failed".to_string())?;
+    buffer.push_str(&String::from_utf8_lossy(chunk.as_ref()));
+    for token in sse_tokens(&mut buffer) {
+      if token == "tasks" || token == "note" {
+        emit(&token);
+      }
+    }
+    if buffer.len() > 65_536 {
+      return Err("SSE line exceeds buffer limit".to_string());
+    }
+  }
+}
+
+// Aborting this single task cancels the request, idle wait, and retry sleep.
+async fn run_sse(
+  client: reqwest::Client,
+  url: String,
+  timing: SseTiming,
+  emit: impl Fn(&str) + Send + Sync,
+) {
+  let mut delay = timing.retry;
+  loop {
+    let connected_at = std::sync::Mutex::new(None);
+    let result = sse_attempt(&client, &url, timing, &|kind| {
+      if kind == "connected" {
+        *connected_at.lock().unwrap() = Some(tokio::time::Instant::now());
+      }
+      emit(kind);
+    })
+    .await;
+    if connected_at
+      .lock()
+      .unwrap()
+      .is_some_and(|at| at.elapsed() >= timing.healthy)
+    {
+      delay = timing.retry;
+    }
+    if let Err(error) = result {
+      eprintln!("live sync: {error}; retrying");
+    }
+    tokio::time::sleep(delay).await;
+    delay = next_delay(delay, timing);
+  }
 }
 
 /// Start (or restart) the SSE bridge to `url` (the absolute `/api/events` URL). Aborts any
-/// existing bridge first, so a re-subscribe never leaks a task.
+/// existing bridge atomically, so a re-subscribe never leaks a task. Disconnect
+/// carries the caller's connection id and cannot abort a newer owner.
 #[tauri::command]
 pub async fn server_connect(
   app: AppHandle,
   state: State<'_, AppState>,
   url: String,
   allow_invalid_cert: bool,
+  connection_id: String,
 ) -> Result<(), String> {
-  abort_sse(state.inner())?;
   let client = client_for(state.inner(), allow_invalid_cert)?;
-  let handle = tauri::async_runtime::spawn(run_sse(app.clone(), client, url));
-  *state.sse_task.lock().map_err(|e| e.to_string())? = Some(handle);
+  let mut slot = state.sse_task.lock().map_err(|e| e.to_string())?;
+  let event_id = connection_id.clone();
+  let task = tokio::spawn(run_sse(client, url, SseTiming::default(), move |kind| {
+    let _ = app.emit(
+      SERVER_LIVE_EVENT,
+      LiveEvent {
+        connection_id: event_id.clone(),
+        kind: kind.to_string(),
+      },
+    );
+  }));
+  SseConnection::replace(
+    &mut slot,
+    SseConnection {
+      id: connection_id,
+      task,
+    },
+  );
   Ok(())
 }
 
 /// Stop the live SSE bridge. Called from the frontend's `onChange` cleanup on disconnect.
 #[tauri::command]
-pub fn server_disconnect(state: State<'_, AppState>) -> Result<(), String> {
-  abort_sse(state.inner())
+pub fn server_disconnect(state: State<'_, AppState>, connection_id: String) -> Result<(), String> {
+  let mut slot = state.sse_task.lock().map_err(|e| e.to_string())?;
+  SseConnection::disconnect(&mut slot, &connection_id);
+  Ok(())
 }
+
+#[cfg(test)]
+#[path = "http_tests.rs"]
+mod recovery_tests;
 
 #[cfg(test)]
 mod tests {
@@ -193,7 +324,10 @@ mod tests {
   #[test]
   fn yields_multiple_tokens_from_one_read() {
     let mut buf = "data: tasks\n\ndata: note\n\n".to_string();
-    assert_eq!(sse_tokens(&mut buf), vec!["tasks".to_string(), "note".to_string()]);
+    assert_eq!(
+      sse_tokens(&mut buf),
+      vec!["tasks".to_string(), "note".to_string()]
+    );
   }
 
   #[test]

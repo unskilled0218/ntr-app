@@ -61,7 +61,7 @@ pub fn run() {
       let labels = LabelStore::load(backend, paths::LABELS_FILE)?;
       app.manage(AppState::new(store, note, labels));
 
-      // The watcher is the single emitter of live-update `change` events.
+      // The watcher emits local `change` events; the server bridge is separately scoped.
       watch::spawn(app.handle().clone());
       Ok(())
     })

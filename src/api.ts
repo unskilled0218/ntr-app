@@ -40,6 +40,33 @@ export interface Labels {
 export const CHANGE_EVENT = "change";
 export const CHANGE_TASKS = "tasks";
 export const CHANGE_NOTE = "note";
+export const SERVER_LIVE_EVENT = "server-live";
+
+// One activation owns its reads and deferred writes. A settings change invalidates
+// it synchronously, before React effects or old promise continuations can run.
+export interface TransportContext {
+  readonly generation: number;
+  readonly localGeneration: number;
+  readonly url: string;
+  readonly allowInvalidCert: boolean;
+}
+let transportGeneration = 0;
+let localGeneration = 0;
+export function captureTransport(): TransportContext {
+  return Object.freeze({ generation: transportGeneration, localGeneration, url: getServerUrl(), allowInvalidCert: getAllowInvalidCert() });
+}
+export function activateTransport(storageChanged = false): TransportContext {
+  transportGeneration++;
+  if (storageChanged) localGeneration++;
+  return captureTransport();
+}
+export function isTransportCurrent(context: TransportContext): boolean {
+  return context.generation === transportGeneration && context.url === getServerUrl()
+    && context.allowInvalidCert === getAllowInvalidCert();
+}
+function requireCurrent(context: TransportContext) {
+  if (!isTransportCurrent(context)) throw new Error("Connection changed");
+}
 
 // --- HTTP helpers (server mode only) ---
 //
@@ -62,21 +89,23 @@ async function serverFetch(
   method = "GET",
   body?: string,
   contentType?: string,
+  context = captureTransport(),
 ): Promise<string> {
+  requireCurrent(context);
   const res = await invoke<HttpResponse>("server_fetch", {
     req: {
-      url: getServerUrl() + path,
+      url: context.url + path,
       method,
       body: body ?? null,
       contentType: contentType ?? null,
-      allowInvalidCert: getAllowInvalidCert(),
+      allowInvalidCert: context.allowInvalidCert,
     },
   });
   if (!res.ok) throw new Error(`${res.status} ${res.status_text}`.trim());
   return res.body;
 }
 
-async function httpJson<T>(path: string, init?: { method?: string; body?: string }): Promise<T> {
+async function httpJson<T>(path: string, init?: { method?: string; body?: string }, context = captureTransport()): Promise<T> {
   // A JSON body is the only case that needs a Content-Type; bodyless GETs send none (matching
   // the old behaviour, where GETs carried no headers).
   const body = await serverFetch(
@@ -84,6 +113,7 @@ async function httpJson<T>(path: string, init?: { method?: string; body?: string
     init?.method ?? "GET",
     init?.body,
     init?.body != null ? "application/json" : undefined,
+    context,
   );
   return JSON.parse(body) as T;
 }
@@ -91,12 +121,12 @@ async function httpJson<T>(path: string, init?: { method?: string; body?: string
 // The note and todo.txt endpoints exchange plain text. These two helpers are the
 // single home for "GET/PUT text at a server path", shared by the user-write path
 // (getNote/putNote) and the conflict path (CONFLICT_IO) so they cannot drift.
-function httpText(path: string): Promise<string> {
-  return serverFetch(path);
+function httpText(path: string, context = captureTransport()): Promise<string> {
+  return serverFetch(path, "GET", undefined, undefined, context);
 }
 
-function httpPutText(path: string, text: string): Promise<void> {
-  return serverFetch(path, "PUT", text, "text/plain").then(() => {});
+function httpPutText(path: string, text: string, context = captureTransport()): Promise<void> {
+  return serverFetch(path, "PUT", text, "text/plain", context).then(() => {});
 }
 
 // --- Local backup helpers (server mode only, best-effort) ---
@@ -130,16 +160,16 @@ async function backupTasksLocally(): Promise<void> {
 
 // --- Exported API ---
 
-export function listTasks(filter: TaskFilter): Promise<Task[]> {
-  const url = getServerUrl();
-  if (url) {
+export function listTasks(filter: TaskFilter, context = captureTransport()): Promise<Task[]> {
+  requireCurrent(context);
+  if (context.url) {
     const params = new URLSearchParams();
     if (filter.completed != null) params.set("completed", String(filter.completed));
     if (filter.priority != null) params.set("priority", filter.priority);
     if (filter.project != null) params.set("project", filter.project);
     if (filter.context != null) params.set("context", filter.context);
     const qs = params.toString();
-    return httpJson<Task[]>("/api/tasks" + (qs ? "?" + qs : ""));
+    return httpJson<Task[]>("/api/tasks" + (qs ? "?" + qs : ""), undefined, context);
   }
   return invoke("list_tasks", {
     completed: filter.completed ?? null,
@@ -200,56 +230,111 @@ export async function deleteTask(id: number): Promise<void> {
   return invoke("delete_task", { id });
 }
 
-export function getNote(): Promise<string> {
-  if (getServerUrl()) {
-    return httpText("/api/note");
+export function getNote(context = captureTransport()): Promise<string> {
+  requireCurrent(context);
+  if (context.url) {
+    return httpText("/api/note", context);
   }
   return invoke("get_note");
 }
 
-export async function putNote(text: string): Promise<void> {
-  if (getServerUrl()) {
-    await httpPutText("/api/note", text);
-    await backupNoteLocally(text);
+export async function putNote(text: string, context = captureTransport()): Promise<void> {
+  requireCurrent(context);
+  if (context.url) {
+    await httpPutText("/api/note", text, context);
+    if (isTransportCurrent(context)) await backupNoteLocally(text);
     return;
   }
   return invoke("put_note", { text });
 }
 
-export function getLabels(): Promise<Labels> {
-  if (getServerUrl()) {
-    return httpJson<Labels>("/api/labels");
+export function getLabels(context = captureTransport()): Promise<Labels> {
+  requireCurrent(context);
+  if (context.url) {
+    return httpJson<Labels>("/api/labels", undefined, context);
   }
   return invoke("get_labels");
 }
 
-export async function putLabels(labels: Labels): Promise<void> {
-  if (getServerUrl()) {
-    await serverFetch("/api/labels", "PUT", JSON.stringify(labels), "application/json");
-    await backupLabelsLocally(labels);
+export async function putLabels(labels: Labels, context = captureTransport()): Promise<void> {
+  requireCurrent(context);
+  if (context.url) {
+    await serverFetch("/api/labels", "PUT", JSON.stringify(labels), "application/json", context);
+    if (isTransportCurrent(context)) await backupLabelsLocally(labels);
     return;
   }
   return invoke("put_labels", { labels });
 }
 
-// Subscribe to the backend's `change` stream. Both modes now deliver tokens through Tauri's
-// `listen(CHANGE_EVENT)`: in local mode the file-watcher emits it; in server mode the Rust SSE
-// bridge (server_connect) subscribes to /api/events and re-emits the same event, so the webview
-// never opens an EventSource that a self-signed-cert HTTPS proxy would reject. Returns an
-// unlisten that also tears the bridge down.
-export async function onChange(handler: (kind: string) => void): Promise<UnlistenFn> {
-  if (getServerUrl()) {
-    await invoke("server_connect", {
-      url: getServerUrl() + "/api/events",
-      allowInvalidCert: getAllowInvalidCert(),
-    });
-    const unlisten = await listen<string>(CHANGE_EVENT, (e) => handler(e.payload));
-    return () => {
-      unlisten();
-      invoke("server_disconnect").catch(() => {});
-    };
+interface ServerLiveEvent {
+  connectionId: string;
+  kind: "connected" | "tasks" | "note";
+}
+let subscriptionGeneration = 0;
+let activeCleanup: (() => void) | undefined;
+let lifecycle: Promise<unknown> = Promise.resolve();
+function transition(action: () => Promise<unknown>): Promise<unknown> {
+  const next = lifecycle.then(action);
+  lifecycle = next.catch(() => {}); // one failed command must not poison later setup
+  return next;
+}
+
+// The listener exists before connect. Cancellation also works while listen/connect
+// is pending, and every native teardown is scoped to its original owner.
+export async function onChange(
+  handler: (kind: string) => void,
+  options: { signal?: AbortSignal; onConnected?: () => void } = {},
+): Promise<UnlistenFn> {
+  activeCleanup?.();
+  const generation = ++subscriptionGeneration;
+  const context = captureTransport();
+  const connectionId = crypto.randomUUID();
+  let ended = false;
+  let started = false;
+  let unlisten: UnlistenFn | undefined;
+  const current = () => !ended && generation === subscriptionGeneration && isTransportCurrent(context);
+  const cleanup = () => {
+    if (ended) return;
+    ended = true;
+    unlisten?.();
+    options.signal?.removeEventListener("abort", cleanup);
+    if (started) {
+      void transition(() => invoke("server_disconnect", { connectionId }))
+        .catch((error) => console.warn("live disconnect failed:", error));
+    }
+    if (activeCleanup === cleanup) activeCleanup = undefined;
+  };
+  activeCleanup = cleanup;
+  options.signal?.addEventListener("abort", cleanup, { once: true });
+  if (options.signal?.aborted) cleanup();
+  try {
+    if (!context.url) await lifecycle;
+    if (!current()) { cleanup(); return cleanup; }
+    unlisten = context.url
+      ? await listen<ServerLiveEvent>(SERVER_LIVE_EVENT, ({ payload }) => {
+        if (!current() || payload.connectionId !== connectionId) return;
+        if (payload.kind === "connected") options.onConnected?.();
+        else if (payload.kind === CHANGE_TASKS || payload.kind === CHANGE_NOTE) handler(payload.kind);
+      })
+      : await listen<string>(CHANGE_EVENT, ({ payload }) => {
+        if (current()) handler(payload);
+      });
+    if (!current()) { unlisten(); cleanup(); return cleanup; }
+    if (context.url) {
+      await transition(async () => {
+        if (!current()) return;
+        started = true;
+        await invoke("server_connect", {
+          connectionId, url: context.url + "/api/events", allowInvalidCert: context.allowInvalidCert,
+        });
+      });
+    }
+    if (!current()) cleanup();
+    return cleanup;
+  } catch (error) {
+    cleanup();
+    throw error;
   }
-  return listen<string>(CHANGE_EVENT, (e) => handler(e.payload));
 }
 
 // --- Server/local conflict reconciliation ---
@@ -268,33 +353,35 @@ export interface Conflict {
 // of the note / todo.txt live", shared by reconcileWithServer and resolveConflict.
 interface ResourceIO {
   readLocal(): Promise<string>;
-  readServer(): Promise<string>;
+  readServer(context: TransportContext): Promise<string>;
   writeLocal(text: string): Promise<void>;
-  writeServer(text: string): Promise<void>;
+  writeServer(text: string, context: TransportContext): Promise<void>;
 }
 
 const CONFLICT_IO: Record<ConflictResource, ResourceIO> = {
   note: {
     readLocal: () => invoke("get_note"),
-    readServer: () => httpText("/api/note"),
+    readServer: (context) => httpText("/api/note", context),
     writeLocal: (text) => invoke("put_note", { text }),
-    writeServer: (text) => httpPutText("/api/note", text),
+    writeServer: (text, context) => httpPutText("/api/note", text, context),
   },
   tasks: {
     // /api/raw is the server store's own todo.txt render, byte-for-byte the format
     // local get_raw returns — so equal content compares equal, no join/newline logic.
     readLocal: () => invoke("get_raw"),
-    readServer: () => httpText("/api/raw"),
+    readServer: (context) => httpText("/api/raw", context),
     writeLocal: (text) => invoke("put_raw", { text }),
-    writeServer: (text) => httpPutText("/api/raw", text),
+    writeServer: (text, context) => httpPutText("/api/raw", text, context),
   },
 };
 
 // "server" writes the server copy down to the local file; "local" pushes the
 // local copy up to the server. Either way both sides end up identical.
-function applyChoice(c: Conflict, choice: ConflictChoice): Promise<void> {
+const conflictContexts = new WeakMap<Conflict, TransportContext>();
+function applyChoice(c: Conflict, choice: ConflictChoice, context = conflictContexts.get(c) ?? captureTransport()): Promise<void> {
+  requireCurrent(context);
   const io = CONFLICT_IO[c.resource];
-  return choice === "server" ? io.writeLocal(c.server) : io.writeServer(c.local);
+  return choice === "server" ? io.writeLocal(c.server) : io.writeServer(c.local, context);
 }
 
 // Reconcile the local todo.txt / Note.md with a server's copies. Called on app
@@ -303,25 +390,30 @@ function applyChoice(c: Conflict, choice: ConflictChoice): Promise<void> {
 // difference is resolved per the configured strategy ("server"/"local" auto-apply,
 // "ask" is returned for the UI to prompt). Best-effort: a failure on one resource
 // is logged and does not block the other. No-op (returns []) in local mode.
-export async function reconcileWithServer(): Promise<Conflict[]> {
-  if (!getServerUrl()) return [];
+export async function reconcileWithServer(context = captureTransport(), signal?: AbortSignal): Promise<Conflict[]> {
+  const current = () => isTransportCurrent(context) && !signal?.aborted;
+  if (!context.url || !current()) return [];
   const strategy = getConflictStrategy();
   const conflicts: Conflict[] = [];
   for (const resource of ["note", "tasks"] as ConflictResource[]) {
     try {
+      if (!current()) return [];
       const io = CONFLICT_IO[resource];
-      const [local, server] = await Promise.all([io.readLocal(), io.readServer()]);
+      const [local, server] = await Promise.all([io.readLocal(), io.readServer(context)]);
+      if (!current()) return [];
       const verdict = classifyConflict(local, server);
       if (verdict === "in-sync") continue;
       const conflict: Conflict = { resource, local, server };
+      conflictContexts.set(conflict, context);
       if (verdict === "adopt-server") {
-        await applyChoice(conflict, "server");
+        await applyChoice(conflict, "server", context);
       } else if (strategy === "ask") {
         conflicts.push(conflict);
       } else {
-        await applyChoice(conflict, strategy); // narrowed to "server" | "local"
+        await applyChoice(conflict, strategy, context); // narrowed to "server" | "local"
       }
     } catch (e) {
+      if (!current()) return [];
       console.warn(`reconcile ${resource} failed:`, e);
     }
   }
@@ -330,8 +422,8 @@ export async function reconcileWithServer(): Promise<Conflict[]> {
 
 // Apply the user's dialog choice for one conflict. "server" overwrites the local
 // file with the server copy; "local" pushes the local copy to the server.
-export function resolveConflict(c: Conflict, choice: ConflictChoice): Promise<void> {
-  return applyChoice(c, choice);
+export async function resolveConflict(c: Conflict, choice: ConflictChoice): Promise<void> {
+  await applyChoice(c, choice);
 }
 
 export function getDataDir(): Promise<string> {
@@ -348,8 +440,9 @@ export function getStorageKind(): Promise<StorageKind> {
   return invoke("storage_kind");
 }
 
-export function setDataDir(dir: string): Promise<void> {
-  return invoke("set_data_dir", { dir });
+export async function setDataDir(dir: string): Promise<void> {
+  await invoke("set_data_dir", { dir });
+  activateTransport(true);
 }
 
 // Turn any thrown value into a message. IPC rejections arrive as plain strings (the Rust

@@ -1,19 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createRef } from "react";
+import { createRef, StrictMode } from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import NotePane, { type NotePaneHandle } from "./NotePane";
 import { getCaretRange, readNoteText, setCaret, setCaretRange, setEditorText } from "../lib/caret";
+import { activateTransport } from "../api";
+import { deferred, settle } from "../test/deferred";
 
 // Mock only the transport seam (api.ts). getNote/putNote are controllable; errMsg stays real.
 const getNote = vi.fn<() => Promise<string>>();
 const putNote = vi.fn<(t: string) => Promise<void>>();
-vi.mock("../api", () => ({
+vi.mock("../api", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../api")>(),
   getNote: () => getNote(),
   putNote: (t: string) => putNote(t),
   errMsg: (e: unknown) => (e instanceof Error ? e.message : String(e)),
 }));
 
 beforeEach(() => {
+  localStorage.clear();
   vi.useFakeTimers();
   getNote.mockReset();
   putNote.mockReset().mockResolvedValue(undefined);
@@ -441,5 +445,240 @@ describe("NotePane link reveal", () => {
     act(() => editor.blur());
     expect(lineA.classList.contains("md-edit")).toBe(false);
     expect(lineB.classList.contains("md-edit")).toBe(false);
+  });
+});
+
+describe("NotePane live recovery", () => {
+  async function mount(base = "base") {
+    getNote.mockResolvedValue(base);
+    const ref = createRef<NotePaneHandle>();
+    const rendered = render(<NotePane ref={ref} />);
+    await flushMicrotasks();
+    const editor = rendered.container.querySelector<HTMLDivElement>("#note-input")!;
+    return { ...rendered, ref, editor };
+  }
+
+  async function changed(ref: React.RefObject<NotePaneHandle | null>) {
+    await act(async () => { ref.current!.onNoteChange(); await settle(); });
+  }
+
+  it.each(["longer remote", "x", ""])("adopts a clean focused note and clamps selection for %j", async (remote) => {
+    const { ref, editor } = await mount("abcdef");
+    act(() => editor.focus());
+    await flushMicrotasks();
+    act(() => setCaretRange(editor, 2, 5));
+    getNote.mockResolvedValue(remote);
+    await changed(ref);
+    expect(readNoteText(editor)).toBe(remote);
+    expect(document.activeElement).toBe(editor);
+    expect(getCaretRange(editor)).toEqual({ start: Math.min(2, remote.length), end: Math.min(5, remote.length) });
+    expect(putNote).not.toHaveBeenCalled();
+  });
+
+  it("does not move the caret on a no-op or steal focus from another control", async () => {
+    const { ref, editor, container } = await mount();
+    act(() => editor.focus());
+    await flushMicrotasks();
+    act(() => setCaret(editor, 2));
+    await changed(ref);
+    expect(getCaretRange(editor)).toEqual({ start: 2, end: 2 });
+    const button = document.createElement("button");
+    container.append(button);
+    act(() => button.focus());
+    getNote.mockResolvedValue("remote");
+    await changed(ref);
+    expect(document.activeElement).toBe(button);
+    expect(readNoteText(editor)).toBe("remote");
+  });
+
+  it.each([true, false])("handles empty-note conflicts with Use theirs=%s", async (useTheirs) => {
+    const { ref, editor, getByText } = await mount();
+    pasteInto(editor, " draft");
+    getNote.mockResolvedValue("");
+    await changed(ref);
+    expect(readNoteText(editor)).toBe("base draft");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    window.dispatchEvent(new Event("pagehide"));
+    expect(putNote).not.toHaveBeenCalled();
+    fireEvent.click(getByText(useTheirs ? "Use theirs" : "Keep mine"));
+    await flushMicrotasks();
+    if (useTheirs) {
+      expect(readNoteText(editor)).toBe("");
+      expect(putNote).not.toHaveBeenCalled();
+    } else {
+      expect(putNote).toHaveBeenCalledOnce();
+      expect(putNote).toHaveBeenCalledWith("base draft");
+    }
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(false);
+  });
+
+  it("blocks debounce, blur, and pagehide while an incoming read is unresolved", async () => {
+    const { ref, editor } = await mount();
+    pasteInto(editor, " draft");
+    const read = deferred<string>();
+    getNote.mockReturnValueOnce(read.promise);
+    ref.current!.onNoteChange();
+    fireEvent.blur(editor);
+    window.dispatchEvent(new Event("pagehide"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(putNote).not.toHaveBeenCalled();
+    await act(async () => { read.resolve("remote"); await settle(); });
+    expect(readNoteText(editor)).toBe("base draft");
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(true);
+    expect(putNote).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("drains events after a save, with extra typing=%s", async (extraTyping) => {
+    const { ref, editor } = await mount();
+    const save = deferred<void>();
+    putNote.mockReturnValueOnce(save.promise);
+    pasteInto(editor, " mine");
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(putNote).toHaveBeenCalledTimes(1);
+    if (extraTyping) pasteInto(editor, " extra");
+    getNote.mockResolvedValue("remote after save");
+    await changed(ref);
+    await act(async () => { save.resolve(); await settle(); });
+    expect(readNoteText(editor)).toBe(extraTyping ? "base mine extra" : "remote after save");
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(extraTyping);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(putNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a failed incoming GET without another event and keeps the draft safe", async () => {
+    const { ref, editor } = await mount();
+    pasteInto(editor, " mine");
+    getNote.mockRejectedValueOnce(new Error("temporary GET failure")).mockResolvedValue("remote");
+    await changed(ref);
+    expect(readNoteText(editor)).toBe("base mine");
+    expect(putNote).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(true);
+    expect(putNote).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("drains after a failed save without clearing its error or losing incoming work", async () => {
+    const { ref, editor, container } = await mount();
+    const save = deferred<void>();
+    putNote.mockReturnValueOnce(save.promise);
+    pasteInto(editor, " mine");
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    getNote.mockRejectedValueOnce(new Error("GET failed")).mockResolvedValue("remote");
+    await changed(ref);
+    await act(async () => { save.reject(new Error("PUT failed")); await settle(); });
+    expect(container.querySelector("#note-status")!.textContent).toContain("PUT failed");
+    expect(container.querySelector("#note-status")!.textContent).toContain("GET failed");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(readNoteText(editor)).toBe("base mine");
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(true);
+    expect(putNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies typing during a GET and drains a second event without stale autosave", async () => {
+    const { ref, editor, container } = await mount();
+    const first = deferred<string>();
+    getNote.mockReturnValueOnce(first.promise).mockResolvedValue("latest remote");
+    ref.current!.onNoteChange();
+    pasteInto(editor, " typing");
+    ref.current!.onNoteChange();
+    await act(async () => { first.resolve("first remote"); await settle(); });
+    expect(readNoteText(editor)).toBe("base typing");
+    expect(container.querySelector("#conflict-theirs")!.textContent).toBe("latest remote");
+    expect(putNote).not.toHaveBeenCalled();
+  });
+
+  it("defers remote repaint and dialog during IME, then conflicts on committed input", async () => {
+    const { ref, editor } = await mount();
+    fireEvent.compositionStart(editor);
+    updateComposition(editor, "한");
+    getNote.mockResolvedValue("remote");
+    await changed(ref);
+    expect(readNoteText(editor)).toBe("한");
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(false);
+    fireEvent.compositionEnd(editor);
+    await flushMicrotasks();
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(true);
+    expect(putNote).not.toHaveBeenCalled();
+  });
+
+  it("preserves typing before initial load and invalidates StrictMode's old load", async () => {
+    const old = deferred<string>();
+    const latest = deferred<string>();
+    getNote.mockReturnValueOnce(old.promise).mockReturnValueOnce(latest.promise);
+    const { container } = render(<StrictMode><NotePane /></StrictMode>);
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    pasteInto(editor, "draft before loading");
+    await act(async () => { old.resolve("obsolete"); latest.resolve("current remote"); await settle(); });
+    expect(readNoteText(editor)).toBe("draft before loading");
+    expect(container.querySelector("#conflict-theirs")!.textContent).toBe("current remote");
+    expect(putNote).not.toHaveBeenCalled();
+  });
+
+  it("retains a dirty draft on target change and rejects an old conflict choice", async () => {
+    const { ref, editor, getByText, container } = await mount();
+    pasteInto(editor, " mine");
+    getNote.mockResolvedValue("remote A");
+    await changed(ref);
+    localStorage.setItem("ntr.serverUrl", "http://server-b");
+    activateTransport();
+    getNote.mockResolvedValue("base"); // equal to the old baseline still requires a choice
+    fireEvent.click(getByText("Keep mine"));
+    await flushMicrotasks();
+    expect(putNote).not.toHaveBeenCalled();
+    expect(readNoteText(editor)).toBe("base mine");
+    expect(container.querySelector("#conflict-theirs")!.textContent).toBe("base");
+    fireEvent.click(getByText("Keep mine"));
+    await flushMicrotasks();
+    expect(putNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not treat an unchanged settings target as a draft transfer", async () => {
+    const { ref, editor } = await mount();
+    pasteInto(editor, " mine");
+    activateTransport();
+    await changed(ref);
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(false);
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(putNote).toHaveBeenCalledWith("base mine");
+  });
+
+  it("requires a choice when the local directory changes even with the same empty URL", async () => {
+    const { ref, editor, getByText } = await mount();
+    pasteInto(editor, " local draft");
+    activateTransport(true);
+    await changed(ref);
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(true);
+    expect(putNote).not.toHaveBeenCalled();
+    fireEvent.click(getByText("Use theirs"));
+    await flushMicrotasks();
+    expect(readNoteText(editor)).toBe("base");
+    expect(putNote).not.toHaveBeenCalled();
+  });
+
+  it("ignores late saves and reads after replacement or unmount", async () => {
+    const { ref, editor, unmount } = await mount();
+    const save = deferred<void>();
+    putNote.mockReturnValueOnce(save.promise);
+    pasteInto(editor, " mine");
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    localStorage.setItem("ntr.serverUrl", "http://server-b");
+    activateTransport();
+    getNote.mockResolvedValue("B");
+    await changed(ref);
+    await act(async () => { save.resolve(); await settle(); });
+    expect(readNoteText(editor)).toBe("base mine");
+    expect(putNote).toHaveBeenCalledTimes(1);
+    const read = deferred<string>();
+    getNote.mockReturnValueOnce(read.promise);
+    ref.current!.onNoteChange();
+    unmount();
+    read.reject(new Error("late read"));
+    await flushMicrotasks();
+    const reads = getNote.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(getNote).toHaveBeenCalledTimes(reads);
+    expect(putNote).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

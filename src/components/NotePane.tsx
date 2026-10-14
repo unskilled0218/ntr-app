@@ -8,7 +8,7 @@
 // If React ever rendered children here it would clobber the caret and the live markup.
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { errMsg, getNote, putNote } from "../api";
+import { captureTransport, errMsg, getNote, isTransportCurrent, putNote, type TransportContext } from "../api";
 import { NOTE_SAVE_DELAY_MS } from "../config";
 import { getCaret, getCaretRange, readNoteText, setCaretRange, setEditorText } from "../lib/caret";
 import { writeClipboard } from "../lib/clipboard";
@@ -16,6 +16,7 @@ import { setEditLine } from "../lib/editLine";
 import { createHistory, record, reset, undo } from "../lib/history";
 import { cutRange, dedentRange } from "../lib/noteEdit";
 import { classifyNoteEvent } from "../lib/noteSync";
+import { ResourceRefresh } from "../lib/resourceRefresh";
 import NoteConflictDialog from "./NoteConflictDialog";
 import OpenLinkDialog from "./OpenLinkDialog";
 import { useLinkGestures } from "./useLinkGestures";
@@ -34,8 +35,16 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   const savingNote = useRef(false); // single-flight guard for an in-flight PUT
   const composingNote = useRef(false); // true between compositionstart/end (IME safety)
   const history = useRef(createHistory(""));
+  const mounted = useRef(false);
+  const lifetime = useRef(0);
+  const context = useRef(captureTransport());
+  const baselineRevision = useRef(0);
+  const transferredDraft = useRef(false);
+  const conflictContext = useRef<TransportContext | null>(null);
+  const saveError = useRef<string | null>(null);
+  const recovery = useRef<ResourceRefresh | null>(null);
   // While a live update conflicts with unsaved edits, holds the incoming remote text awaiting the
-  // user's choice (null = none). Truthy means the dialog owns the note: it blocks reloads and saves.
+  // user's choice (null = none). An empty remote note also blocks saves.
   const noteConflict = useRef<string | null>(null);
 
   const [status, setStatus] = useState<{ msg: string; isError: boolean }>({ msg: "", isError: false });
@@ -66,68 +75,120 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   // (Re)arm the debounce: a save fires NOTE_SAVE_DELAY_MS after the last keystroke.
   const scheduleNoteSave = () => {
     if (noteSaveTimer.current) clearTimeout(noteSaveTimer.current);
+    noteSaveTimer.current = null;
+    if (!mounted.current || recovery.current?.busy || noteConflict.current !== null || transferredDraft.current) return;
     noteSaveTimer.current = setTimeout(flushNote, NOTE_SAVE_DELAY_MS);
   };
+
+  // A context change preserves a dirty draft, but never carries its autosave to
+  // another server. The new remote becomes a conflict requiring an explicit choice.
+  function syncContext() {
+    if (isTransportCurrent(context.current)) return;
+    const next = captureTransport();
+    const targetChanged = context.current.url !== next.url
+      || (!next.url && context.current.localGeneration !== next.localGeneration);
+    transferredDraft.current = transferredDraft.current || (targetChanged && noteDirty());
+    context.current = next;
+    baselineRevision.current++;
+    savingNote.current = false;
+    noteConflict.current = null;
+    conflictContext.current = null;
+    setConflictOpen(false);
+    saveError.current = null;
+    if (noteSaveTimer.current) clearTimeout(noteSaveTimer.current);
+    noteSaveTimer.current = null;
+    recovery.current?.cancel();
+  }
+
+  function requestNote() {
+    if (!mounted.current) return;
+    syncContext();
+    if (noteSaveTimer.current) clearTimeout(noteSaveTimer.current);
+    noteSaveTimer.current = null;
+    recovery.current!.request();
+  }
 
   // Persist the note now if it is dirty and no save is already running. On completion it re-checks
   // for edits made during the PUT and re-arms the debounce, so the newest text is never left
   // unsaved. Used by the debounce, by blur, and after a conflict "keep mine".
-  async function flushNote() {
+  async function flushNote(authorized = false) {
     if (noteSaveTimer.current) clearTimeout(noteSaveTimer.current);
     noteSaveTimer.current = null;
+    if (!mounted.current) return;
+    if (!isTransportCurrent(context.current)) { requestNote(); return; }
     if (composingNote.current) return; // never persist an IME's transient preedit
-    if (noteConflict.current) return; // a conflict is pending; don't push local up until resolved
+    if (noteConflict.current !== null) return;
+    if (!authorized && (recovery.current?.busy || transferredDraft.current)) return;
     if (savingNote.current) return; // single-flight
     if (!noteDirty()) return;
     const text = readNoteText(editor());
+    const owner = context.current;
+    const life = lifetime.current;
+    baselineRevision.current++;
     savingNote.current = true;
     setNoteStatus("Saving…", false);
     try {
-      await putNote(text);
+      await putNote(text, owner);
+      if (!mounted.current || life !== lifetime.current || !isTransportCurrent(owner)) return;
       savedNote.current = text;
+      saveError.current = null;
       setNoteStatus("Saved", false);
-      if (noteDirty()) scheduleNoteSave(); // typed during the PUT — persist the newest too
     } catch (err) {
-      setNoteStatus(`Could not save note: ${errMsg(err)}`, true);
+      if (!mounted.current || life !== lifetime.current || !isTransportCurrent(owner)) return;
+      saveError.current = `Could not save note: ${errMsg(err)}`;
+      setNoteStatus(saveError.current, true);
     } finally {
-      savingNote.current = false;
+      if (mounted.current && life === lifetime.current && isTransportCurrent(owner)) {
+        savingNote.current = false;
+        baselineRevision.current++;
+        await recovery.current?.resume();
+        if (!saveError.current && noteDirty()) scheduleNoteSave();
+      }
     }
   }
 
   // Best-effort save when the page is going away. The normal path will have saved earlier; this
   // only covers the last unsaved edit (no await possible on unload).
   const flushNoteBeacon = () => {
+    if (!isTransportCurrent(context.current) || composingNote.current || savingNote.current
+      || recovery.current?.busy || noteConflict.current !== null || transferredDraft.current) return;
     if (!noteDirty()) return;
-    putNote(readNoteText(editor())).catch(() => {});
+    putNote(readNoteText(editor()), context.current).catch(() => {});
   };
 
   // Make the editor show `text` as the saved, clean note: new base, render in place, clear status.
   const adoptNote = (text: string) => {
+    const selection = document.activeElement === editor() ? getCaretRange(editor()) : null;
     savedNote.current = text;
+    saveError.current = null;
+    baselineRevision.current++;
     reset(history.current, text);
     paint(text, null);
+    if (selection) { setCaretRange(editor(), selection.start, selection.end); markEditLine(); }
     setNoteStatus("", false);
   };
-
-  async function loadNote() {
-    try {
-      adoptNote(await getNote());
-    } catch (err) {
-      setNoteStatus(`Could not load note: ${errMsg(err)}`, true);
-    }
-  }
 
   // Fetch the backend's note and bring the editor in line with it: silently when nothing would be
   // lost (noop / in-sync / adopt) or by prompting when unsaved edits differ (conflict).
   async function reconcileNote() {
-    if (savingNote.current || noteConflict.current) return;
+    const owner = context.current;
+    const life = lifetime.current;
+    const revision = baselineRevision.current;
     let remote: string;
-    try {
-      remote = await getNote();
-    } catch {
-      return; // transient; a later event or the next focus retries
+    try { remote = await getNote(owner); }
+    catch (error) {
+      if (!mounted.current || life !== lifetime.current || !isTransportCurrent(owner)) return;
+      throw error;
     }
-    if (savingNote.current || noteConflict.current) return; // re-check after the await
+    if (!mounted.current || life !== lifetime.current || !isTransportCurrent(owner)) return;
+    if (revision !== baselineRevision.current || savingNote.current || composingNote.current) {
+      recovery.current!.pending = true;
+      return;
+    }
+    if (noteConflict.current !== null || transferredDraft.current) {
+      openNoteConflict(remote);
+      return;
+    }
     const local = readNoteText(editor());
     switch (classifyNoteEvent(savedNote.current, local, remote)) {
       case "noop":
@@ -144,12 +205,11 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     }
   }
 
-  // The note side of a live update. A focused editor with no unsaved edits is left alone so a
-  // mid-session event does not yank the caret — the focus re-check / blur flush reconcile that.
-  async function maybeReloadNote() {
-    if (!noteDirty() && document.activeElement === editor()) return;
-    await reconcileNote();
-  }
+  if (!recovery.current) recovery.current = new ResourceRefresh(reconcileNote, {
+    canRun: () => mounted.current && !savingNote.current && !composingNote.current && isTransportCurrent(context.current),
+    onError: (error) => setNoteStatus([saveError.current, `Could not load note: ${errMsg(error)}`].filter(Boolean).join("; "), true),
+    onIdle: () => { if (!saveError.current && noteDirty()) scheduleNoteSave(); },
+  });
 
   // A remote change collided with unsaved edits: show both versions. Set the ref BEFORE opening so
   // the blur it triggers hits flushNote's conflict guard. If already open (a later event arrived
@@ -157,6 +217,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   function openNoteConflict(remote: string) {
     const wasOpen = noteConflict.current !== null;
     noteConflict.current = remote;
+    conflictContext.current = context.current;
     setConflictTheirs(remote);
     if (wasOpen) return;
     setConflictMine(readNoteText(editor()));
@@ -167,19 +228,25 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   // event calls this again — the second call no-ops). "Use theirs" discards local edits; "keep
   // mine" treats remote as the new base and saves local over it. Escape routes here as keep-mine.
   function resolveNoteConflict(useTheirs: boolean) {
-    if (!noteConflict.current) return;
+    if (noteConflict.current === null) return;
+    if (!conflictContext.current || !isTransportCurrent(conflictContext.current)) { requestNote(); return; }
     const remote = noteConflict.current;
     noteConflict.current = null;
+    conflictContext.current = null;
+    transferredDraft.current = false;
+    baselineRevision.current++;
     setConflictOpen(false);
     if (useTheirs) {
       adoptNote(remote);
+      void recovery.current?.resume();
     } else {
       savedNote.current = remote; // their version is the base; editor is dirty against it...
-      flushNote(); // ...so this PUTs the local text and it wins
+      void flushNote(true); // explicit choice authorizes this scoped overwrite
     }
   }
 
   const noteEdited = (text: string, caret: number | null, kind: "type" | "chunk") => {
+    saveError.current = null;
     record(history.current, text, caret, kind, Date.now());
     setNoteStatus("Editing…", false);
     scheduleNoteSave();
@@ -189,6 +256,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     const entry = undo(history.current);
     if (!entry) return;
     paint(entry.text, entry.caret);
+    saveError.current = null;
     setNoteStatus("Editing…", false);
     scheduleNoteSave();
   };
@@ -240,9 +308,21 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
 
   // Initial load + page-close beacon. Run once.
   useEffect(() => {
-    loadNote();
+    mounted.current = true;
+    lifetime.current++;
+    requestNote();
     window.addEventListener("pagehide", flushNoteBeacon);
-    return () => window.removeEventListener("pagehide", flushNoteBeacon);
+    return () => {
+      mounted.current = false;
+      lifetime.current++;
+      baselineRevision.current++;
+      savingNote.current = false;
+      composingNote.current = false;
+      recovery.current?.cancel();
+      if (noteSaveTimer.current) clearTimeout(noteSaveTimer.current);
+      noteSaveTimer.current = null;
+      window.removeEventListener("pagehide", flushNoteBeacon);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -260,7 +340,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useImperativeHandle(ref, () => ({ onNoteChange: () => void maybeReloadNote() }));
+  useImperativeHandle(ref, () => ({ onNoteChange: requestNote }));
 
   return (
     <section className="pane note-pane" id="note-view">
@@ -327,7 +407,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
           void flushNote();
           setEditLine(editor(), null); // collapse every link when focus leaves the note
         }}
-        onFocus={() => void reconcileNote()}
+        onFocus={requestNote}
         onCompositionStart={() => {
           composingNote.current = true;
         }}
@@ -337,6 +417,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
           const caret = getCaret(editor());
           paint(text, caret);
           noteEdited(text, caret, "chunk");
+          void recovery.current?.resume();
         }}
       />
       <div className="note-bar">

@@ -8,7 +8,28 @@ use crate::labelstore::LabelStore;
 use crate::note::NoteStore;
 use crate::store::Store;
 use std::sync::Mutex;
-use tauri::async_runtime::JoinHandle;
+use tokio::task::JoinHandle;
+
+pub struct SseConnection {
+  pub id: String,
+  pub task: JoinHandle<()>,
+}
+
+impl SseConnection {
+  pub fn replace(slot: &mut Option<Self>, connection: Self) {
+    if let Some(previous) = slot.replace(connection) {
+      previous.task.abort();
+    }
+  }
+
+  pub fn disconnect(slot: &mut Option<Self>, id: &str) {
+    if slot.as_ref().is_some_and(|connection| connection.id == id) {
+      if let Some(connection) = slot.take() {
+        connection.task.abort();
+      }
+    }
+  }
+}
 
 pub struct AppState {
   pub store: Mutex<Store>,
@@ -20,7 +41,7 @@ pub struct AppState {
   pub http_client: Mutex<Option<(bool, reqwest::Client)>>,
   /// The live SSE bridge task (server mode). `server_connect` spawns it; `server_disconnect`
   /// (and a re-connect) aborts it. `None` when in local mode or not yet connected.
-  pub sse_task: Mutex<Option<JoinHandle<()>>>,
+  pub sse_task: Mutex<Option<SseConnection>>,
 }
 
 impl AppState {
