@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
+  activateTransport,
+  captureTransport,
   completeTask,
   createTask,
   deleteTask,
@@ -17,6 +19,7 @@ import {
   uncompleteTask,
   updateTask,
 } from "./api";
+import { deferred, settle } from "./test/deferred";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -266,10 +269,10 @@ describe("labels (server mode)", () => {
 
 describe("onChange (server mode)", () => {
   it("starts the SSE bridge, fires the handler on a change event, and tears down on unlisten", async () => {
-    let captured: ((e: { payload: string }) => void) | undefined;
+    let captured: ((e: { payload: { connectionId: string; kind: string } }) => void) | undefined;
     const unlistenSpy = vi.fn();
     vi.mocked(listen).mockImplementation((_event, handler) => {
-      captured = handler as (e: { payload: string }) => void;
+      captured = handler as typeof captured;
       return Promise.resolve(unlistenSpy);
     });
     mockServer();
@@ -280,14 +283,17 @@ describe("onChange (server mode)", () => {
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("server_connect", {
       url: `${SERVER}/api/events`,
       allowInvalidCert: false,
+      connectionId: expect.any(String),
     });
-    captured!({ payload: "tasks" });
-    captured!({ payload: "note" });
+    const connectionId = (vi.mocked(invoke).mock.calls[0][1] as { connectionId: string }).connectionId;
+    captured!({ payload: { connectionId, kind: "tasks" } });
+    captured!({ payload: { connectionId, kind: "note" } });
     expect(received).toEqual(["tasks", "note"]);
 
     unlisten();
+    await Promise.resolve();
     expect(unlistenSpy).toHaveBeenCalled();
-    expect(vi.mocked(invoke)).toHaveBeenCalledWith("server_disconnect");
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("server_disconnect", { connectionId });
   });
 });
 
@@ -301,6 +307,202 @@ describe("HTTP error mapping", () => {
     mockServer([[null, 500]]);
     const err = await listTasks({}).catch((e: unknown) => e);
     expect(errMsg(err)).toContain("500");
+  });
+});
+
+describe("live subscription ownership", () => {
+  let callbacks: Array<(event: { payload: { connectionId: string; kind: string } }) => void>;
+  let removers: Array<ReturnType<typeof vi.fn>>;
+  beforeEach(() => {
+    callbacks = [];
+    removers = [];
+    vi.mocked(listen).mockReset().mockImplementation((_event, handler) => {
+      callbacks.push(handler as typeof callbacks[number]);
+      const remove = vi.fn();
+      removers.push(remove);
+      return Promise.resolve(remove);
+    });
+    mockServer();
+  });
+
+  const id = () => {
+    const calls = vi.mocked(invoke).mock.calls.filter(([command]) => command === "server_connect");
+    return (calls[calls.length - 1][1] as { connectionId: string }).connectionId;
+  };
+
+  it("installs the listener before connect and refreshes on every accepted connection", async () => {
+    const changed = vi.fn();
+    const connected = vi.fn();
+    const cleanup = await onChange(changed, { onConnected: connected });
+    expect(vi.mocked(listen).mock.calls[0][0]).toBe("server-live");
+    expect(vi.mocked(listen).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(invoke).mock.invocationCallOrder[0]);
+    for (const kind of ["connected", "tasks", "note", "connected"]) callbacks[0]({ payload: { connectionId: id(), kind } });
+    callbacks[0]({ payload: { connectionId: "obsolete", kind: "tasks" } });
+    expect(connected).toHaveBeenCalledTimes(2);
+    expect(changed.mock.calls).toEqual([["tasks"], ["note"]]);
+    cleanup();
+    await settle();
+  });
+
+  it("aborts during listener setup without starting a bridge and releases the late listener", async () => {
+    const listener = deferred<() => void>();
+    const remove = vi.fn();
+    vi.mocked(listen).mockReturnValueOnce(listener.promise);
+    const controller = new AbortController();
+    const setup = onChange(vi.fn(), { signal: controller.signal });
+    controller.abort();
+    listener.resolve(remove);
+    const cleanup = await setup;
+    cleanup();
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("serializes an issued connect, aborts it, and never lets stale cleanup disconnect its replacement", async () => {
+    const firstConnect = deferred<void>();
+    let first = true;
+    vi.mocked(invoke).mockImplementation((command) => {
+      if (command === "server_connect" && first) { first = false; return firstConnect.promise; }
+      return Promise.resolve(undefined);
+    });
+    const controller = new AbortController();
+    const oldChanged = vi.fn();
+    const oldSetup = onChange(oldChanged, { signal: controller.signal });
+    await settle();
+    const oldId = id();
+    controller.abort();
+    const changed = vi.fn();
+    const replacement = onChange(changed);
+    await settle();
+    expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "server_connect")).toHaveLength(1);
+    firstConnect.resolve();
+    const oldCleanup = await oldSetup;
+    const cleanup = await replacement;
+    const newId = id();
+    oldCleanup();
+    callbacks[0]({ payload: { connectionId: oldId, kind: "tasks" } });
+    callbacks[1]({ payload: { connectionId: oldId, kind: "tasks" } });
+    callbacks[1]({ payload: { connectionId: newId, kind: "note" } });
+    expect(oldChanged).not.toHaveBeenCalled();
+    expect(changed.mock.calls).toEqual([["note"]]);
+    expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "server_disconnect"))
+      .toEqual([["server_disconnect", { connectionId: oldId }]]);
+    cleanup();
+    await settle();
+  });
+
+  it("does not start an old delayed setup after a newer subscription", async () => {
+    const listener = deferred<() => void>();
+    const remove = vi.fn();
+    vi.mocked(listen).mockReturnValueOnce(listener.promise);
+    const old = onChange(vi.fn());
+    const cleanup = await onChange(vi.fn());
+    listener.resolve(remove);
+    await old;
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "server_connect")).toHaveLength(1);
+    cleanup();
+    await settle();
+  });
+
+  it("cleans failed setup without poisoning the next connection", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("command failure"));
+    await expect(onChange(vi.fn())).rejects.toThrow("command failure");
+    await settle();
+    expect(removers[0]).toHaveBeenCalledTimes(1);
+    const cleanup = await onChange(vi.fn());
+    cleanup();
+    await settle();
+  });
+
+  it("changes to local delivery only after owned teardown and ignores old server events", async () => {
+    const changed = vi.fn();
+    await onChange(changed);
+    const oldId = id();
+    localStorage.removeItem("ntr.serverUrl");
+    activateTransport();
+    const local = vi.fn();
+    const cleanup = await onChange(local);
+    const lastCall = vi.mocked(listen).mock.calls[vi.mocked(listen).mock.calls.length - 1];
+    expect(lastCall[0]).toBe("change");
+    expect(invoke).toHaveBeenCalledWith("server_disconnect", { connectionId: oldId });
+    callbacks[0]({ payload: { connectionId: oldId, kind: "note" } });
+    const localCallback = lastCall[1] as (event: { payload: string }) => void;
+    localCallback({ payload: "tasks" });
+    expect(changed).not.toHaveBeenCalled();
+    expect(local).toHaveBeenCalledWith("tasks");
+    cleanup();
+    await settle();
+  });
+
+  it("rejects callbacks when certificate settings change before React effects run", async () => {
+    const changed = vi.fn();
+    const cleanup = await onChange(changed);
+    localStorage.setItem("ntr.allowInvalidCert", "1");
+    callbacks[0]({ payload: { connectionId: id(), kind: "note" } });
+    expect(changed).not.toHaveBeenCalled();
+    cleanup();
+    await settle();
+  });
+});
+
+describe("transport-bound deferred work", () => {
+  it("cancels startup reconciliation before its delayed read can issue a write", async () => {
+    localStorage.setItem("ntr.conflictStrategy", "local");
+    const read = deferred<ReturnType<typeof httpResp>>();
+    vi.mocked(invoke).mockImplementation((command) => command === "server_fetch" ? read.promise : Promise.resolve("draft"));
+    const controller = new AbortController();
+    const work = reconcileWithServer(captureTransport(), controller.signal);
+    controller.abort();
+    read.resolve(httpResp("remote"));
+    expect(await work).toEqual([]);
+    expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "server_fetch")).toHaveLength(1);
+    expect(reqOf(0).method).toBe("GET");
+  });
+
+  it("does not back up an old note save after a target switch", async () => {
+    const write = deferred<ReturnType<typeof httpResp>>();
+    vi.mocked(invoke).mockReturnValueOnce(write.promise);
+    const owner = captureTransport();
+    const save = putNote("A's draft", owner);
+    localStorage.setItem("ntr.serverUrl", "http://server-b");
+    activateTransport();
+    write.resolve(httpResp(null, 204));
+    await save;
+    expect(reqOf(0).url).toBe(`${SERVER}/api/note`);
+    expect(vi.mocked(invoke).mock.calls).toHaveLength(1);
+    expect(() => getNote(owner)).toThrow("Connection changed");
+    await expect(putLabels({ project: ["A"], context: [] }, owner)).rejects.toThrow("Connection changed");
+  });
+
+  it("invalidates local contexts even when the URL stays empty", () => {
+    localStorage.removeItem("ntr.serverUrl");
+    const owner = captureTransport();
+    activateTransport();
+    expect(() => getNote(owner)).toThrow("Connection changed");
+  });
+
+  it("does not apply stale startup reconciliation to the next server", async () => {
+    localStorage.setItem("ntr.conflictStrategy", "local");
+    const read = deferred<ReturnType<typeof httpResp>>();
+    vi.mocked(invoke).mockImplementation((command) => command === "server_fetch" ? read.promise : Promise.resolve("A"));
+    const reconcile = reconcileWithServer();
+    localStorage.setItem("ntr.serverUrl", "http://server-b");
+    activateTransport();
+    read.resolve(httpResp("remote A"));
+    expect(await reconcile).toEqual([]);
+    expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "server_fetch")).toHaveLength(1);
+    expect(reqOf(0).method).toBe("GET");
+  });
+
+  it("rejects a stale startup conflict choice instead of targeting current settings", async () => {
+    mockServer([["remote A"], ["raw A"]], { note: "local A", raw: "raw A" });
+    const [conflict] = await reconcileWithServer();
+    vi.mocked(invoke).mockClear();
+    localStorage.setItem("ntr.serverUrl", "http://server-b");
+    activateTransport();
+    await expect(resolveConflict(conflict, "local")).rejects.toThrow("Connection changed");
+    expect(invoke).not.toHaveBeenCalled();
   });
 });
 

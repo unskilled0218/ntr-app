@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { classifyNoteEvent } from "./noteSync";
 
 describe("classifyNoteEvent", () => {
+  it("treats empty incoming text as a valid adoption or conflict", () => {
+    expect(classifyNoteEvent("base", "base", "")).toBe("adopt");
+    expect(classifyNoteEvent("base", "mine", "")).toBe("conflict");
+    expect(classifyNoteEvent("base", "", "")).toBe("in-sync");
+    expect(classifyNoteEvent("", "mine", "")).toBe("noop");
+  });
   it("noop when the server has not changed from our base", () => {
     expect(classifyNoteEvent("base", "base", "base")).toBe("noop");
     expect(classifyNoteEvent("base", "local edits", "base")).toBe("noop");

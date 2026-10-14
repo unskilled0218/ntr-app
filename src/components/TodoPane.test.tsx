@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import TodoPane from "./TodoPane";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { createRef } from "react";
+import TodoPane, { type TodoPaneHandle } from "./TodoPane";
+import { activateTransport } from "../api";
+import { deferred, settle } from "../test/deferred";
 import type { Task } from "../api";
 
 // Mock the transport shim. listTasks is arg-agnostic by design: this test pins the *removal glue*
 // (which tasks get updated, and that a reload happens), not the server's own filtering — so the
 // mount refresh, mount loadLabels, and confirmRemove's listTasks({}) all see the same fixture.
-vi.mock("../api", () => ({
+vi.mock("../api", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../api")>(),
   listTasks: vi.fn(),
   updateTask: vi.fn(),
   createTask: vi.fn(),
@@ -97,6 +101,73 @@ describe("TodoPane removal glue", () => {
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("network error"));
     // The catch path reloads too, so the UI reflects whatever landed before the failure.
     await waitFor(() => expect(vi.mocked(listTasks).mock.calls.length).toBeGreaterThan(callsBefore));
+  });
+});
+
+describe("TodoPane live recovery", () => {
+  it("retries a failed recovery read without another event and stops after success", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(listTasks).mockRejectedValueOnce(new Error("temporary GET failure"));
+      const { container, unmount } = render(<TodoPane compact={false} />);
+      await act(settle);
+      expect(container.querySelector("#error")!.textContent).toContain("temporary GET failure");
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(container.querySelector("#tasks")!.textContent).toContain("call bank");
+      const reads = vi.mocked(listTasks).mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+      expect(listTasks).toHaveBeenCalledTimes(reads);
+      unmount();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("ignores a late old-target task and label read after replacement", async () => {
+    const oldTasks = deferred<Task[]>();
+    const oldLabels = deferred<{ project: string[]; context: string[] }>();
+    vi.mocked(listTasks).mockReturnValueOnce(oldTasks.promise);
+    vi.mocked(getLabels).mockReturnValueOnce(oldLabels.promise);
+    const ref = createRef<TodoPaneHandle>();
+    const { container } = render(<TodoPane ref={ref} compact={false} />);
+    localStorage.setItem("ntr.serverUrl", "http://server-b");
+    activateTransport();
+    vi.mocked(listTasks).mockResolvedValue([task(20, "B task", [], [])]);
+    vi.mocked(getLabels).mockResolvedValue({ project: [], context: [] });
+    await act(async () => { ref.current!.onTasksChanged(); await settle(); });
+    await act(async () => {
+      oldTasks.resolve([task(1, "A task +old", ["old"], [])]);
+      oldLabels.resolve({ project: ["old"], context: [] });
+      await settle();
+    });
+    expect(container.querySelector("#tasks")!.textContent).toContain("B task");
+    expect(container.querySelector("#tasks")!.textContent).not.toContain("A task");
+    expect(putLabels).not.toHaveBeenCalled();
+  });
+
+  it("drains closely spaced events without allowing an older list to win", async () => {
+    const ref = createRef<TodoPaneHandle>();
+    const { container } = render(<TodoPane ref={ref} compact={false} />);
+    await act(settle);
+    const read = deferred<Task[]>();
+    vi.mocked(listTasks).mockReturnValueOnce(read.promise).mockResolvedValue([task(2, "latest", [], [])]);
+    act(() => { ref.current!.onTasksChanged(); ref.current!.onTasksChanged(); });
+    await act(async () => { read.resolve([task(1, "earlier", [], [])]); await settle(); });
+    expect(container.querySelector("#tasks")!.textContent).toContain("latest");
+    expect(container.querySelector("#tasks")!.textContent).not.toContain("earlier");
+  });
+
+  it("cancels failed-read retries on unmount", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(listTasks).mockRejectedValue(new Error("offline"));
+      const { unmount } = render(<TodoPane compact={false} />);
+      await act(settle);
+      unmount();
+      const reads = vi.mocked(listTasks).mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+      expect(listTasks).toHaveBeenCalledTimes(reads);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
   });
 });
 
@@ -236,7 +307,7 @@ describe.each([false, true])("TodoPane simplified workflow (compact=%s)", (compa
     await waitFor(() => expect(screen.queryByText("tidy")).toBeNull());
     const finished = screen.getByText("finished").closest("li")!;
     expect(finished.querySelector(".meta")!.textContent).toBe("+work");
-    expect(listTasks).toHaveBeenCalledWith({ project: "work" });
+    expect(listTasks).toHaveBeenCalledWith({ project: "work" }, expect.objectContaining({ url: "" }));
   });
 
   it("completes and reopens a task without hiding it", async () => {

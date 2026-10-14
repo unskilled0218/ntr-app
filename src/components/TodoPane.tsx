@@ -2,9 +2,11 @@
 // tasks, and the server-derived label sets. Ported from the #todo-view section + the task/list/
 // filter logic of app.js. Exposes onTasksChanged() so App can drive it from a live `change` event.
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   completeTask,
+  captureTransport,
+  isTransportCurrent,
   deleteTask as apiDeleteTask,
   errMsg,
   listTasks,
@@ -30,6 +32,7 @@ import AddForm from "./AddForm";
 import FilterBar from "./FilterBar";
 import RemoveLabelDialog from "./RemoveLabelDialog";
 import TaskItem from "./TaskItem";
+import { ResourceRefresh } from "../lib/resourceRefresh";
 
 export interface TodoPaneHandle {
   onTasksChanged: () => void;
@@ -50,18 +53,47 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
   const [error, setError] = useState("");
   const [editTask, setEditTask] = useState<Task | null>(null);
   const [removing, setRemoving] = useState<{ kind: "project"; name: string } | null>(null);
+  const mounted = useRef(false);
+  const tasksRequest = useRef(0);
+  const labelsRequest = useRef(0);
+  const readErrors = useRef({ tasks: "", labels: "" });
+  const knownLabels = useRef(serverLabels);
+  knownLabels.current = serverLabels;
+  const recoveryContext = useRef(captureTransport());
+  const recovery = useRef<ResourceRefresh | null>(null);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      tasksRequest.current++;
+      labelsRequest.current++;
+      recovery.current?.cancel();
+    };
+  }, []);
 
   // Fetch active and completed tasks with the current project filter
   // (sort is applied client-side at render). Mirrors app.js refresh() + buildQuery().
   const refresh = useCallback(async () => {
-    setError("");
+    const context = captureTransport();
+    const request = ++tasksRequest.current;
+    const current = () => mounted.current && request === tasksRequest.current && isTransportCurrent(context);
     try {
       const filter = {
         project: project || null,
       };
-      setTasks(await listTasks(filter));
+      const found = await listTasks(filter, context);
+      if (current()) {
+        setTasks(found);
+        readErrors.current.tasks = "";
+        setError(readErrors.current.labels);
+      }
+      return true;
     } catch (err) {
-      setError(`Could not load tasks: ${errMsg(err)}`);
+      if (current()) {
+        readErrors.current.tasks = `Could not load tasks: ${errMsg(err)}`;
+        setError(readErrors.current.tasks);
+      }
+      return !current();
     }
   }, [project]);
 
@@ -71,14 +103,31 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
   // updater, which reads the latest value without closing over it — so this is created once and
   // is a correct dependency for the effect and the imperative handle below.
   const loadLabels = useCallback(async () => {
+    const context = captureTransport();
+    const request = ++labelsRequest.current;
+    const current = () => mounted.current && request === labelsRequest.current && isTransportCurrent(context);
     let all: Task[];
-    const remembered = await getLabels().catch(() => ({ project: [], context: [] }));
+    let remembered: Labels;
+    let labelsFailed = false;
+    let labelError = "";
     try {
-      all = await listTasks({});
+      remembered = await getLabels(context).catch((error) => {
+        labelsFailed = true;
+        labelError = `Could not load label suggestions: ${errMsg(error)}`;
+        return knownLabels.current;
+      });
+      if (!current()) return true;
+      all = await listTasks({}, context);
     } catch (err) {
-      setError(`Could not load label suggestions: ${errMsg(err)}`);
-      return;
+      if (current()) {
+        readErrors.current.labels = `Could not load label suggestions: ${errMsg(err)}`;
+        setError(readErrors.current.tasks || readErrors.current.labels);
+      }
+      return !current();
     }
+    if (!current()) return true;
+    readErrors.current.labels = labelError;
+    setError(readErrors.current.tasks || labelError);
     const projects = new Set<string>();
     const contexts = new Set<string>();
     for (const t of all) {
@@ -92,30 +141,46 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
     setServerLabels(merged);
     setProject((p) => (p && !merged.project.includes(p) ? "" : p));
     if (
-      merged.project.length !== remembered.project.length ||
-      merged.context.length !== remembered.context.length
+      !labelsFailed && (merged.project.length !== remembered.project.length ||
+      merged.context.length !== remembered.context.length)
     ) {
-      await putLabels(merged).catch(() => {});
+      await putLabels(merged, context).catch(() => {});
     }
+    return !labelsFailed;
   }, []);
 
-  // Two reload paths only: a filter change refetches the list (refresh changes with the filters);
-  // and the initial mount loads the labels. Live `change` events go through the imperative handle.
+  const readers = useRef({ refresh, loadLabels });
+  readers.current = { refresh, loadLabels };
+  if (!recovery.current) recovery.current = new ResourceRefresh(async () => {
+    const results = await Promise.all([readers.current.refresh(), readers.current.loadLabels()]);
+    if (results.includes(false)) throw new Error("Task recovery pending");
+  }, { canRun: () => mounted.current && isTransportCurrent(recoveryContext.current), onError: () => {} });
+
+  function requestTasks() {
+    if (!isTransportCurrent(recoveryContext.current)) {
+      recovery.current!.cancel();
+      recoveryContext.current = captureTransport();
+      readErrors.current = { tasks: "", labels: "" };
+      knownLabels.current = { project: [], context: [] };
+    }
+    recovery.current!.request();
+  }
+
+  // Initial/filter reads and live events share per-resource recovery. A newer
+  // request or transport invalidates old responses without clearing visible data.
   useEffect(() => {
-    refresh();
+    requestTasks();
   }, [refresh]);
 
   useEffect(() => {
     clearLegacyTodoPreferences();
-    loadLabels();
   }, [loadLabels]);
 
   useImperativeHandle(
     ref,
     () => ({
       onTasksChanged: () => {
-        refresh();
-        loadLabels();
+        requestTasks();
       },
     }),
     [refresh, loadLabels],

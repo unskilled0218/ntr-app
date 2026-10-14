@@ -7,6 +7,9 @@ import "./style.css";
 import {
   CHANGE_NOTE,
   CHANGE_TASKS,
+  activateTransport,
+  captureTransport,
+  isTransportCurrent,
   onChange,
   reconcileWithServer,
   resolveConflict,
@@ -45,11 +48,14 @@ export default function App() {
   // ConflictDialog below. Guarded against a late resolve after the transport changed again.
   useEffect(() => {
     let cancelled = false;
-    reconcileWithServer().then((found) => {
-      if (!cancelled) setConflicts(found);
+    const controller = new AbortController();
+    const context = captureTransport();
+    reconcileWithServer(context, controller.signal).then((found) => {
+      if (!cancelled && isTransportCurrent(context)) setConflicts(found);
     });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [connectionKey]);
 
@@ -61,37 +67,42 @@ export default function App() {
   // Resolve the head conflict (choice) or dismiss it (null), then advance the queue.
   // Refresh is tied to a write actually landing, not to queue position.
   async function endConflict(choice: ConflictChoice | null) {
+    const context = captureTransport();
     const [head, ...rest] = conflicts;
     if (choice && head) {
       try {
         await resolveConflict(head, choice);
-        refreshPanes();
+        if (isTransportCurrent(context)) refreshPanes();
       } catch (e) {
         console.warn("conflict resolution failed:", e);
       }
     }
-    setConflicts(rest);
+    if (isTransportCurrent(context)) setConflicts(rest);
   }
 
   // The live stream: a `change` event re-fetches tasks or reconciles the note. Re-wired whenever
   // connectionKey changes (i.e., after settings close) so the new transport is picked up.
   useEffect(() => {
+    const controller = new AbortController();
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     onChange((kind) => {
       if (kind === CHANGE_TASKS) todoRef.current?.onTasksChanged();
       else if (kind === CHANGE_NOTE) noteRef.current?.onNoteChange();
-    }).then((un) => {
+    }, { signal: controller.signal, onConnected: refreshPanes }).then((un) => {
       if (cancelled) un();
       else unlisten = un;
-    });
+    }).catch((error) => console.warn("live subscription failed:", error));
     return () => {
       cancelled = true;
+      controller.abort();
       unlisten?.();
     };
   }, [connectionKey]); // onChange is module-stable; refs excluded by React convention
 
   function onSettingsClose() {
+    activateTransport();
+    setConflicts([]);
     setSettingsOpen(false);
     setConnectionKey((k) => k + 1); // re-wire onChange subscription
     setCompact(getCompactUi()); // pick up a compact-controls toggle made in the modal
