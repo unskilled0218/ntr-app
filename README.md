@@ -14,6 +14,8 @@ npm run tauri dev
 
 Tasks and notes are stored in the Tauri app-data directory by default. Use the `[L]` button to connect to a server.
 
+Note recovery preserves newer edits and undo, including a return to empty text, across unchanged server settings. See [note-save safety](docs/live-sync.md#note-save-ownership) for conflict choices and limits.
+
 ## Documentation
 
 - [Features](docs/features.md)

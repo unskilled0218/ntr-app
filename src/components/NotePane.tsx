@@ -34,6 +34,8 @@ function noteDestination(owner: TransportContext): string {
 interface NoteSaveAttempt {
   owner: TransportContext;
   life: number;
+  text: string;
+  editRevision: number;
 }
 
 const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
@@ -44,6 +46,10 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   const savedNote = useRef("");
   const noteSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const noteSaves = useRef(new Map<string, NoteSaveAttempt>());
+  const editRevision = useRef(0); // committed local edits only, including undo
+  // This editor's unresolved save evidence outlives the PUT's write slot. A
+  // recovery GET must still recognize newer edits that restored the old base.
+  const unreconciledSave = useRef<NoteSaveAttempt | null>(null);
   const composingNote = useRef(false); // true between compositionstart/end (IME safety)
   const history = useRef(createHistory(""));
   const mounted = useRef(false);
@@ -67,6 +73,20 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   const noteDirty = () => readNoteText(editor()) !== savedNote.current;
   const noteSaving = () => noteSaves.current.has(noteDestination(context.current));
   const setNoteStatus = (msg: string, isError: boolean) => setStatus({ msg, isError });
+
+  function activeSaveProvenance() {
+    const attempt = unreconciledSave.current;
+    return attempt?.life === lifetime.current && noteDestination(attempt.owner) === noteDestination(context.current)
+      ? attempt : null;
+  }
+
+  function hasNewerSaveDraft(attempt = activeSaveProvenance()) {
+    return attempt !== null && editRevision.current > attempt.editRevision;
+  }
+
+  function retireSaveProvenance(attempt: NoteSaveAttempt | null) {
+    if (unreconciledSave.current === attempt) unreconciledSave.current = null;
+  }
 
   // Reveal the raw Markdown on whichever line the caret is on (collapse every other line's links). null
   // node when the editor is unfocused, which collapses every line.
@@ -99,7 +119,14 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     const next = captureTransport();
     const targetChanged = context.current.url !== next.url
       || (!next.url && context.current.localGeneration !== next.localGeneration);
-    transferredDraft.current = transferredDraft.current || (targetChanged && noteDirty());
+    transferredDraft.current = transferredDraft.current || (targetChanged && (noteDirty() || hasNewerSaveDraft()));
+    if (targetChanged && !transferredDraft.current) {
+      // A clean target switch replaces the editor's previous intent. If the new
+      // target still has an old PUT, protect edits made from this point onward,
+      // not unrelated edits made while viewing another target.
+      const pending = noteSaves.current.get(noteDestination(next));
+      unreconciledSave.current = pending ? { ...pending, editRevision: editRevision.current } : null;
+    }
     context.current = next;
     baselineRevision.current++;
     noteConflict.current = null;
@@ -136,14 +163,16 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     const owner = context.current;
     const life = lifetime.current;
     const destination = noteDestination(owner);
-    const attempt = { owner, life };
+    const attempt = { owner, life, text, editRevision: editRevision.current };
     baselineRevision.current++;
     noteSaves.current.set(destination, attempt);
+    unreconciledSave.current = attempt;
     setNoteStatus("Saving…", false);
     try {
       await putNote(text, owner);
       if (!mounted.current || life !== lifetime.current || !isTransportCurrent(owner)) return;
-      savedNote.current = text;
+      savedNote.current = attempt.text;
+      retireSaveProvenance(attempt);
       saveError.current = null;
       setNoteStatus("Saved", false);
     } catch (err) {
@@ -182,6 +211,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   const adoptNote = (text: string) => {
     const selection = document.activeElement === editor() ? getCaretRange(editor()) : null;
     savedNote.current = text;
+    unreconciledSave.current = null; // an authoritative replacement ends the previous editor's intent
     saveError.current = null;
     baselineRevision.current++;
     reset(history.current, text);
@@ -212,7 +242,15 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
       return;
     }
     const local = readNoteText(editor());
-    switch (classifyNoteEvent(savedNote.current, local, remote)) {
+    const provenance = activeSaveProvenance();
+    const verdict = classifyNoteEvent(savedNote.current, local, remote);
+    if (verdict === "adopt" && hasNewerSaveDraft(provenance)) {
+      // Equality with the pre-PUT base does not mean the user made no edits.
+      // Inspect the live edit revision after the GET, not just at PUT settlement.
+      openNoteConflict(remote);
+      return;
+    }
+    switch (verdict) {
       case "noop":
         break;
       case "adopt":
@@ -223,8 +261,9 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
         break;
       case "conflict":
         openNoteConflict(remote);
-        break;
+        return; // retain provenance if settings later invalidate this conflict
     }
+    retireSaveProvenance(provenance);
   }
 
   if (!recovery.current) recovery.current = new ResourceRefresh(reconcileNote, {
@@ -253,6 +292,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     if (noteConflict.current === null) return;
     if (!conflictContext.current || !isTransportCurrent(conflictContext.current)) { requestNote(); return; }
     const remote = noteConflict.current;
+    unreconciledSave.current = null; // this current explicit choice resolves the old save uncertainty
     noteConflict.current = null;
     conflictContext.current = null;
     transferredDraft.current = false;
@@ -268,6 +308,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   }
 
   const noteEdited = (text: string, caret: number | null, kind: "type" | "chunk") => {
+    editRevision.current++;
     saveError.current = null;
     record(history.current, text, caret, kind, Date.now());
     setNoteStatus("Editing…", false);
@@ -277,6 +318,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   const undoNote = () => {
     const entry = undo(history.current);
     if (!entry) return;
+    editRevision.current++;
     paint(entry.text, entry.caret);
     saveError.current = null;
     setNoteStatus("Editing…", false);
@@ -337,6 +379,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     return () => {
       mounted.current = false;
       lifetime.current++;
+      unreconciledSave.current = null;
       baselineRevision.current++;
       composingNote.current = false;
       recovery.current?.cancel();
