@@ -3,16 +3,18 @@ import { createRef, StrictMode } from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import NotePane, { type NotePaneHandle } from "./NotePane";
 import { getCaretRange, readNoteText, setCaret, setCaretRange, setEditorText } from "../lib/caret";
-import { activateTransport } from "../api";
+import { activateTransport, type TransportContext } from "../api";
 import { deferred, settle } from "../test/deferred";
 
 // Mock only the transport seam (api.ts). getNote/putNote are controllable; errMsg stays real.
 const getNote = vi.fn<() => Promise<string>>();
 const putNote = vi.fn<(t: string) => Promise<void>>();
+const noteReads = vi.fn<(context: TransportContext) => void>();
+const noteWrites = vi.fn<(text: string, context: TransportContext) => void>();
 vi.mock("../api", async (importOriginal) => ({
   ...await importOriginal<typeof import("../api")>(),
-  getNote: () => getNote(),
-  putNote: (t: string) => putNote(t),
+  getNote: (context: TransportContext) => { noteReads(context); return getNote(); },
+  putNote: (t: string, context: TransportContext) => { noteWrites(t, context); return putNote(t); },
   errMsg: (e: unknown) => (e instanceof Error ? e.message : String(e)),
 }));
 
@@ -21,6 +23,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   getNote.mockReset();
   putNote.mockReset().mockResolvedValue(undefined);
+  noteReads.mockReset();
+  noteWrites.mockReset();
 });
 
 afterEach(() => {
@@ -461,6 +465,221 @@ describe("NotePane live recovery", () => {
   async function changed(ref: React.RefObject<NotePaneHandle | null>) {
     await act(async () => { ref.current!.onNoteChange(); await settle(); });
   }
+
+  it.each([false, true])("serializes saves across unchanged settings, Use theirs=%s", async (useTheirs) => {
+    localStorage.setItem("ntr.serverUrl", "http://server-a");
+    let stored = "base";
+    const writes: { text: string; done: ReturnType<typeof deferred<void>> }[] = [];
+    putNote.mockImplementation((text) => {
+      const done = deferred<void>();
+      writes.push({ text, done });
+      return done.promise.then(() => { stored = text; });
+    });
+    const { ref, editor, getByText } = await mount();
+    getNote.mockImplementation(async () => stored);
+    setCaret(editor, 4);
+    pasteInto(editor, "1");
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(writes.map(({ text }) => text)).toEqual(["base1"]);
+    const firstContext = noteWrites.mock.calls[0][1];
+
+    activateTransport();
+    await changed(ref);
+    pasteInto(editor, "2");
+    fireEvent.blur(editor);
+    window.dispatchEvent(new Event("pagehide"));
+    await changed(ref);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+    expect(writes).toHaveLength(1);
+    expect(readNoteText(editor)).toBe("base12");
+
+    const recoveryRead = deferred<string>();
+    getNote.mockReturnValueOnce(recoveryRead.promise);
+    await act(async () => { writes[0].done.resolve(); await settle(); });
+    expect(stored).toBe("base1");
+    expect(noteReads.mock.lastCall![0].generation).not.toBe(firstContext.generation);
+    expect(noteReads.mock.lastCall![0].url).toBe(firstContext.url);
+    fireEvent.blur(editor);
+    window.dispatchEvent(new Event("pagehide"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+    expect(writes).toHaveLength(1);
+    expect(readNoteText(editor)).toBe("base12");
+
+    await act(async () => { recoveryRead.resolve(stored); await settle(); });
+    expect(readNoteText(editor)).toBe("base12");
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(true);
+    fireEvent.click(getByText(useTheirs ? "Use theirs" : "Keep mine"));
+    await flushMicrotasks();
+    if (useTheirs) {
+      expect(writes).toHaveLength(1);
+      expect(readNoteText(editor)).toBe("base1");
+    } else {
+      expect(writes.map(({ text }) => text)).toEqual(["base1", "base12"]);
+      expect(noteWrites.mock.calls[1][1].generation).not.toBe(firstContext.generation);
+      await act(async () => { writes[1].done.resolve(); await settle(); });
+      await changed(ref);
+      expect(stored).toBe("base12");
+      expect(readNoteText(editor)).toBe("base12");
+    }
+  });
+
+  it.each([false, true])("recovers after repeated activations and a failed GET, rejected PUT=%s", async (rejectSave) => {
+    localStorage.setItem("ntr.serverUrl", "https://server-a");
+    const { ref, editor, container, getByText } = await mount();
+    const save = deferred<void>();
+    putNote.mockReturnValueOnce(save.promise);
+    setCaret(editor, 4);
+    pasteInto(editor, "1");
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    const reads = getNote.mock.calls.length;
+    for (let i = 0; i < 3; i++) {
+      localStorage.setItem("ntr.allowInvalidCert", i % 2 === 0 ? "1" : "0");
+      activateTransport();
+      await changed(ref);
+    }
+    pasteInto(editor, "2");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+    expect(getNote).toHaveBeenCalledTimes(reads);
+    expect(putNote).toHaveBeenCalledTimes(1);
+
+    getNote.mockRejectedValueOnce(new Error("recovery unavailable")).mockResolvedValue(rejectSave ? "base" : "base1");
+    await act(async () => {
+      if (rejectSave) save.reject(new Error("obsolete PUT error"));
+      else save.resolve();
+      await settle();
+    });
+    expect(container.querySelector("#note-status")!.textContent).toContain("recovery unavailable");
+    expect(container.querySelector("#note-status")!.textContent).not.toContain("obsolete PUT error");
+    fireEvent.blur(editor);
+    window.dispatchEvent(new Event("pagehide"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(999); });
+    expect(putNote).toHaveBeenCalledTimes(1);
+    expect(readNoteText(editor)).toBe("base12");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(noteReads.mock.lastCall![0].allowInvalidCert).toBe(true);
+    if (!rejectSave) fireEvent.click(getByText("Keep mine"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(putNote).toHaveBeenCalledTimes(2);
+    expect(putNote).toHaveBeenLastCalledWith("base12");
+    expect(noteWrites.mock.lastCall![1].allowInvalidCert).toBe(true);
+  });
+
+  it.each([false, true])("keeps A and B writes independently owned, return to A=%s", async (returnToA) => {
+    localStorage.setItem("ntr.serverUrl", "http://server-a");
+    const { ref, editor, container, getByText } = await mount();
+    const saveA = deferred<void>();
+    const saveB = deferred<void>();
+    putNote.mockReturnValueOnce(saveA.promise).mockReturnValueOnce(saveB.promise);
+    pasteInto(editor, " draft");
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    localStorage.setItem("ntr.serverUrl", "http://server-b");
+    activateTransport();
+    getNote.mockResolvedValue("B");
+    await changed(ref);
+    fireEvent.click(getByText("Keep mine"));
+    await flushMicrotasks();
+    expect(noteWrites.mock.calls.map(([, owner]) => owner.url)).toEqual(["http://server-a", "http://server-b"]);
+    expect(container.querySelector("#note-status")!.textContent).toBe("Saving…");
+
+    if (returnToA) {
+      localStorage.setItem("ntr.serverUrl", "http://server-a");
+      activateTransport();
+      getNote.mockResolvedValue("A");
+      await changed(ref);
+    }
+    const reads = getNote.mock.calls.length;
+    // Settle the inactive destination first; it cannot release the active slot.
+    await act(async () => { (returnToA ? saveB : saveA).resolve(); await settle(); });
+    expect(getNote).toHaveBeenCalledTimes(reads);
+    if (!returnToA) expect(container.querySelector("#note-status")!.textContent).toBe("Saving…");
+    pasteInto(editor, " later");
+    fireEvent.blur(editor);
+    window.dispatchEvent(new Event("pagehide"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+    expect(putNote).toHaveBeenCalledTimes(2);
+    expect(readNoteText(editor)).toBe("base draft later");
+
+    await act(async () => { (returnToA ? saveA : saveB).resolve(); await settle(); });
+    if (returnToA) {
+      expect(container.querySelector("#conflict-theirs")!.textContent).toBe("A");
+      fireEvent.click(getByText("Keep mine"));
+    }
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(putNote).toHaveBeenCalledTimes(3);
+    expect(putNote).toHaveBeenLastCalledWith("base draft later");
+    expect(noteWrites.mock.lastCall![1].url).toBe(returnToA ? "http://server-a" : "http://server-b");
+  });
+
+  it("scopes outstanding local writes to their directory generation", async () => {
+    const { ref, editor, container, getByText } = await mount();
+    const first = deferred<void>();
+    const second = deferred<void>();
+    putNote.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    pasteInto(editor, " draft");
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    const firstOwner = noteWrites.mock.calls[0][1];
+    activateTransport(true);
+    getNote.mockResolvedValue("directory B");
+    await changed(ref);
+    expect(container.querySelector("#conflict-theirs")!.textContent).toBe("directory B");
+    fireEvent.click(getByText("Keep mine"));
+    await flushMicrotasks();
+    const secondOwner = noteWrites.mock.calls[1][1];
+    expect(secondOwner.url).toBe("");
+    expect(secondOwner.localGeneration).not.toBe(firstOwner.localGeneration);
+    await act(async () => { first.resolve(); await settle(); });
+    expect(container.querySelector("#note-status")!.textContent).toBe("Saving…");
+    pasteInto(editor, " later");
+    fireEvent.blur(editor);
+    window.dispatchEvent(new Event("pagehide"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+    expect(putNote).toHaveBeenCalledTimes(2);
+    await act(async () => { second.resolve(); await settle(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(putNote).toHaveBeenCalledTimes(3);
+    expect(putNote).toHaveBeenLastCalledWith("base draft later");
+  });
+
+  it.each([false, true])("owns a pagehide-originated save until settlement, rejected=%s", async (rejectSave) => {
+    const { ref, editor, getByText } = await mount();
+    const save = deferred<void>();
+    putNote.mockReturnValueOnce(save.promise);
+    pasteInto(editor, "1");
+    window.dispatchEvent(new Event("pagehide"));
+    window.dispatchEvent(new Event("pagehide"));
+    pasteInto(editor, "2");
+    activateTransport();
+    await changed(ref);
+    fireEvent.blur(editor);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+    expect(putNote).toHaveBeenCalledTimes(1);
+    getNote.mockResolvedValue(rejectSave ? "base" : "base1");
+    await act(async () => {
+      if (rejectSave) save.reject(new Error("pagehide PUT failed"));
+      else save.resolve();
+      await settle();
+    });
+    expect(readNoteText(editor)).toBe("base12");
+    if (!rejectSave) fireEvent.click(getByText("Keep mine"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(putNote).toHaveBeenCalledTimes(2);
+    expect(putNote).toHaveBeenLastCalledWith("base12");
+  });
+
+  it("releases a late PUT after unmount without starting recovery or more writes", async () => {
+    const { editor, unmount } = await mount();
+    const save = deferred<void>();
+    putNote.mockReturnValueOnce(save.promise);
+    pasteInto(editor, " draft");
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    const reads = getNote.mock.calls.length;
+    unmount();
+    await act(async () => { save.resolve(); await settle(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(getNote).toHaveBeenCalledTimes(reads);
+    expect(putNote).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
 
   it.each(["longer remote", "x", ""])("adopts a clean focused note and clamps selection for %j", async (remote) => {
     const { ref, editor } = await mount("abcdef");

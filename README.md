@@ -1,5 +1,8 @@
 # my-ntr
 
+- [Quick start](#quick-start)
+- [Documentation](#documentation)
+
 A local-first task manager and Markdown notes app built with Tauri, React, and TypeScript. Runs on desktop and Android, using local files or an optional `my-ntr-server` connection.
 
 ## Quick start
@@ -16,6 +19,7 @@ Tasks and notes are stored in the Tauri app-data directory by default. Use the `
 - [Features](docs/features.md)
 - [Run and data files](docs/run.md)
 - [Server connection](docs/server-connection.md)
+- [Live sync and note-save safety](docs/live-sync.md)
 - [Development and testing](docs/development.md)
 - [Release builds](docs/release-builds.md)
 - [Forgejo publishing](docs/forgejo-publishing.md)
