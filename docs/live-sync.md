@@ -25,6 +25,10 @@ Each mounted note pane allows only one outstanding save per destination, includi
 
 If settings invalidate a save's view while its PUT is pending, the pane waits for settlement and fetches the current note before another automatic save. The obsolete completion cannot mark newer input as saved. A differing remote snapshot opens the existing conflict dialog, even when it might be the pane's own older write: Keep mine saves the retained draft; Use theirs explicitly replaces it. Failed recovery reads retain the draft and block automatic saves until reconciliation succeeds.
 
+Newer undo and input remain protected even when they restore the pre-save baseline, including an empty note. Returning to that text is an editing choice, not proof that the editor stayed untouched. The pane tracks committed editing separately from the saved text, retaining that evidence through PUT settlement, pending recovery reads, retries, and repeated settings activations. This also covers edits made while the recovery GET is pending and committed IME input.
+
+If recovery finds differing text that would replace this newer baseline-return draft, the existing conflict dialog preserves the draft until a choice. Keep mine writes the current draft, including empty text; Use theirs adopts the fetched version. A valid read that establishes safe convergence or an explicit choice retires the resolved evidence, so later clean updates still apply normally. A rejected PUT response does not prove that storage stayed unchanged. Without a settings activation, the ordinary save path continues to persist a newer undo automatically when safe.
+
 A request that never settles keeps its destination blocked; a timer does not free ownership while that write could still reach storage. Ownership is local to the mounted pane, not a lock across separate clients, remounted panes, or different URLs that happen to share storage.
 
 ## Concurrent edits
@@ -37,7 +41,7 @@ If a remote read keeps failing, the editor retains the draft and displays the er
 
 Run `npm test` and `npm run build` in `app/`, and `cargo test` plus `cargo clippy --all-targets` in `app/src-tauri/`. The native suite includes loopback SSE failures, cancellation, idle detection, and heartbeat tests. The regular suite does not require a running external server.
 
-The note component regressions model deferred PUT commits and recovery GETs across unchanged settings, repeated activations, certificate-policy changes, target switches, local-directory generations, and pagehide. They assert saved text and retained drafts as well as the one-outstanding-write invariant. Run the focused suite with `npm test -- src/components/NotePane.test.tsx src/lib/resourceRefresh.test.ts src/lib/noteSync.test.ts`.
+The note component regressions model deferred PUT commits and recovery GETs across unchanged settings, repeated activations, certificate-policy changes, target switches, local-directory generations, and pagehide. Baseline-return cases include undo, ordinary and IME input, empty drafts, canceled reads, response failures after a commit, explicit conflict choices, and convergence followed by clean updates. They assert saved text and retained drafts as well as the one-outstanding-write invariant. Run the focused suite with `npm test -- src/components/NotePane.test.tsx src/lib/resourceRefresh.test.ts src/lib/noteSync.test.ts`.
 
 For the opt-in test with two independent native bridges and a real server restart, build the server, then run from `app/src-tauri/`:
 

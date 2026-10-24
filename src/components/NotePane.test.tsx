@@ -466,6 +466,239 @@ describe("NotePane live recovery", () => {
     await act(async () => { ref.current!.onNoteChange(); await settle(); });
   }
 
+  // Model persistence separately from request completion; a failed response can
+  // still follow a committed write. Every request stays deferred until the test settles it.
+  async function startDeferredSave(base: string, pagehide = false) {
+    localStorage.setItem("ntr.serverUrl", "http://server-a");
+    const pane = await mount(base);
+    const storage = { text: base };
+    const writes: { text: string; done: ReturnType<typeof deferred<void>>; commit: () => void }[] = [];
+    getNote.mockImplementation(async () => storage.text);
+    putNote.mockImplementation((text) => {
+      const done = deferred<void>();
+      writes.push({ text, done, commit: () => { storage.text = text; done.resolve(); } });
+      return done.promise;
+    });
+    setCaret(pane.editor, base.length);
+    pasteInto(pane.editor, "1");
+    if (pagehide) window.dispatchEvent(new Event("pagehide"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(writes.map(({ text }) => text)).toEqual([base + "1"]);
+    return { ...pane, storage, writes };
+  }
+
+  function restoreBaseline(editor: HTMLDivElement, base: string, edit: "undo" | "input" | "ime") {
+    if (edit === "undo") keyDown(editor, "z", { ctrlKey: true });
+    else {
+      if (edit === "ime") fireEvent.compositionStart(editor);
+      setEditorText(editor, base, base.length);
+      fireEvent.input(editor);
+      if (edit === "ime") fireEvent.compositionEnd(editor);
+    }
+    expect(readNoteText(editor)).toBe(base);
+  }
+
+  const baselineReturns = ["base", ""].flatMap((base) =>
+    (["undo", "input"] as const).flatMap((edit) =>
+      (["before activation", "during PUT", "during GET"] as const).flatMap((when) =>
+        [false, true].map((useTheirs) => ({ base, edit, when, useTheirs })))));
+
+  it.each(baselineReturns)("protects baseline-return $edit ($base, $when, Use theirs=$useTheirs)", async ({ base, edit, when, useTheirs }) => {
+    const { ref, editor, writes, storage, getByText } = await startDeferredSave(base);
+    if (when === "before activation") restoreBaseline(editor, base, edit);
+    activateTransport();
+    await changed(ref);
+    if (when === "during PUT") restoreBaseline(editor, base, edit);
+    fireEvent.blur(editor);
+    window.dispatchEvent(new Event("pagehide"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(writes).toHaveLength(1);
+
+    const recovery = deferred<string>();
+    getNote.mockReturnValueOnce(recovery.promise);
+    await act(async () => { writes[0].commit(); await settle(); });
+    if (when === "during GET") restoreBaseline(editor, base, edit);
+    fireEvent.blur(editor);
+    window.dispatchEvent(new Event("pagehide"));
+    await changed(ref);
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(writes).toHaveLength(1);
+    expect(readNoteText(editor)).toBe(base);
+    await act(async () => { recovery.resolve(storage.text); await settle(); });
+    expect(readNoteText(editor)).toBe(base);
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(true);
+
+    fireEvent.click(getByText(useTheirs ? "Use theirs" : "Keep mine"));
+    await flushMicrotasks();
+    if (useTheirs) {
+      expect(writes).toHaveLength(1);
+      expect(readNoteText(editor)).toBe(base + "1");
+    } else {
+      expect(writes.map(({ text }) => text)).toEqual([base + "1", base]);
+      await act(async () => { writes[1].commit(); await settle(); });
+      expect(storage.text).toBe(base);
+      expect(readNoteText(editor)).toBe(base);
+    }
+    storage.text = "later clean update";
+    await changed(ref);
+    expect(readNoteText(editor)).toBe(storage.text);
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(false);
+  });
+
+  it.each(["base", ""].flatMap((base) => (["undo", "input"] as const).map((edit) => ({ base, edit }))))(
+    "autosaves baseline-return $edit ($base) without activation or a conflict", async ({ base, edit }) => {
+      const { ref, editor, writes, storage } = await startDeferredSave(base);
+      restoreBaseline(editor, base, edit);
+      await changed(ref);
+      await act(async () => { writes[0].commit(); await settle(); });
+      expect(readNoteText(editor)).toBe(base);
+      expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(false);
+      await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+      expect(writes.map(({ text }) => text)).toEqual([base + "1", base]);
+      await act(async () => { writes[1].commit(); await settle(); });
+      expect(storage.text).toBe(base);
+      await changed(ref);
+      expect(readNoteText(editor)).toBe(base);
+    },
+  );
+
+  it.each(["base", ""])("protects committed IME baseline-return input (%j)", async (base) => {
+    const { ref, editor, writes, storage, getByText } = await startDeferredSave(base);
+    activateTransport();
+    await changed(ref);
+    restoreBaseline(editor, base, "ime");
+    await act(async () => { writes[0].commit(); await settle(); });
+    expect(readNoteText(editor)).toBe(base);
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(true);
+    fireEvent.click(getByText("Keep mine"));
+    await act(async () => { writes[1].commit(); await settle(); });
+    expect(storage.text).toBe(base);
+  });
+
+  it("retains baseline-return intent through canceled reads and a reopened conflict", async () => {
+    const { ref, editor, writes, storage, getByText } = await startDeferredSave("base");
+    activateTransport();
+    await changed(ref);
+    const obsolete = deferred<string>();
+    const latest = deferred<string>();
+    getNote.mockReturnValueOnce(obsolete.promise).mockReturnValueOnce(latest.promise);
+    await act(async () => { writes[0].commit(); await settle(); });
+    restoreBaseline(editor, "base", "undo");
+    activateTransport();
+    await changed(ref);
+    // An obsolete equal-text read must not retire the latest recovery evidence.
+    await act(async () => { obsolete.resolve("base"); await settle(); });
+    expect(readNoteText(editor)).toBe("base");
+    expect(writes).toHaveLength(1);
+    await act(async () => { latest.resolve(storage.text); await settle(); });
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(true);
+    await changed(ref);
+    activateTransport();
+    await changed(ref);
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(true);
+    expect(readNoteText(editor)).toBe("base");
+    fireEvent.blur(editor);
+    window.dispatchEvent(new Event("pagehide"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+    expect(writes).toHaveLength(1);
+    fireEvent.click(getByText("Keep mine"));
+    await act(async () => { writes[1].commit(); await settle(); });
+    expect(storage.text).toBe("base");
+  });
+
+  it.each(["base", ""].flatMap((base) => [false, true].map((committed) => ({ base, committed }))))(
+    "reconciles rejected obsolete PUTs after GET retry ($base, committed=$committed)", async ({ base, committed }) => {
+      const { ref, editor, writes, storage, container, getByText } = await startDeferredSave(base);
+      activateTransport();
+      await changed(ref);
+      restoreBaseline(editor, base, "input");
+      getNote.mockRejectedValueOnce(new Error("GET unavailable"));
+      await act(async () => {
+        if (committed) storage.text = writes[0].text;
+        writes[0].done.reject(new Error("PUT response lost"));
+        await settle();
+      });
+      expect(container.querySelector("#note-status")!.textContent).toContain("GET unavailable");
+      fireEvent.blur(editor);
+      window.dispatchEvent(new Event("pagehide"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(999); });
+      expect(writes).toHaveLength(1);
+      expect(readNoteText(editor)).toBe(base);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(readNoteText(editor)).toBe(base);
+      expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(committed);
+      if (committed) {
+        fireEvent.click(getByText("Keep mine"));
+        expect(writes[1].text).toBe(base);
+        await act(async () => { writes[1].commit(); await settle(); });
+      }
+      expect(storage.text).toBe(base);
+      storage.text = "clean remote";
+      await changed(ref);
+      expect(readNoteText(editor)).toBe(storage.text);
+      expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(false);
+    },
+  );
+
+  it("retires recovery provenance when a newer draft converges with the server", async () => {
+    const { ref, editor, writes, storage } = await startDeferredSave("base");
+    activateTransport();
+    await changed(ref);
+    const recovery = deferred<string>();
+    getNote.mockReturnValueOnce(recovery.promise);
+    await act(async () => { writes[0].commit(); await settle(); });
+    setEditorText(editor, "converged", 9);
+    fireEvent.input(editor);
+    storage.text = "converged";
+    await act(async () => { recovery.resolve(storage.text); await settle(); });
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(false);
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(writes).toHaveLength(1);
+    storage.text = "later clean update";
+    await changed(ref);
+    expect(readNoteText(editor)).toBe(storage.text);
+  });
+
+  it.each([false, true])("scopes recovery intent to the current editor across targets, new A edit=%s", async (editOnReturn) => {
+    const { ref, editor, writes, storage, getByText } = await startDeferredSave("base");
+    restoreBaseline(editor, "base", "undo");
+    localStorage.setItem("ntr.serverUrl", "http://server-b");
+    activateTransport();
+    getNote.mockResolvedValue("B");
+    await changed(ref);
+    expect(readNoteText(editor)).toBe("base");
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(true);
+    fireEvent.click(getByText("Use theirs"));
+    expect(readNoteText(editor)).toBe("B");
+
+    localStorage.setItem("ntr.serverUrl", "http://server-a");
+    activateTransport();
+    getNote.mockImplementation(async () => storage.text);
+    await changed(ref);
+    if (editOnReturn) {
+      setEditorText(editor, "B2", 2);
+      fireEvent.input(editor);
+      restoreBaseline(editor, "B", "input");
+    }
+    await act(async () => { writes[0].commit(); await settle(); });
+    expect(readNoteText(editor)).toBe(editOnReturn ? "B" : "base1");
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(editOnReturn);
+    expect(writes).toHaveLength(1);
+  });
+
+  it("protects a pagehide baseline-return draft when settlement first observes activation", async () => {
+    const { editor, writes, storage, getByText } = await startDeferredSave("", true);
+    restoreBaseline(editor, "", "undo");
+    activateTransport(); // no explicit refresh: the obsolete PUT must initiate recovery itself
+    await act(async () => { writes[0].commit(); await settle(); });
+    expect(readNoteText(editor)).toBe("");
+    expect(document.querySelector<HTMLDialogElement>("#note-conflict")!.open).toBe(true);
+    fireEvent.click(getByText("Keep mine"));
+    expect(writes[1].text).toBe("");
+    await act(async () => { writes[1].commit(); await settle(); });
+    expect(storage.text).toBe("");
+  });
+
   it.each([false, true])("serializes saves across unchanged settings, Use theirs=%s", async (useTheirs) => {
     localStorage.setItem("ntr.serverUrl", "http://server-a");
     let stored = "base";
