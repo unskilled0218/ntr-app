@@ -25,6 +25,17 @@ export interface NotePaneHandle {
   onNoteChange: () => void;
 }
 
+// View generations and certificate policy can change while a write still targets
+// the same storage. Only a different URL or local directory gets another slot.
+function noteDestination(owner: TransportContext): string {
+  return owner.url ? `server:${owner.url}` : `local:${owner.localGeneration}`;
+}
+
+interface NoteSaveAttempt {
+  owner: TransportContext;
+  life: number;
+}
+
 const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const links = useLinkGestures();
@@ -32,7 +43,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   // The note text as last successfully persisted. The editor is "dirty" when it differs.
   const savedNote = useRef("");
   const noteSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const savingNote = useRef(false); // single-flight guard for an in-flight PUT
+  const noteSaves = useRef(new Map<string, NoteSaveAttempt>());
   const composingNote = useRef(false); // true between compositionstart/end (IME safety)
   const history = useRef(createHistory(""));
   const mounted = useRef(false);
@@ -54,6 +65,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
 
   const editor = () => editorRef.current!;
   const noteDirty = () => readNoteText(editor()) !== savedNote.current;
+  const noteSaving = () => noteSaves.current.has(noteDestination(context.current));
   const setNoteStatus = (msg: string, isError: boolean) => setStatus({ msg, isError });
 
   // Reveal the raw Markdown on whichever line the caret is on (collapse every other line's links). null
@@ -90,7 +102,6 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     transferredDraft.current = transferredDraft.current || (targetChanged && noteDirty());
     context.current = next;
     baselineRevision.current++;
-    savingNote.current = false;
     noteConflict.current = null;
     conflictContext.current = null;
     setConflictOpen(false);
@@ -119,13 +130,15 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     if (composingNote.current) return; // never persist an IME's transient preedit
     if (noteConflict.current !== null) return;
     if (!authorized && (recovery.current?.busy || transferredDraft.current)) return;
-    if (savingNote.current) return; // single-flight
+    if (noteSaving()) return; // single-flight for this destination, not just this view
     if (!noteDirty()) return;
     const text = readNoteText(editor());
     const owner = context.current;
     const life = lifetime.current;
+    const destination = noteDestination(owner);
+    const attempt = { owner, life };
     baselineRevision.current++;
-    savingNote.current = true;
+    noteSaves.current.set(destination, attempt);
     setNoteStatus("Saving…", false);
     try {
       await putNote(text, owner);
@@ -138,11 +151,19 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
       saveError.current = `Could not save note: ${errMsg(err)}`;
       setNoteStatus(saveError.current, true);
     } finally {
-      if (mounted.current && life === lifetime.current && isTransportCurrent(owner)) {
-        savingNote.current = false;
-        baselineRevision.current++;
-        await recovery.current?.resume();
-        if (!saveError.current && noteDirty()) scheduleNoteSave();
+      // Invalidating a view does not cancel its PUT. Release only this attempt,
+      // even when another destination is now active or the pane has unmounted.
+      if (noteSaves.current.get(destination) === attempt) noteSaves.current.delete(destination);
+      if (mounted.current && life === lifetime.current && noteDestination(captureTransport()) === destination) {
+        if (!isTransportCurrent(owner)) {
+          // The old result cannot rebase the new view. Fetch current storage
+          // before permitting another save, preserving later input as a draft.
+          requestNote();
+        } else {
+          baselineRevision.current++;
+          await recovery.current?.resume();
+          if (!saveError.current && noteDirty()) scheduleNoteSave();
+        }
       }
     }
   }
@@ -150,10 +171,11 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   // Best-effort save when the page is going away. The normal path will have saved earlier; this
   // only covers the last unsaved edit (no await possible on unload).
   const flushNoteBeacon = () => {
-    if (!isTransportCurrent(context.current) || composingNote.current || savingNote.current
+    if (!isTransportCurrent(context.current) || composingNote.current || noteSaving()
       || recovery.current?.busy || noteConflict.current !== null || transferredDraft.current) return;
     if (!noteDirty()) return;
-    putNote(readNoteText(editor()), context.current).catch(() => {});
+    // Keep unload best-effort, but acquire the same slot as ordinary saves.
+    void flushNote().catch(() => {});
   };
 
   // Make the editor show `text` as the saved, clean note: new base, render in place, clear status.
@@ -181,7 +203,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
       throw error;
     }
     if (!mounted.current || life !== lifetime.current || !isTransportCurrent(owner)) return;
-    if (revision !== baselineRevision.current || savingNote.current || composingNote.current) {
+    if (revision !== baselineRevision.current || noteSaving() || composingNote.current) {
       recovery.current!.pending = true;
       return;
     }
@@ -206,7 +228,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   }
 
   if (!recovery.current) recovery.current = new ResourceRefresh(reconcileNote, {
-    canRun: () => mounted.current && !savingNote.current && !composingNote.current && isTransportCurrent(context.current),
+    canRun: () => mounted.current && !noteSaving() && !composingNote.current && isTransportCurrent(context.current),
     onError: (error) => setNoteStatus([saveError.current, `Could not load note: ${errMsg(error)}`].filter(Boolean).join("; "), true),
     onIdle: () => { if (!saveError.current && noteDirty()) scheduleNoteSave(); },
   });
@@ -316,7 +338,6 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
       mounted.current = false;
       lifetime.current++;
       baselineRevision.current++;
-      savingNote.current = false;
       composingNote.current = false;
       recovery.current?.cancel();
       if (noteSaveTimer.current) clearTimeout(noteSaveTimer.current);
