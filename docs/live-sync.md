@@ -1,8 +1,8 @@
 # Live sync
 
+- [Update choices](#update-choices)
 - [Connection recovery](#connection-recovery)
 - [Local fallback](#local-fallback)
-- [Update choices](#update-choices)
 - [Note save ownership](#note-save-ownership)
 - [Concurrent edits](#concurrent-edits)
 - [Verification](#verification)
