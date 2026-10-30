@@ -20,13 +20,13 @@ it.each(["note", "tasks"] as const)("shows only diff content and controls for %s
   expect(screen.getByRole("button", { name: "Update" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Not now" })).toBeTruthy();
   expect(screen.queryByRole("status")).toBeNull();
+  for (const name of ["Diff", "Accepted", "Incoming"]) expect(screen.queryByRole("button", { name })).toBeNull();
 });
-it.each(["note", "tasks"] as const)("uses an accessible empty marker for empty %s inspection", (resource) => {
-  const incoming: Offer = resource === "note" ? { ...offer, baseline: "old", snapshot: "" }
+it.each(["note", "tasks"] as const)("uses an accessible empty marker for unchanged empty %s", (resource) => {
+  const incoming: Offer = resource === "note" ? { ...offer, baseline: "", snapshot: "" }
     : { resource, baseline: [], snapshot: [], identity: "empty" };
   render(<RemoteUpdateDialog offer={incoming} busy={false} error="" onUpdate={vi.fn()} onDismiss={vi.fn()} />);
-  fireEvent.click(screen.getByRole("button", { name: "Incoming" }));
-  expect(screen.getByRole("img", { name: "Empty content" }).textContent).toBe("∅");
+  expect(screen.getByRole("img", { name: "No content changes" }).textContent).toBe("∅");
   expect(screen.getByRole("button", { name: "Update" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Next" })).toBeNull();
 });
@@ -73,10 +73,9 @@ it.each(["x".repeat(100_000), "a\n".repeat(30_000)])("keeps every inspected page
   }
   expect(screen.getByRole("status", { name: "Page 5" }).textContent).toBe("5");
   fireEvent.click(screen.getByRole("button", { name: "Previous" })); expect(screen.getByRole("status", { name: "Page 4" })).toBeTruthy();
-  for (const mode of ["Accepted", "Incoming", "Diff"]) {
-    fireEvent.click(screen.getByRole("button", { name: mode }));
-    if (mode !== "Incoming") expect(screen.getByRole("status", { name: "Page 1" })).toBeTruthy();
-    else expect(screen.queryByRole("button", { name: "Next" })).toBeNull();
+  for (let page = 3; page >= 1; page--) {
+    fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+    expect(screen.getByRole("status", { name: `Page ${page}` })).toBeTruthy();
     expect(screen.getByLabelText("Change details").textContent!.length).toBeLessThanOrEqual(PREVIEW_CHARACTERS + PREVIEW_ROWS * 2);
     expect((screen.getByRole("button", { name: "Not now" }) as HTMLButtonElement).disabled).toBe(false);
   }
