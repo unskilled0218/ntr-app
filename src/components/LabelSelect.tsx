@@ -4,6 +4,7 @@
 
 import { ADD_VALUE, EMPTY_LABEL, KINDS, type Kind } from "../config";
 import SelectField, { type FieldOption } from "./SelectField";
+import { recoveryEntries, relatedRecovery, type ProjectActionRequest, type ProjectManagement } from "../lib/projectActions";
 
 interface Props {
   kind: Kind;
@@ -12,16 +13,20 @@ interface Props {
   staged: string[];
   onChange(value: string): void;
   onAdd(): void;
+  management?: ProjectManagement;
+  onProjectAction?: (request: ProjectActionRequest) => void;
+  onRecover?: (id: number) => void;
 }
 
-export default function LabelSelect({ kind, value, serverLabels, staged, onChange, onAdd }: Props) {
+export default function LabelSelect({ kind, value, serverLabels, staged, onChange, onAdd, management, onProjectAction, onRecover }: Props) {
   const names = [...new Set([...serverLabels, ...staged])].sort();
   const label = KINDS[kind].singular;
 
   const options: FieldOption[] = [
     { value: ADD_VALUE, label: `+ Add ${label}...` },
     { value: "", label: EMPTY_LABEL },
-    ...names.map((name) => ({ value: name, label: name })),
+    ...names.map((name) => ({ value: name, label: name, renamable: !!onProjectAction, removable: !!onProjectAction,
+      description: management ? relatedRecovery(name, management)?.summary : undefined })),
   ];
 
   // Selecting "+ Add..." opens the label modal instead of choosing a value (caller-owned sentinel).
@@ -36,6 +41,10 @@ export default function LabelSelect({ kind, value, serverLabels, staged, onChang
       value={value}
       options={options}
       onChange={handleChange}
+      onRename={onProjectAction && management ? (name) => onProjectAction({ action: "rename", name, scope: serverLabels.includes(name) ? "known" : "staged", destination: management.destination, origin: "add", recoveryId: relatedRecovery(name, management)?.id }) : undefined}
+      onRemove={onProjectAction && management ? (name) => onProjectAction({ action: "remove", name, scope: serverLabels.includes(name) ? "known" : "staged", destination: management.destination, origin: "add", recoveryId: relatedRecovery(name, management)?.id }) : undefined}
+      recoveries={recoveryEntries(names, management)}
+      onRecover={onRecover}
     />
   );
 }

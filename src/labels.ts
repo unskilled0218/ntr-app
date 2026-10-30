@@ -179,6 +179,18 @@ export function renameProjectNames(names: string[], from: string, to: string): s
   return [...new Set(names.map((name) => name === from ? to : name))];
 }
 
+export function removeProjectText(raw: string, name: string): string {
+  if (!raw.split(/\s+/).includes(`+${name}`)) return raw;
+  return raw.replace(/\S+\s*/g, (part) => part.trimEnd() === `+${name}` ? "" : part).trimEnd();
+}
+
+export function equalLabels(a: { project: string[]; context: string[] }, b: { project: string[]; context: string[] }): boolean {
+  return (["project", "context"] as const).every((kind) => {
+    const left = new Set(a[kind]), right = new Set(b[kind]);
+    return left.size === right.size && [...left].every((name) => right.has(name));
+  });
+}
+
 export function planProjectRename(tasks: Tagged[], from: string, to: string) {
   return tasks.filter((task) => task.projects.includes(from)).map((task) => ({
     id: task.id, expected: task.raw, text: renameProjectText(task.raw, from, to),

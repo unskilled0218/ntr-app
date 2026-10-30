@@ -151,7 +151,7 @@ describe("project rename through real panes and transport", () => {
     const model = fixture(); render(<App />); await act(settle); await openRename(); model.failTask(2);
     await submitRename(); expect(model.writes).toEqual([1, 2]);
     await clickRename("Close");
-    fireEvent.click(screen.getByRole("button", { name: "Review rename progress" })); await act(settle);
+    await openRename();
     expect((within(renameDialog()).getByRole("textbox") as HTMLInputElement).value).toBe("new");
     expect(model.writes).toEqual([1, 2]);
     await clickRename("Retry rename");
@@ -186,7 +186,7 @@ describe("project rename through real panes and transport", () => {
     await act(async () => { fireEvent.submit(document.querySelector("#add-form")!); await settle(); });
     expect(model.data.tasks).toHaveLength(2);
     expect((screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement).value).toBe("retained +old");
-    fireEvent.click(screen.getByRole("button", { name: "Review rename progress" })); await act(settle);
+    await openRename();
     await clickRename("Stop retry; keep partial changes");
     expect(model.data.tasks[0].projects).toEqual(["new"]);
     expect(model.data.tasks[1].projects).toEqual(["old"]);
@@ -208,7 +208,7 @@ describe("project rename through real panes and transport", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Allow self-signed certificates" }));
     fireEvent(document.querySelector("#settings-modal")!, new Event("cancel", { cancelable: true })); await act(settle);
     expect(model.writes).toEqual([1, 2]);
-    fireEvent.click(screen.getByRole("button", { name: "Review rename progress" })); await act(settle);
+    await openRename();
     await clickRename("Retry rename");
     expect(model.writes).toEqual([1, 2, 2]); expect(model.data.labels.project).toEqual(["new", "other"]);
   });
@@ -239,7 +239,7 @@ describe("project rename through real panes and transport", () => {
     expect(remoteDialog.open).toBe(true);
     await act(async () => { fireEvent.click(within(remoteDialog).getByRole("button", { name: "Update" })); await settle(); });
     expect(model.writes).toEqual([1]);
-    fireEvent.click(screen.getByRole("button", { name: "Review rename progress" })); await act(settle);
+    await openRename();
     expect(model.writes).toEqual([1]); await clickRename("Retry rename");
     expect(model.writes).toEqual([1, 2]); expect(model.data.tasks[1].raw).toBe("foreign second +new");
   });
@@ -276,6 +276,7 @@ describe("project rename through real panes and transport", () => {
     fireEvent.click(within(document.querySelector("dialog.select-modal[open]") as HTMLElement).getByRole("button", { name: "Remove old" }));
     await act(async () => { fireEvent.click(within(document.querySelector("#remove-label-dialog") as HTMLElement).getByRole("button", { name: "Remove" })); await settle(); });
     expect(model.writes).toEqual([1]); expect(model.labelsWritten).toEqual([]);
+    await act(async () => { fireEvent.click(within(document.querySelector("#remove-label-dialog") as HTMLElement).getByRole("button", { name: "Review update" })); await settle(); });
     const remote = document.querySelector("#remote-update") as HTMLDialogElement;
     await act(async () => { fireEvent.click(within(remote).getByRole("button", { name: "Update" })); await settle(); });
     expect(model.writes).toEqual([1]); expect(document.querySelector("#tasks")!.textContent).toContain("reassigned");

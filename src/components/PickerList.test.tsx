@@ -14,6 +14,21 @@ beforeEach(() => { vi.clearAllMocks(); });
 afterEach(() => { cleanup(); });
 
 describe("PickerList", () => {
+  it("uses keyboard-native icon buttons without submitting a form or choosing a project", () => {
+    const onChoose = vi.fn(), onRename = vi.fn(), onRemove = vi.fn(), onSubmit = vi.fn();
+    render(<form onSubmit={onSubmit}><PickerList options={[{ value: "work", label: "work", renamable: true, removable: true, description: "Unfinished rename" }]}
+      value="" onChoose={onChoose} onRename={onRename} onRemove={onRemove} /></form>);
+    for (const name of ["Rename work", "Remove work"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button.getAttribute("type")).toBe("button"); expect(button.textContent).toBe("");
+      expect(button.querySelector('svg[aria-hidden="true"]')).toBeTruthy();
+      expect(button.getAttribute("aria-describedby")).toBeTruthy();
+      button.focus(); expect(document.activeElement).toBe(button);
+      fireEvent.click(button, { detail: 0 }); // The click shape emitted by native keyboard activation.
+    }
+    expect(onRename).toHaveBeenCalledWith("work"); expect(onRemove).toHaveBeenCalledWith("work");
+    expect(onChoose).not.toHaveBeenCalled(); expect(onSubmit).not.toHaveBeenCalled();
+  });
   it("renders one choice button per option", () => {
     render(<PickerList options={OPTIONS} value="" onChoose={vi.fn()} />);
     expect(screen.getByRole("button", { name: "All projects" })).toBeTruthy();

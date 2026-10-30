@@ -5,8 +5,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { captureTransport, destination, errMsg, type Task } from "../api";
-import { bareDescription, composeEditedTask, renameProjectNames, renameProjectText } from "../labels";
+import { bareDescription, composeEditedTask, removeProjectText, renameProjectNames, renameProjectText } from "../labels";
 import type { ProjectRenameEvent } from "../lib/projectRename";
+import type { ProjectRemovalEvent } from "../lib/projectRemoval";
 import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
 import { useBackdropClose } from "./useBackdropClose";
@@ -21,9 +22,10 @@ interface Props {
   onClose(): void;
   rename?: ProjectRenameEvent;
   onProjectsChange?: (names: string[]) => void;
+  removal?: ProjectRemovalEvent;
 }
 
-export default function EditTaskModal({ task, suspended, serverLabels, onSave, onClose, rename, onProjectsChange }: Props) {
+export default function EditTaskModal({ task, suspended, serverLabels, onSave, onClose, rename, onProjectsChange, removal }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [description, setDescription] = useState("");
   const [due, setDue] = useState("");
@@ -58,6 +60,15 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
     setProject((name) => name === rename.from ? rename.to : name);
     setStaged((names) => renameProjectNames(names, rename.from, rename.to));
   }, [rename]);
+  useEffect(() => {
+    if (!removal || removal.destination !== destination(captureTransport())) return;
+    const previous = baseline.current;
+    const updated = removal.tasks.find((found) => found.id === previous?.id);
+    if (previous && updated && removeProjectText(previous.raw, removal.from) === updated.raw) baseline.current = updated;
+    setDescription((text) => removeProjectText(text, removal.from));
+    setProject((name) => name === removal.from ? "" : name);
+    setStaged((names) => names.filter((name) => name !== removal.from));
+  }, [removal]);
   useEffect(() => {
     const el = dialogRef.current!;
     if (task && !suspended && !el.open) el.showModal();

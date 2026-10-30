@@ -12,8 +12,12 @@ interface Props {
   onClose(): void;
   onReview(): void;
   onAbandon(): void;
+  id?: string;
+  scope?: "draft";
+  readOnly?: boolean;
+  error?: string;
 }
-export default function RenameProjectDialog({ source, operation, count, onConfirm, onClose, onReview, onAbandon }: Props) {
+export default function RenameProjectDialog({ source, operation, count, onConfirm, onClose, onReview, onAbandon, id = "rename-project-dialog", scope, readOnly, error: externalError }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
@@ -37,7 +41,7 @@ export default function RenameProjectDialog({ source, operation, count, onConfir
     ref.current?.close(); // Release native modality before the approval dialog can open.
     onReview();
   }
-  return <dialog id="rename-project-dialog" ref={ref} aria-label="Rename project" onCancel={(event) => {
+  return <dialog id={id} ref={ref} aria-label="Rename project" onCancel={(event) => {
     if (!ownDialogEvent(event)) return;
     event.preventDefault(); close();
   }} onClose={(event) => {
@@ -45,24 +49,25 @@ export default function RenameProjectDialog({ source, operation, count, onConfir
   }}>
     <form onSubmit={(event) => {
       event.preventDefault();
-      if (busy) return;
+      if (busy || readOnly) return;
       const parsed = parseLabelInput(name);
       if ("error" in parsed) { setError(parsed.error); return; }
       setError(""); onConfirm(parsed.name);
     }}>
       <h2>Rename project</h2>
-      <p>Rename +{source} in {count} tasks, remembered projects, and matching project references in local drafts. Other draft text stays unchanged.</p>
+      <p>{scope === "draft" ? `Rename staged project +${source} in this draft only. No stored tasks or remembered projects will change.` : `Rename +${source} in ${count} tasks, remembered projects, and matching project references in local drafts. Other draft text stays unchanged.`}</p>
+      {readOnly && <p role="status">This result belongs to {operation?.targetDestination}. Return to that destination to retry, or explicitly stop retry without rolling back changes.</p>}
       <label>New project name<input ref={input} aria-label="New project name" value={name} disabled={busy || operation?.started} onChange={(event) => setName(event.currentTarget.value)} /></label>
       <p role="status">{busy ? "Working… Please wait; issued writes cannot be canceled." : operation?.phase === "completed" ? "Rename completed." : operation?.done.size ? `${operation.done.size} tasks renamed. Completed writes are not rolled back.` : ""}</p>
-      {(error || operation?.error) && <p role="alert">{error || operation?.error}</p>}
+      {(error || externalError || operation?.error) && <p role="alert">{error || externalError || operation?.error}</p>}
       {operation?.started && !busy && operation.phase !== "completed" && <p>Stopping retry keeps all completed changes and releases draft restrictions. It does not merge projects or undo the partial rename.</p>}
       <div className="modal-actions">
         <button type="button" disabled={busy} onClick={close}>{operation?.started ? "Close" : "Cancel"}</button>
-        {operation?.phase === "paused-for-review" && <button type="button" onClick={review}>Review update</button>}
+        {operation?.phase === "paused-for-review" && !readOnly && <button type="button" onClick={review}>Review update</button>}
         {operation?.started && !busy && operation.phase !== "completed" && <button type="button" onClick={() => {
           ref.current?.close(); onAbandon();
         }}>Stop retry; keep partial changes</button>}
-        {operation?.phase !== "completed" && <button type="submit" className="primary" disabled={busy}>{busy ? "Working…" : operation?.phase === "labels-pending" ? "Finish labels" : operation?.started ? "Retry rename" : "Rename"}</button>}
+        {operation?.phase !== "completed" && <button type="submit" className="primary" disabled={busy || readOnly}>{busy ? "Working…" : operation?.phase === "labels-pending" ? "Finish labels" : operation?.started ? "Retry rename" : "Rename"}</button>}
       </div>
     </form>
   </dialog>;

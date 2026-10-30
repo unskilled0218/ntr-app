@@ -18,7 +18,7 @@ Priority controls, sorting, and filtering are removed in `0.15.18`. Existing lea
 
 Remote task and note changes now ask before updating. Declined changes remain reviewable; pending remote notes pause autosave. See [update choices and save safety](docs/live-sync.md).
 
-Rename projects from the Project filter picker, including in compact mode. Task references and local drafts follow successful renames; partial writes remain reviewable. See [project renaming](docs/project-renaming.md).
+Manage projects using pencil/trash icons in Project filter or the create-task Project selector, including compact mode. Draft-only choices stay local; unfinished operations reopen from selectors. See [project actions and recovery](docs/project-renaming.md).
 
 ## Documentation
 

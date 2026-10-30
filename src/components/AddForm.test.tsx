@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import AddForm from "./AddForm";
 import { cancelDialog, clickWithRemovedTargetLabelActivation, deferDialogCloseEvents, observeProjectHandoffs } from "../test/dialog";
+import { captureTransport, destination } from "../api";
+import type { ProjectManagement } from "../lib/projectActions";
 
 // The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
 
@@ -22,6 +24,19 @@ function addLabelViaModal(kind: "project", name: string) {
 }
 
 describe("AddForm", () => {
+  it("refuses a staged-only confirmation if its source becomes globally known", () => {
+    const onAdd = vi.fn(), onAction = vi.fn(() => false);
+    const management: ProjectManagement = { destination: destination(captureTransport()), pending: [], onAction, onRecover: vi.fn() };
+    const view = render(<AddForm serverLabels={EMPTY_LABELS} onAdd={onAdd} compact={false} management={management} />);
+    addLabelViaModal("project", "draftOnly");
+    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+    fireEvent.click(within(document.querySelector("dialog.select-modal[open]") as HTMLElement).getByRole("button", { name: "Remove draftOnly" }));
+    view.rerender(<AddForm serverLabels={{ project: ["draftOnly"], context: [] }} onAdd={onAdd} compact={false} management={management} />);
+    const prompt = within(document.querySelector("#draft-remove-project-dialog") as HTMLElement);
+    fireEvent.click(prompt.getByRole("button", { name: "Remove" }));
+    expect(prompt.getByRole("alert").textContent).toContain("scope or draft changed");
+    expect(onAdd).not.toHaveBeenCalled(); expect(screen.getByRole("button", { name: "Project" }).textContent).toBe("draftOnly");
+  });
   it.each([false, true])("accepts ordinary text and repeated pri: tokens (compact=%s)", async (compact) => {
     const onAdd = vi.fn().mockResolvedValue(true);
     render(<AddForm serverLabels={EMPTY_LABELS} onAdd={onAdd} compact={compact} />);
