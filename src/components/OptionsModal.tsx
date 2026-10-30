@@ -5,7 +5,7 @@
 // behind a modal. Uses its own `options-modal` dialog class so a SelectField opening its own
 // `select-modal` inside it never collides with that selector.
 
-import { type ReactNode } from "react";
+import { forwardRef, useImperativeHandle, type ReactNode } from "react";
 import { usePickerDialog } from "./usePickerDialog";
 
 interface Props {
@@ -13,8 +13,10 @@ interface Props {
   children: ReactNode; // the field controls to show inside the modal
 }
 
-export default function OptionsModal({ ariaLabel, children }: Props) {
+export interface OptionsModalHandle { close(): void }
+const OptionsModal = forwardRef<OptionsModalHandle, Props>(({ ariaLabel, children }, ref) => {
   const { dialogRef, open, setOpen, closePicker, onClose, onCancel } = usePickerDialog();
+  useImperativeHandle(ref, () => ({ close: closePicker }));
 
   return (
     <>
@@ -46,4 +48,6 @@ export default function OptionsModal({ ariaLabel, children }: Props) {
       </dialog>
     </>
   );
-}
+});
+OptionsModal.displayName = "OptionsModal";
+export default OptionsModal;

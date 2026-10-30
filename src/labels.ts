@@ -170,6 +170,21 @@ export function parseLabelInput(raw: string): { name: string } | { error: string
   return { name };
 }
 
+// Preserve separators and all non-project tokens, including hidden lifecycle metadata.
+export function renameProjectText(raw: string, from: string, to: string): string {
+  return raw.replace(/\S+/g, (token) => token === `+${from}` ? `+${to}` : token);
+}
+
+export function renameProjectNames(names: string[], from: string, to: string): string[] {
+  return [...new Set(names.map((name) => name === from ? to : name))];
+}
+
+export function planProjectRename(tasks: Tagged[], from: string, to: string) {
+  return tasks.filter((task) => task.projects.includes(from)).map((task) => ({
+    id: task.id, expected: task.raw, text: renameProjectText(task.raw, from, to),
+  }));
+}
+
 // Remove the single whitespace-delimited token `prefix+name` from a raw todo.txt line, preserving
 // every other token (the priority, an x/completion prefix, dates, a due: tag, and other labels)
 // and collapsing the gap. Whole-token equality is deliberate — NOT bareDescription's substring

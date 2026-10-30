@@ -213,8 +213,8 @@ export async function createTask(text: string): Promise<Task> {
   return invoke("create_task", { text });
 }
 
-export async function updateTask(id: number, text: string): Promise<Task> {
-  const context = captureTransport();
+export async function updateTask(id: number, text: string, context = captureTransport()): Promise<Task> {
+  requireCurrent(context);
   if (context.url) {
     const task = await httpJson<Task>(`/api/tasks/${id}`, {
       method: "PUT",

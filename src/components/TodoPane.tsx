@@ -28,13 +28,16 @@ import {
   getDirection,
   setDirection as persistDir,
 } from "../settings";
-import { planLabelRemoval, unionLabels } from "../labels";
+import { parseLabelInput, planLabelRemoval, renameProjectText, unionLabels } from "../labels";
 import AddForm from "./AddForm";
 import FilterBar from "./FilterBar";
 import RemoveLabelDialog from "./RemoveLabelDialog";
 import TaskItem from "./TaskItem";
 import { ResourceRefresh } from "../lib/resourceRefresh";
 import type { ApplicationToken, RemoteUpdates } from "../lib/remoteUpdates";
+import RenameProjectDialog from "./RenameProjectDialog";
+import { ProjectRename, ProjectReviewRequired, projectRenameIO, type ProjectRenameEvent } from "../lib/projectRename";
+import type { TransportContext } from "../api";
 
 export interface TodoPaneHandle {
   onTasksChanged: () => void;
@@ -62,9 +65,21 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
   const [error, setError] = useState("");
   const [editTask, setEditTask] = useState<Task | null>(null);
   const editOwner = useRef(captureTransport());
+  const editExpected = useRef<Task | null>(null);
   const [editSuspended, setEditSuspended] = useState(false);
   const [removing, setRemoving] = useState<{ kind: "project"; name: string } | null>(null);
-  useEffect(() => { onDialogChange?.((!!editTask && !editSuspended) || !!removing); }, [editTask, editSuspended, removing, onDialogChange]);
+  const [renameSource, setRenameSource] = useState<string | null>(null);
+  const [renameOperation, setRenameOperation] = useState<ProjectRename | null>(null);
+  const renameRef = useRef<ProjectRename | null>(null);
+  const [renameEvent, setRenameEvent] = useState<ProjectRenameEvent>();
+  const renameSequence = useRef(0);
+  const [, redraw] = useState(0);
+  const bulkOwner = useRef<TransportContext | null>(null);
+  const queuedRefresh = useRef(false);
+  const draftProjects = useRef({ add: [] as string[], edit: [] as string[] });
+  const addProjects = useCallback((names: string[]) => { draftProjects.current.add = names; }, []);
+  const editProjects = useCallback((names: string[]) => { draftProjects.current.edit = names; }, []);
+  useEffect(() => { onDialogChange?.((!!editTask && !editSuspended) || !!removing || renameSource !== null); }, [editTask, editSuspended, removing, renameSource, onDialogChange]);
   const mounted = useRef(false);
   const tasksRequest = useRef(0);
   const labelsRequest = useRef(0);
@@ -171,6 +186,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
   }, { canRun: () => mounted.current && isTransportCurrent(recoveryContext.current), onError: () => {} });
 
   function requestTasks() {
+    if (bulkOwner.current && isTransportCurrent(bulkOwner.current)) { queuedRefresh.current = true; return; }
     if (!isTransportCurrent(recoveryContext.current)) {
       recovery.current!.cancel();
       recoveryContext.current = captureTransport();
@@ -197,7 +213,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
         requestTasks();
       },
       applyRemote: async (token) => {
-        if (!updates || (editTask && !editSuspended) || removing) {
+        if (!updates || (editTask && !editSuspended) || removing || bulkOwner.current || renameSource !== null) {
           updates?.defer("tasks");
           setError("Close the task dialog, then review the update. Your draft is unchanged.");
           return false;
@@ -218,12 +234,13 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
           return false;
         }
       },
-      reviewRemote: () => { setEditSuspended(true); setRemoving(null); },
+      reviewRemote: () => { if (bulkOwner.current) return; setEditSuspended(true); setRemoving(null); setRenameSource(null); },
     }),
-    [refresh, loadLabels, updates, editTask, editSuspended, removing],
+    [refresh, loadLabels, updates, editTask, editSuspended, removing, renameSource],
   );
 
   function safeAction() {
+    if (bulkOwner.current) { setError("Wait for the project operation to stop before changing tasks."); return false; }
     if (!remote() || (remote()!.accepted("tasks") !== undefined && !remote()!.blocked("tasks"))) return true;
     setEditSuspended(true);
     setRemoving(null);
@@ -231,23 +248,25 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
     setError("Review the task update before using task IDs. Choose the action again after updating.");
     return false;
   }
-  async function mutate(action: () => Promise<Task | void>, removeId?: number) {
-    const owner = captureTransport();
+  async function mutate(action: () => Promise<Task | void>, removeId?: number, owner = captureTransport(), persistLabels = true) {
     const settle = remote()?.begin("tasks");
     try {
       const task = await action();
-      if (destination(owner) !== destination(captureTransport()) || !mounted.current) { settle?.(); return; }
+      if (!isTransportCurrent(owner) || !mounted.current) { settle?.(); return task; }
       const known = remote()?.accepted("tasks") ?? taskProjection.current;
       const next = task ? (known.some((t) => t.id === task.id)
         ? known.map((t) => t.id === task.id ? task : t) : [...known, task]) : known.filter((t) => t.id !== removeId);
       settle?.(next);
       projectTasks(next);
-      await loadLabels(true);
+      if (persistLabels) await loadLabels(true);
+      return task;
     } catch (error) { settle?.(); throw error; }
   }
 
   async function onAdd(text: string): Promise<boolean> {
     try {
+      if (bulkOwner.current) throw new Error("Wait for the project operation to stop before adding tasks.");
+      guardDraft(text);
       await mutate(() => createTask(text));
       return true;
     } catch (err) {
@@ -278,6 +297,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
     if (!safeAction()) return;
     setEditSuspended(false);
     editOwner.current = captureTransport();
+    editExpected.current = task;
     setEditTask(task);
   }
 
@@ -290,22 +310,123 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
     if (!safeAction()) return;
     const { kind, name } = removing;
     setRemoving(null);
+    const owner = captureTransport();
+    startBulk(owner);
     try {
-      const all = taskProjection.current;
+      const all = await validateProjectTasks(owner);
       for (const u of planLabelRemoval(all, kind, name)) {
-        if (!safeAction()) return;
-        await mutate(() => updateTask(u.id, u.text));
+        const current = await validateProjectTasks(owner);
+        if (current.find((task) => task.id === u.id)?.raw !== all.find((task) => task.id === u.id)?.raw) throw new ProjectReviewRequired();
+        await mutate(() => updateTask(u.id, u.text, owner), undefined, owner, false);
+        await validateProjectTasks(owner);
       }
-      const remembered = await getLabels().catch(() => ({ project: [], context: [] }));
-      await putLabels({ ...remembered, project: remembered.project.filter((n) => n !== name) });
+      const remembered = await getLabels(owner);
+      ensureProjectContext(owner);
+      await putLabels({ ...remembered, project: remembered.project.filter((n) => n !== name) }, owner);
+      ensureProjectContext(owner);
       await loadLabels();
     } catch (err) {
       // Successful responses already projected their own changes; never import an unrelated
-      // remote list to recover a partial failure. Refresh label suggestions first, then set the
-      // error last so label loading cannot clear the task mutation's actionable failure message.
-      await loadLabels();
-      setError(errMsg(err));
+      // remote list or erase labels to recover a partial failure.
+      if (mounted.current && isTransportCurrent(owner)) {
+        setError(`Project removal stopped; completed changes remain. ${errMsg(err)}`);
+        if (err instanceof ProjectReviewRequired) void remote()?.review("tasks");
+      }
+    } finally { finishBulk(owner); }
+  }
+
+  function ensureProjectContext(owner: TransportContext) {
+    if (!mounted.current || !isTransportCurrent(owner)) throw new Error("The connection changed. No further project writes were issued.");
+  }
+  function startBulk(owner: TransportContext) {
+    bulkOwner.current = owner;
+    tasksRequest.current++; labelsRequest.current++; recovery.current?.cancel();
+  }
+  function finishBulk(owner: TransportContext) {
+    if (bulkOwner.current === owner) bulkOwner.current = null;
+    if (mounted.current && queuedRefresh.current) { queuedRefresh.current = false; requestTasks(); }
+  }
+  async function validateProjectTasks(owner: TransportContext): Promise<Task[]> {
+    ensureProjectContext(owner);
+    if (owner.url && updates) {
+      const checked = await updates.check("tasks");
+      ensureProjectContext(owner);
+      if (!checked) throw new ProjectReviewRequired();
+      return updates.accepted("tasks")!;
     }
+    const found = await listTasks({}, owner);
+    ensureProjectContext(owner);
+    const equal = found.length === taskProjection.current.length && found.every((task) => taskProjection.current.some((known) => known.id === task.id && known.raw === task.raw));
+    if (!equal) {
+      queuedRefresh.current = true;
+      throw new Error("Local tasks changed. The task view will refresh after this attempt stops; explicitly retry against the current tasks.");
+    }
+    return found;
+  }
+  function guardDraft(text: string) {
+    const operation = renameRef.current;
+    if (operation?.started && operation.phase !== "completed" && operation.targetDestination === destination(captureTransport())
+      && text.split(/\s+/).includes(`+${operation.from}`)) throw new Error("This draft refers to a partially renamed project. Finish or resolve the rename before saving it.");
+  }
+  function openRename(name: string) {
+    if (bulkOwner.current) return;
+    const existing = renameRef.current;
+    if (existing?.started && existing.phase !== "completed") {
+      setRenameSource(existing.from);
+      return;
+    }
+    renameRef.current = null; setRenameOperation(null); setRenameSource(name);
+  }
+  async function confirmRename(name: string) {
+    if (renameSource === null || bulkOwner.current) return;
+    const parsed = parseLabelInput(name);
+    if ("error" in parsed) return;
+    const owner = captureTransport();
+    let operation = renameRef.current;
+    if (!operation || !operation.started) {
+      operation = new ProjectRename(renameSource, parsed.name, owner, {
+        ...projectRenameIO,
+        validate: validateProjectTasks,
+        write: async (id, text, context) => (await mutate(() => updateTask(id, text, context), undefined, context, false))!,
+        staged: () => [...draftProjects.current.add, ...draftProjects.current.edit],
+        current: () => mounted.current && renameRef.current === operation,
+        changed: () => { if (mounted.current) redraw((n) => n + 1); },
+        completed: (labels) => {
+          ensureProjectContext(captureTransport());
+          const completed = operation!;
+          const known = remote()?.accepted("tasks") ?? taskProjection.current;
+          setServerLabels({
+            project: unionLabels(labels.project, known.flatMap((task) => task.projects)),
+            context: unionLabels(labels.context, known.flatMap((task) => task.contexts)),
+          });
+          setProject((selected) => selected === completed.from ? completed.to : selected);
+          const updated = completed.done.get(editExpected.current?.id ?? -1);
+          if (updated && editExpected.current && renameProjectText(editExpected.current.raw, completed.from, completed.to) === updated.raw) editExpected.current = updated;
+          setRenameEvent({ id: ++renameSequence.current, destination: completed.targetDestination, from: completed.from, to: completed.to, tasks: [...completed.done.values()] });
+          setError("");
+        },
+      });
+      renameRef.current = operation; setRenameOperation(operation);
+    }
+    startBulk(owner);
+    try { await operation.run(owner); }
+    finally { finishBulk(owner); }
+  }
+  function closeRename() {
+    if (renameRef.current?.busy) return;
+    setRenameSource(null);
+    document.querySelector<HTMLButtonElement>(compact ? 'button[aria-label="Filter options"]' : 'button[aria-label="Project filter"]')?.focus();
+    if (!renameRef.current?.started) { renameRef.current = null; setRenameOperation(null); }
+  }
+  function reviewRename() {
+    if (bulkOwner.current) return;
+    setRenameSource(null); setEditSuspended(true); setRemoving(null);
+    void remote()?.review("tasks");
+  }
+  function abandonRename() {
+    if (bulkOwner.current) return;
+    renameRef.current = null; setRenameOperation(null); setRenameSource(null);
+    setError("Rename retry stopped. Partial task and label changes remain; no changes were rolled back.");
   }
 
   async function onEditSave(id: number, text: string) {
@@ -313,7 +434,8 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
       throw new Error("The destination changed. Copy your draft and choose Edit on the current destination.");
     }
     if (!safeAction()) throw new Error("Review the task update first. Your draft is unchanged.");
-    if (remote() && !remote()!.accepted("tasks")?.some((task) => task.id === id && task.raw === editTask?.raw)) {
+    guardDraft(text);
+    if (!(remote()?.accepted("tasks") ?? taskProjection.current).some((task) => task.id === id && task.raw === editExpected.current?.raw)) {
       throw new Error("This task changed. Copy your draft and choose Edit on the updated task; the old action cannot be replayed.");
     }
     await mutate(() => updateTask(id, text)); // throws on error → caught by EditTaskModal
@@ -337,6 +459,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
           onSort={(s) => { setSort(s); persistSort(s); }}
           onDir={(d) => { const next = d as Direction; setDir(next); persistDir(next); }}
           onRemove={(kind, name) => setRemoving({ kind, name })}
+          onRename={openRename}
         />
       </div>
       
@@ -354,7 +477,8 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
         </p>
       </div>
 
-      <AddForm serverLabels={serverLabels} onAdd={onAdd} compact={compact} />
+      <AddForm serverLabels={serverLabels} onAdd={onAdd} compact={compact} rename={renameEvent} onProjectsChange={addProjects} />
+      {renameOperation?.started && renameSource === null && <button type="button" onClick={() => setRenameSource(renameOperation.from)}>Review rename progress</button>}
       {editTask && editSuspended && <button type="button" onClick={() => setEditSuspended(false)}>Resume task draft</button>}
 
       <EditTaskModal
@@ -363,9 +487,13 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
         serverLabels={serverLabels}
         onSave={onEditSave}
         onClose={() => setEditTask(null)}
+        rename={renameEvent}
+        onProjectsChange={editProjects}
       />
 
       <RemoveLabelDialog target={removing} onConfirm={confirmRemove} onCancel={() => setRemoving(null)} />
+      <RenameProjectDialog source={renameSource} operation={renameOperation} count={tasks.filter((task) => task.projects.includes(renameSource ?? "")).length}
+        onConfirm={(name) => { void confirmRename(name); }} onClose={closeRename} onReview={reviewRename} onAbandon={abandonRename} />
     </section>
   );
 });

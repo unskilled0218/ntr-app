@@ -4,8 +4,9 @@
 // opens the dialog; null closes it. Uses the same native-<dialog> pattern as LabelModal.
 
 import { useEffect, useRef, useState } from "react";
-import { errMsg, type Task } from "../api";
-import { bareDescription, composeEditedTask } from "../labels";
+import { captureTransport, destination, errMsg, type Task } from "../api";
+import { bareDescription, composeEditedTask, renameProjectNames, renameProjectText } from "../labels";
+import type { ProjectRenameEvent } from "../lib/projectRename";
 import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
 import { useBackdropClose } from "./useBackdropClose";
@@ -18,9 +19,11 @@ interface Props {
   serverLabels: { project: string[]; context: string[] };
   onSave(id: number, text: string): Promise<void>;
   onClose(): void;
+  rename?: ProjectRenameEvent;
+  onProjectsChange?: (names: string[]) => void;
 }
 
-export default function EditTaskModal({ task, suspended, serverLabels, onSave, onClose }: Props) {
+export default function EditTaskModal({ task, suspended, serverLabels, onSave, onClose, rename, onProjectsChange }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [description, setDescription] = useState("");
   const [due, setDue] = useState("");
@@ -28,11 +31,16 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
   const [staged, setStaged] = useState<string[]>([]);
   const [modalKind, setModalKind] = useState<"project" | null>(null);
   const [error, setError] = useState("");
+  const baseline = useRef(task);
+  useEffect(() => {
+    onProjectsChange?.(task ? [...new Set([...staged, project, ...description.split(/\s+/).filter((token) => token.startsWith("+")).map((token) => token.slice(1))])].filter(Boolean) : []);
+  }, [staged, project, description, task, onProjectsChange]);
 
   useEffect(() => {
     const el = dialogRef.current;
     if (!el) return;
     if (task) {
+      baseline.current = task;
       setDescription(bareDescription(task.description, task.projects, task.contexts, task.tags));
       setDue(task.tags.due ?? "");
       setProject(task.projects[0] ?? "");
@@ -41,6 +49,15 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
       setError("");
     }
   }, [task]);
+  useEffect(() => {
+    if (!rename || rename.destination !== destination(captureTransport())) return;
+    const previous = baseline.current;
+    const updated = rename.tasks.find((found) => found.id === previous?.id);
+    if (previous && updated && renameProjectText(previous.raw, rename.from, rename.to) === updated.raw) baseline.current = updated;
+    setDescription((text) => renameProjectText(text, rename.from, rename.to));
+    setProject((name) => name === rename.from ? rename.to : name);
+    setStaged((names) => renameProjectNames(names, rename.from, rename.to));
+  }, [rename]);
   useEffect(() => {
     const el = dialogRef.current!;
     if (task && !suspended && !el.open) el.showModal();
@@ -55,9 +72,10 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!task || (!description.trim() && !task.contexts.length)) return;
+    const current = baseline.current;
+    if (!task || !current || (!description.trim() && !current.contexts.length)) return;
     try {
-      const text = composeEditedTask(task, { description, project, due }, formatLocalTaskDate(new Date()));
+      const text = composeEditedTask(current, { description, project, due }, formatLocalTaskDate(new Date()));
       if (!text.trim()) return;
       await onSave(task.id, text);
     } catch (err) {

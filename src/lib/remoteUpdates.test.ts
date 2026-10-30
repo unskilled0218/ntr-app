@@ -17,6 +17,27 @@ beforeEach(() => { localStorage.setItem("ntr.serverUrl", "http://shared"); activ
 afterEach(() => { instances.splice(0).forEach((updates) => updates.cancel()); localStorage.clear(); vi.useRealTimers(); });
 
 describe("remote approval ownership", () => {
+  it("waits for explicit task validation and never clears a pending note", async () => {
+    const { updates, content, read } = setup();
+    updates.register("tasks", []); updates.register("note", "A"); await settle();
+    content.note = "foreign"; updates.request("note"); await settle();
+    const held = deferred<Task[]>();
+    read.mockImplementationOnce(() => held.promise as Promise<never>);
+    const check = updates.check("tasks");
+    let done = false; void check.then(() => { done = true; }); await settle();
+    expect(done).toBe(false);
+    held.resolve([]);
+    expect(await check).toBe(true);
+    expect(updates.state("note").pending?.snapshot).toBe("foreign");
+    expect(updates.accepted("note")).toBe("A");
+  });
+  it("cannot validate a read invalidated by a newer mutation", async () => {
+    const { updates, read } = setup(); updates.register("tasks", []); await settle();
+    const held = deferred<Task[]>(); read.mockImplementationOnce(() => held.promise as Promise<never>);
+    const check = updates.check("tasks"); const settleWrite = updates.begin("tasks");
+    held.resolve([]); expect(await check).toBe(false);
+    settleWrite([]); await settle();
+  });
   it("coalesces identical signals, defers without resolving, and reviews the same snapshot", async () => {
     const { updates, content } = setup();
     updates.register("note", "A");

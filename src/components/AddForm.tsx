@@ -4,9 +4,10 @@
 // but not yet attached to any task; they persist for the session, exactly as app.js's module-level
 // `staged` does).
 
-import { useState } from "react";
-import { errMsg } from "../api";
-import { composeText } from "../labels";
+import { useEffect, useState } from "react";
+import { captureTransport, destination, errMsg } from "../api";
+import { composeText, renameProjectNames, renameProjectText } from "../labels";
+import type { ProjectRenameEvent } from "../lib/projectRename";
 import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
 import OptionsModal from "./OptionsModal";
@@ -16,15 +17,26 @@ interface Props {
   // Returns true on success (so the form resets) or false on error (kept for correction).
   onAdd: (text: string) => Promise<boolean>;
   compact: boolean; // when true, the fields collapse behind one "Options" button on the add row
+  rename?: ProjectRenameEvent;
+  onProjectsChange?: (names: string[]) => void;
 }
 
-export default function AddForm({ serverLabels, onAdd, compact }: Props) {
+export default function AddForm({ serverLabels, onAdd, compact, rename, onProjectsChange }: Props) {
   const [description, setDescription] = useState("");
   const [error, setError] = useState("");
   const [due, setDue] = useState("");
   const [project, setProject] = useState("");
   const [staged, setStaged] = useState<string[]>([]);
   const [modalKind, setModalKind] = useState<"project" | null>(null);
+  useEffect(() => {
+    onProjectsChange?.([...new Set([...staged, project, ...description.split(/\s+/).filter((token) => token.startsWith("+")).map((token) => token.slice(1))])].filter(Boolean));
+  }, [staged, project, description, onProjectsChange]);
+  useEffect(() => {
+    if (!rename || rename.destination !== destination(captureTransport())) return;
+    setDescription((text) => renameProjectText(text, rename.from, rename.to));
+    setProject((name) => name === rename.from ? rename.to : name);
+    setStaged((names) => renameProjectNames(names, rename.from, rename.to));
+  }, [rename]);
 
   // Modal confirmed: stage the new project, select it, and close the modal.
   const onConfirm = (name: string) => {
