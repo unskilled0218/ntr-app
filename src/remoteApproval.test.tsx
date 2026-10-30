@@ -68,6 +68,41 @@ beforeEach(() => { vi.clearAllMocks(); localStorage.setItem("ntr.serverUrl", "ht
 afterEach(async () => { cleanup(); await settle(); localStorage.clear(); vi.useRealTimers(); });
 
 describe("approval across real panes", () => {
+  it.each(["note", "tasks"] as const)("replaces the %s diff on a changed preparation read and requires another choice", async (resource) => {
+    const { data, signal } = fixture(); render(<App />); await act(settle);
+    fireEvent.change(screen.getByRole("textbox", { name: "New task" }), { target: { value: "unsubmitted draft +work" } });
+    if (resource === "note") data.note = "first incoming version";
+    else data.tasks = [task(90, "first incoming version +work")];
+    await signal(resource);
+    const details = () => within(document.querySelector("#remote-update") as HTMLElement).getByLabelText("Change details");
+    expect(details().textContent).toContain(resource === "note" ? "base" : "first +work");
+    expect(details().textContent).toContain("first incoming version");
+    if (resource === "note") data.note = "second incoming version";
+    else data.tasks = [task(91, "second incoming version +work")];
+    await choose("Update");
+    expect(details().textContent).toContain("second incoming version");
+    expect(resource === "note" ? screen.getByRole("textbox", { name: "Note (Markdown)" }).textContent : document.querySelector("#tasks")!.textContent).not.toContain("incoming version");
+    expect((screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement).value).toBe("unsubmitted draft +work");
+    await choose("Update");
+    expect(resource === "note" ? screen.getByRole("textbox", { name: "Note (Markdown)" }).textContent : document.querySelector("#tasks")!.textContent).toContain("second incoming version");
+    expect(writes()).toHaveLength(0);
+  });
+  it("keeps task and note diff baselines independent while approving their queue", async () => {
+    const { data, signal } = fixture(); render(<App />); await act(settle);
+    data.tasks = [task(90, "foreign task +work")]; data.note = "foreign note";
+    await signal("tasks", "note");
+    let preview = within(document.querySelector("#remote-update") as HTMLElement);
+    expect(preview.getByLabelText("Change details").textContent).toContain("first +work");
+    await choose("Update");
+    preview = within(document.querySelector("#remote-update") as HTMLElement);
+    expect(preview.getByLabelText("Change details").textContent).toContain("base");
+    expect(preview.getByLabelText("Change details").textContent).toContain("foreign note");
+    expect(screen.getByRole("textbox", { name: "Note (Markdown)" }).textContent).toBe("base");
+    await choose("Not now");
+    expect(document.querySelector("#tasks")!.textContent).toContain("foreign task");
+    expect(screen.getByRole("textbox", { name: "Note (Markdown)" }).textContent).toBe("base");
+    expect(writes()).toHaveLength(0);
+  });
   it("retains a task offer when label preparation fails and retries without acknowledging unseen content", async () => {
     const { data, signal, failLabels } = fixture();
     render(<App />); await act(settle);
@@ -84,7 +119,9 @@ describe("approval across real panes", () => {
     const { data, signal } = fixture();
     render(<App />); await act(settle);
     const editor = editNote("draft");
-    data.note = "B"; await signal("note"); await choose("Update");
+    data.note = "B"; await signal("note");
+    expect(within(document.querySelector("#remote-update") as HTMLElement).getByLabelText("Change details").textContent).not.toContain("draft");
+    await choose("Update");
     data.note = "C"; await signal("note");
     const conflict = within(document.querySelector("#note-conflict") as HTMLElement);
     await act(async () => { fireEvent.click(conflict.getByRole("button", { name: "Use theirs" })); await settle(); });

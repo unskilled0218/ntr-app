@@ -16,9 +16,9 @@ Tasks and notes are stored in the Tauri app-data directory by default. Use the `
 
 Priority controls, sorting, and filtering are removed in `0.15.18`. Existing leading tokens stay hidden and preserved; `pri:` remains editable text. See [task text and compatibility](docs/task-text.md).
 
-Remote task and note changes now ask before updating. Declined changes remain reviewable; pending remote notes pause autosave. See [update choices and save safety](docs/live-sync.md).
+Remote task and note changes show a read-only diff before approval. Declined changes remain reviewable; pending remote notes pause autosave. See [update choices and save safety](docs/live-sync.md).
 
-Manage projects using pencil/trash icons in Project filter or the create-task Project selector, including compact mode. Draft-only choices stay local; unfinished operations reopen from selectors. See [project actions and recovery](docs/project-renaming.md).
+Manage projects using pencil/trash icons in project selectors. Successful renames close automatically; create-task selectors stay open beneath rename. Draft-only choices stay local; unfinished operations remain recoverable. See [project actions and recovery](docs/project-renaming.md).
 
 ## Documentation
 

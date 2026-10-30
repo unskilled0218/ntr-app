@@ -9,7 +9,7 @@ import { captureTransport, destination, errMsg } from "../api";
 import { composeText, parseLabelInput, removeProjectText, renameProjectNames, renameProjectText } from "../labels";
 import type { ProjectRenameEvent } from "../lib/projectRename";
 import type { ProjectRemovalEvent } from "../lib/projectRemoval";
-import type { ProjectActionRequest, ProjectManagement } from "../lib/projectActions";
+import type { ProjectActionRequest, ProjectManagement, ProjectSelectorSession } from "../lib/projectActions";
 import RenameProjectDialog from "./RenameProjectDialog";
 import RemoveLabelDialog from "./RemoveLabelDialog";
 import LabelModal from "./LabelModal";
@@ -38,6 +38,9 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onProjec
   const formRef = useRef<HTMLFormElement>(null);
   const [draftAction, setDraftAction] = useState<{ request: ProjectActionRequest; signature: string } | null>(null);
   const signature = JSON.stringify([description, project, staged]);
+  const [mappedRevision, setMappedRevision] = useState(0);
+  const activeSession = useRef<ProjectSelectorSession | undefined>(undefined);
+  useEffect(() => () => { activeSession.current?.close(); activeSession.current = undefined; }, [compact, management?.destination]);
   useEffect(() => {
     onProjectsChange?.([...new Set([...staged, project, ...description.split(/\s+/).filter((token) => token.startsWith("+")).map((token) => token.slice(1))])].filter(Boolean));
   }, [staged, project, description, onProjectsChange]);
@@ -46,6 +49,7 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onProjec
     setDescription((text) => renameProjectText(text, rename.from, rename.to));
     setProject((name) => name === rename.from ? rename.to : name);
     setStaged((names) => renameProjectNames(names, rename.from, rename.to));
+    setMappedRevision(rename.id);
   }, [rename]);
   useEffect(() => {
     if (!removal || removal.destination !== destination(captureTransport())) return;
@@ -57,13 +61,32 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onProjec
   function restoreFocus() {
     formRef.current?.querySelector<HTMLButtonElement>(compact ? 'button[aria-label="Task options"]' : 'button[aria-label="Project"]')?.focus();
   }
+  function ownSession(picker?: ProjectSelectorSession) {
+    const session = picker ? {
+      restore: picker.restore,
+      close() {
+        const closed = picker.close();
+        if (closed) optionsRef.current?.close();
+        return closed;
+      },
+    } : undefined;
+    activeSession.current = session;
+    return session;
+  }
   function projectAction(request: ProjectActionRequest) {
-    optionsRef.current?.close();
+    const session = ownSession(request.session);
+    request = { ...request, session };
     if (management?.onAction(request)) return;
     if (request.scope !== "staged") return;
+    if (request.action === "remove") session?.close();
     setError(""); setDraftAction({ request, signature });
   }
-  function closeDraftAction() { setDraftAction(null); setError(""); restoreFocus(); }
+  function closeDraftAction(name?: string) {
+    const request = draftAction?.request;
+    setDraftAction(null); setError("");
+    if (request?.action === "rename" && request.session) request.session.restore(name ?? request.name);
+    else restoreFocus();
+  }
   function confirmDraftAction(target?: string) {
     if (!draftAction) return;
     const { request } = draftAction;
@@ -72,6 +95,7 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onProjec
     if (serverLabels.project.includes(request.name) || !staged.includes(request.name) || signature !== draftAction.signature) {
       setError("Project scope or draft changed. Cancel and reopen the selector for a new confirmation."); return;
     }
+    let renamedName: string | undefined;
     if (request.action === "rename") {
       const parsed = parseLabelInput(target ?? "");
       if ("error" in parsed) { setError(parsed.error); return; }
@@ -81,6 +105,7 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onProjec
       }
       const names = [...serverLabels.project, ...staged, ...description.split(/\s+/).filter((token) => token.startsWith("+")).map((token) => token.slice(1))];
       if (names.includes(parsed.name)) { setError("That project already exists. Renaming cannot merge projects."); return; }
+      renamedName = parsed.name;
       setStaged((names) => renameProjectNames(names, request.name, parsed.name));
       setProject((name) => name === request.name ? parsed.name : name);
       setDescription((text) => renameProjectText(text, request.name, parsed.name));
@@ -89,7 +114,7 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onProjec
       setProject((name) => name === request.name ? "" : name);
       setDescription((text) => removeProjectText(text, request.name));
     }
-    closeDraftAction();
+    closeDraftAction(renamedName);
   }
 
   // Modal confirmed: stage the new project, select it, and close the modal.
@@ -142,8 +167,11 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onProjec
           onChange={setProject}
           onAdd={() => setModalKind("project")}
           management={management}
+          revision={mappedRevision}
           onProjectAction={management ? projectAction : undefined}
-          onRecover={(id) => { optionsRef.current?.close(); management?.onRecover(id, "add"); }}
+          onRecover={(id, picker) => {
+            management?.onRecover(id, "add", ownSession(picker));
+          }}
         />
       </label>
     </>
@@ -169,7 +197,7 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onProjec
       </form>
       <LabelModal kind={modalKind} onConfirm={(_, name) => onConfirm(name)} onClose={() => setModalKind(null)} />
       <RenameProjectDialog id="draft-rename-project-dialog" scope="draft" source={draftAction?.request.action === "rename" ? draftAction.request.name : null}
-        operation={null} count={0} error={error} onConfirm={(name) => confirmDraftAction(name)} onClose={closeDraftAction} onReview={() => {}} onAbandon={() => {}} />
+        operation={null} error={error} onConfirm={(name) => confirmDraftAction(name)} onClose={closeDraftAction} onReview={() => {}} onAbandon={() => {}} />
       <RemoveLabelDialog id="draft-remove-project-dialog" scope="draft" target={draftAction?.request.action === "remove" ? { kind: "project", name: draftAction.request.name } : null}
         error={error} onConfirm={() => confirmDraftAction()} onCancel={closeDraftAction} />
     </>

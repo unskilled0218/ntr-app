@@ -8,6 +8,7 @@ export interface Offer<K extends Resource = Resource> {
   resource: K;
   identity: string;
   snapshot: Snapshots[K];
+  baseline: Snapshots[K];
 }
 export interface ApplicationToken<K extends Resource = Resource> extends Offer<K> {
   offer: Offer<K>;
@@ -32,6 +33,15 @@ function identity<K extends Resource>(resource: K, snapshot: Snapshots[K]): stri
 }
 function initial<K extends Resource>(): State<K> {
   return { phase: "idle", epoch: 0, reads: 0, application: 0, writes: 0, error: "" };
+}
+// Own immutable evidence rather than retaining mutable transport/fixture objects.
+function capture<T>(value: T): T {
+  const copy = structuredClone(value);
+  function freeze(object: unknown) {
+    if (!object || typeof object !== "object") return;
+    Object.values(object).forEach(freeze); Object.freeze(object);
+  }
+  freeze(copy); return copy;
 }
 
 // Approval state lives here, never in a detection read or a pane's save baseline.
@@ -85,7 +95,7 @@ export class RemoteUpdates {
   register<K extends Resource>(resource: K, snapshot: Snapshots[K]) {
     const state = this.states[resource] as State<K>;
     if (state.accepted !== undefined) return;
-    state.accepted = snapshot;
+    state.accepted = capture(snapshot);
     this.emit();
     // Also closes the event/initial-load race, even if the initial GET captured old content.
     this.request(resource);
@@ -139,9 +149,10 @@ export class RemoteUpdates {
     if (key === identity(resource, state.accepted)) {
       state.pending = undefined;
       state.phase = "idle";
-    } else if (state.pending?.identity !== key) {
-      state.pending = Object.freeze({ resource, identity: key, snapshot });
-      state.phase = "offered";
+    } else if (state.pending?.identity !== key || identity(resource, state.pending.baseline) !== identity(resource, state.accepted)) {
+      const sameIncoming = state.pending?.identity === key;
+      state.pending = Object.freeze({ resource, identity: key, snapshot: capture(snapshot), baseline: capture(state.accepted) });
+      if (!sameIncoming) state.phase = "offered";
     }
     this.emit();
   }
@@ -158,7 +169,10 @@ export class RemoteUpdates {
       state.writes--;
       state.epoch++;
       if (!this.active || destination(context) !== destination(this.context) || state !== this.states[resource]) return;
-      if (snapshot !== undefined) state.accepted = snapshot;
+      if (snapshot !== undefined) {
+        state.accepted = capture(snapshot);
+        if (state.pending) this.offer(resource, state.pending.snapshot);
+      }
       // A write is not convergence evidence for a different pending offer.
       this.request(resource);
       this.emit();
