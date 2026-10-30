@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import App from "./App";
@@ -16,7 +16,7 @@ afterEach(async () => {
   localStorage.clear();
 });
 
-it("recovers both real panes after connected even when one GET fails and no further event arrives", async () => {
+it("detects missed changes after reconnect, retries failures, and keeps both panes unchanged until approval", async () => {
   vi.useFakeTimers();
   localStorage.setItem("ntr.serverUrl", "http://shared-server");
   let taskText = "start task";
@@ -67,11 +67,21 @@ it("recovers both real panes after connected even when one GET fails and no furt
     await settle();
   });
   expect(container.querySelector("#tasks")!.textContent).toContain("start task");
-  expect(container.querySelector("#error")!.textContent).toContain("Unavailable");
-  expect(container.querySelector("#note-input")!.textContent).toBe("missed note");
+  expect(container.querySelector(".remote-updates")!.textContent).toContain("Unavailable");
+  expect(container.querySelector("#note-input")!.textContent).toBe("base");
   await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  expect(container.querySelector("#tasks")!.textContent).toContain("start task");
+  expect(container.querySelector(".remote-updates")!.textContent).not.toContain("Unavailable");
+  const dialog = within(container.querySelector("#remote-update") as HTMLElement);
+  fireEvent.click(dialog.getByRole("button", { name: "Not now" }));
+  fireEvent.click(dialog.getByRole("button", { name: "Not now" }));
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review update for tasks" })); await settle(); });
+  await act(async () => { fireEvent.click(dialog.getByRole("button", { name: "Update" })); await settle(); });
   expect(container.querySelector("#tasks")!.textContent).toContain("missed task");
-  expect(container.querySelector("#error")!.textContent).toBe("");
+  expect(container.querySelector("#note-input")!.textContent).toBe("base");
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review update for note" })); await settle(); });
+  await act(async () => { fireEvent.click(dialog.getByRole("button", { name: "Update" })); await settle(); });
+  expect(container.querySelector("#note-input")!.textContent).toBe("missed note");
   const reads = vi.mocked(invoke).mock.calls.length;
   await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
   expect(invoke).toHaveBeenCalledTimes(reads);

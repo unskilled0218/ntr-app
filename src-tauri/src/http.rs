@@ -29,6 +29,7 @@ pub struct ServerRequest {
   pub body: Option<String>,         // request body, already-encoded by the caller
   pub content_type: Option<String>, // e.g. "application/json" / "text/plain"
   pub allow_invalid_cert: bool,     // the cert policy for THIS connection (from settings.ts)
+  pub client_id: Option<String>,
 }
 
 /// The response, shaped for the frontend's `serverFetch`. A non-2xx status is NOT an error
@@ -83,6 +84,9 @@ async fn fetch_response(
 ) -> Result<HttpResponse, String> {
   let method = reqwest::Method::from_bytes(req.method.as_bytes()).map_err(|e| e.to_string())?;
   let mut builder = client.request(method, &req.url);
+  if let Some(origin) = req.client_id {
+    builder = builder.header("X-Ntr-Client-Id", origin);
+  }
   if req.method.eq_ignore_ascii_case("GET") {
     builder = builder.timeout(read_timeout);
   }
@@ -168,10 +172,15 @@ fn next_delay(delay: Duration, timing: SseTiming) -> Duration {
 async fn sse_attempt(
   client: &reqwest::Client,
   url: &str,
+  client_id: Option<&str>,
   timing: SseTiming,
   emit: &(impl Fn(&str) + Sync),
 ) -> Result<(), String> {
-  let response = tokio::time::timeout(timing.handshake, client.get(url).send())
+  let mut request = client.get(url);
+  if let Some(origin) = client_id {
+    request = request.header("X-Ntr-Client-Id", origin);
+  }
+  let response = tokio::time::timeout(timing.handshake, request.send())
     .await
     .map_err(|_| "SSE handshake timed out".to_string())?
     .map_err(|_| "SSE connection failed".to_string())?;
@@ -228,13 +237,14 @@ where
 async fn run_sse(
   client: reqwest::Client,
   url: String,
+  client_id: Option<String>,
   timing: SseTiming,
   emit: impl Fn(&str) + Send + Sync,
 ) {
   let mut delay = timing.retry;
   loop {
     let connected_at = std::sync::Mutex::new(None);
-    let result = sse_attempt(&client, &url, timing, &|kind| {
+    let result = sse_attempt(&client, &url, client_id.as_deref(), timing, &|kind| {
       if kind == "connected" {
         *connected_at.lock().unwrap() = Some(tokio::time::Instant::now());
       }
@@ -266,19 +276,26 @@ pub async fn server_connect(
   url: String,
   allow_invalid_cert: bool,
   connection_id: String,
+  client_id: Option<String>,
 ) -> Result<(), String> {
   let client = client_for(state.inner(), allow_invalid_cert)?;
   let mut slot = state.sse_task.lock().map_err(|e| e.to_string())?;
   let event_id = connection_id.clone();
-  let task = tokio::spawn(run_sse(client, url, SseTiming::default(), move |kind| {
-    let _ = app.emit(
-      SERVER_LIVE_EVENT,
-      LiveEvent {
-        connection_id: event_id.clone(),
-        kind: kind.to_string(),
-      },
-    );
-  }));
+  let task = tokio::spawn(run_sse(
+    client,
+    url,
+    client_id,
+    SseTiming::default(),
+    move |kind| {
+      let _ = app.emit(
+        SERVER_LIVE_EVENT,
+        LiveEvent {
+          connection_id: event_id.clone(),
+          kind: kind.to_string(),
+        },
+      );
+    },
+  ));
   SseConnection::replace(
     &mut slot,
     SseConnection {

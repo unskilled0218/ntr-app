@@ -60,18 +60,18 @@ describe("App live subscription", () => {
     expect(current.aborted).toBe(true);
   });
 
-  it("activates settings synchronously, aborts the old subscription, and refreshes both panes", async () => {
+  it("leaves unchanged settings, subscriptions, and panes untouched", async () => {
     const { getAllByRole, getByRole } = render(<App />);
     await act(settle);
     const old = vi.mocked(onChange).mock.calls[0][1]!.signal!;
     fireEvent.click(getAllByRole("button", { name: /settings/i })[0]);
     fireEvent.click(getByRole("button", { name: "Close settings" }));
     await act(settle);
-    expect(activateTransport).toHaveBeenCalledTimes(1);
-    expect(old.aborted).toBe(true);
-    expect(handles.tasks).toHaveBeenCalledTimes(1);
-    expect(handles.note).toHaveBeenCalledTimes(1);
-    expect(onChange).toHaveBeenCalledTimes(2);
+    expect(activateTransport).not.toHaveBeenCalled();
+    expect(old.aborted).toBe(false);
+    expect(handles.tasks).not.toHaveBeenCalled();
+    expect(handles.note).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledTimes(1);
   });
 
   it("handles subscription setup failure without an unhandled rejection", async () => {

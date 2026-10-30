@@ -40,6 +40,19 @@ export const CHANGE_TASKS = "tasks";
 export const CHANGE_NOTE = "note";
 export const SERVER_LIVE_EVENT = "server-live";
 
+export interface Mutation {
+  resource: "tasks" | "note";
+  path: string;
+  method: string;
+  body?: string;
+  context: TransportContext;
+}
+const mutationObservers = new Set<(mutation: Mutation) => (response?: string) => void>();
+export function observeMutations(observer: (mutation: Mutation) => (response?: string) => void) {
+  mutationObservers.add(observer);
+  return () => { mutationObservers.delete(observer); };
+}
+
 // One activation owns its reads and deferred writes. A settings change invalidates
 // it synchronously, before React effects or old promise continuations can run.
 export interface TransportContext {
@@ -50,6 +63,10 @@ export interface TransportContext {
 }
 let transportGeneration = 0;
 let localGeneration = 0;
+const clientSessionId = crypto.randomUUID();
+export function destination(context: TransportContext): string {
+  return context.url ? `server:${context.url}` : `local:${context.localGeneration}`;
+}
 export function captureTransport(): TransportContext {
   return Object.freeze({ generation: transportGeneration, localGeneration, url: getServerUrl(), allowInvalidCert: getAllowInvalidCert() });
 }
@@ -90,17 +107,25 @@ async function serverFetch(
   context = captureTransport(),
 ): Promise<string> {
   requireCurrent(context);
-  const res = await invoke<HttpResponse>("server_fetch", {
-    req: {
-      url: context.url + path,
-      method,
-      body: body ?? null,
-      contentType: contentType ?? null,
-      allowInvalidCert: context.allowInvalidCert,
-    },
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.status_text}`.trim());
-  return res.body;
+  const resource = path === "/api/note" ? "note" : path.startsWith("/api/tasks") || path === "/api/raw" ? "tasks" : null;
+  const completions = method !== "GET" && resource
+    ? [...mutationObservers].map((observer) => observer({ resource, path, method, body, context })) : [];
+  let response: string | undefined;
+  try {
+    const res = await invoke<HttpResponse>("server_fetch", {
+      req: {
+        url: context.url + path,
+        method,
+        body: body ?? null,
+        contentType: contentType ?? null,
+        allowInvalidCert: context.allowInvalidCert,
+        clientId: method === "GET" ? null : clientSessionId,
+      },
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.status_text}`.trim());
+    response = res.body;
+    return res.body;
+  } finally { completions.forEach((complete) => complete(response)); }
 }
 
 async function httpJson<T>(path: string, init?: { method?: string; body?: string }, context = captureTransport()): Promise<T> {
@@ -145,12 +170,12 @@ async function backupLabelsLocally(labels: Labels): Promise<void> {
   }
 }
 
-async function backupTasksLocally(): Promise<void> {
+async function backupTasksLocally(context = captureTransport()): Promise<void> {
   try {
     // /api/raw is the server store's own todo.txt render — the single canonical
     // "server tasks as text" source, also used by the conflict reconcile path.
-    const raw = await httpText("/api/raw");
-    await invoke("put_raw", { text: raw });
+    const raw = await httpText("/api/raw", context);
+    if (isTransportCurrent(context)) await invoke("put_raw", { text: raw });
   } catch (e) {
     console.warn("local task backup failed:", e);
   }
@@ -176,51 +201,56 @@ export function listTasks(filter: TaskFilter, context = captureTransport()): Pro
 }
 
 export async function createTask(text: string): Promise<Task> {
-  if (getServerUrl()) {
+  const context = captureTransport();
+  if (context.url) {
     const task = await httpJson<Task>("/api/tasks", {
       method: "POST",
       body: JSON.stringify({ text }),
-    });
-    await backupTasksLocally();
+    }, context);
+    if (isTransportCurrent(context)) await backupTasksLocally(context);
     return task;
   }
   return invoke("create_task", { text });
 }
 
 export async function updateTask(id: number, text: string): Promise<Task> {
-  if (getServerUrl()) {
+  const context = captureTransport();
+  if (context.url) {
     const task = await httpJson<Task>(`/api/tasks/${id}`, {
       method: "PUT",
       body: JSON.stringify({ text }),
-    });
-    await backupTasksLocally();
+    }, context);
+    if (isTransportCurrent(context)) await backupTasksLocally(context);
     return task;
   }
   return invoke("update_task", { id, text });
 }
 
 export async function completeTask(id: number): Promise<Task> {
-  if (getServerUrl()) {
-    const task = await httpJson<Task>(`/api/tasks/${id}/complete`, { method: "POST" });
-    await backupTasksLocally();
+  const context = captureTransport();
+  if (context.url) {
+    const task = await httpJson<Task>(`/api/tasks/${id}/complete`, { method: "POST" }, context);
+    if (isTransportCurrent(context)) await backupTasksLocally(context);
     return task;
   }
   return invoke("complete_task", { id });
 }
 
 export async function uncompleteTask(id: number): Promise<Task> {
-  if (getServerUrl()) {
-    const task = await httpJson<Task>(`/api/tasks/${id}/uncomplete`, { method: "POST" });
-    await backupTasksLocally();
+  const context = captureTransport();
+  if (context.url) {
+    const task = await httpJson<Task>(`/api/tasks/${id}/uncomplete`, { method: "POST" }, context);
+    if (isTransportCurrent(context)) await backupTasksLocally(context);
     return task;
   }
   return invoke("uncomplete_task", { id });
 }
 
 export async function deleteTask(id: number): Promise<void> {
-  if (getServerUrl()) {
-    await serverFetch(`/api/tasks/${id}`, "DELETE");
-    await backupTasksLocally();
+  const context = captureTransport();
+  if (context.url) {
+    await serverFetch(`/api/tasks/${id}`, "DELETE", undefined, undefined, context);
+    if (isTransportCurrent(context)) await backupTasksLocally(context);
     return;
   }
   return invoke("delete_task", { id });
@@ -321,7 +351,7 @@ export async function onChange(
         if (!current()) return;
         started = true;
         await invoke("server_connect", {
-          connectionId, url: context.url + "/api/events", allowInvalidCert: context.allowInvalidCert,
+          connectionId, url: context.url + "/api/events", allowInvalidCert: context.allowInvalidCert, clientId: clientSessionId,
         });
       });
     }
