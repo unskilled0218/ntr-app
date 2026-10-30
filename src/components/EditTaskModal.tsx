@@ -1,15 +1,13 @@
 // Edit modal for an existing task. Pre-populates the same structured fields as AddForm
-// (description, priority, due, project). Hidden task metadata is retained on save.
+// (description, due, project). Hidden task metadata is retained on save.
 // The task prop drives open/close: non-null
 // opens the dialog; null closes it. Uses the same native-<dialog> pattern as LabelModal.
 
 import { useEffect, useRef, useState } from "react";
 import { errMsg, type Task } from "../api";
-import { PRIORITY_OPTIONS } from "../config";
-import { bareDescription, composeEditedTask, getTaskPriority } from "../labels";
+import { bareDescription, composeEditedTask } from "../labels";
 import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
-import SelectField from "./SelectField";
 import { useBackdropClose } from "./useBackdropClose";
 import { ownDialogEvent } from "./dialogEvents";
 import { formatLocalTaskDate } from "../lib/taskDates";
@@ -24,7 +22,6 @@ interface Props {
 export default function EditTaskModal({ task, serverLabels, onSave, onClose }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState("");
   const [due, setDue] = useState("");
   const [project, setProject] = useState("");
   const [staged, setStaged] = useState<string[]>([]);
@@ -36,7 +33,6 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
     if (!el) return;
     if (task) {
       setDescription(bareDescription(task.description, task.projects, task.contexts, task.tags));
-      setPriority(getTaskPriority(task));
       setDue(task.tags.due ?? "");
       setProject(task.projects[0] ?? "");
       setStaged([]);
@@ -58,7 +54,7 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
     e.preventDefault();
     if (!task || (!description.trim() && !task.contexts.length)) return;
     try {
-      const text = composeEditedTask(task, { priority, description, project, due }, formatLocalTaskDate(new Date()));
+      const text = composeEditedTask(task, { description, project, due }, formatLocalTaskDate(new Date()));
       if (!text.trim()) return;
       await onSave(task.id, text);
     } catch (err) {
@@ -76,10 +72,6 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
   // state — the source of truth here — stays in step, exactly as Escape does.
   useBackdropClose(dialogRef, onClose);
 
-  const priorityOptions = PRIORITY_OPTIONS.some((option) => option.value === priority)
-    ? PRIORITY_OPTIONS
-    : [...PRIORITY_OPTIONS, { value: priority, label: priority }];
-
   return (
     <dialog id="edit-task-modal" ref={dialogRef} onCancel={onCancel} onClose={ownDialogEvent}>
       <form id="edit-task-form" autoComplete="off" onSubmit={submit}>
@@ -94,10 +86,6 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
           />
         </label>
         <div className="add-fields">
-          <label>
-            Priority
-            <SelectField ariaLabel="Priority" value={priority} options={priorityOptions} onChange={setPriority} />
-          </label>
           <label>
             Due
             <input type="date" aria-label="Due date" value={due} onChange={(e) => setDue(e.currentTarget.value)} />

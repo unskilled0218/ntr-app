@@ -64,17 +64,17 @@ describe("OptionsModal", () => {
     const onDir = vi.fn();
     render(
       <OptionsModal ariaLabel="Filter options">
-        <SortField sort="file" dir="asc" sortOptions={[{ value: "file", label: "File" }, { value: "priority", label: "Priority" }]}
+        <SortField sort="file" dir="asc" sortOptions={[{ value: "file", label: "File" }, { value: "due", label: "Due date" }]}
           dirOptions={[{ value: "asc", label: "ASC" }, { value: "desc", label: "DESC" }]} onSort={onSort} onDir={onDir} />
       </OptionsModal>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Filter options" }));
     fireEvent.click(screen.getByRole("button", { name: "Sort" }));
     const child = document.querySelector("dialog.select-modal") as HTMLDialogElement;
-    fireEvent.click(within(child).getByRole("button", { name: "Priority" }));
+    fireEvent.click(within(child).getByRole("button", { name: "Due date" }));
     fireEvent.click(within(child).getByRole("button", { name: "DESC" }));
     expect(child.open).toBe(true);
-    expect(onSort).toHaveBeenCalledWith("priority");
+    expect(onSort).toHaveBeenCalledWith("due");
     expect(onDir).toHaveBeenCalledWith("desc");
     if (method === "backdrop") fireEvent.click(child);
     else if (method === "native cancel") cancelDialog(child);

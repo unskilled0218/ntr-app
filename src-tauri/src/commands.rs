@@ -74,14 +74,14 @@ fn rollback_backend_moves(
 pub fn list_tasks(
   state: State<'_, AppState>,
   completed: Option<bool>,
-  priority: Option<char>,
+  priority: Option<serde_json::Value>,
   project: Option<String>,
   context: Option<String>,
 ) -> Result<Vec<TaskDto>, String> {
+  reject_legacy_filter(priority.as_ref())?;
   let store = state.store.lock().map_err(lock_err)?;
   let filter = Filter {
     completed,
-    priority,
     project,
     context,
   };
@@ -92,6 +92,43 @@ pub fn list_tasks(
       .map(TaskDto::from_entry)
       .collect(),
   )
+}
+
+fn reject_legacy_filter(priority: Option<&serde_json::Value>) -> Result<(), String> {
+  if priority.is_some_and(|value| !value.is_null()) {
+    return Err("Priority filtering is no longer supported".into());
+  }
+  Ok(())
+}
+
+#[cfg(test)]
+mod legacy_filter_tests {
+  use super::*;
+
+  #[test]
+  fn accepts_omitted_and_null_but_rejects_every_non_null_value() {
+    #[derive(serde::Deserialize)]
+    struct Arguments {
+      priority: Option<serde_json::Value>,
+    }
+    for json in ["{}", r#"{"priority":null}"#] {
+      let args: Arguments = serde_json::from_str(json).unwrap();
+      assert!(reject_legacy_filter(args.priority.as_ref()).is_ok());
+    }
+    for value in [
+      serde_json::json!("A"),
+      serde_json::json!(""),
+      serde_json::json!("invalid"),
+      serde_json::json!(false),
+      serde_json::json!([]),
+      serde_json::json!(1),
+    ] {
+      assert_eq!(
+        reject_legacy_filter(Some(&value)).unwrap_err(),
+        "Priority filtering is no longer supported"
+      );
+    }
+  }
 }
 
 #[tauri::command]

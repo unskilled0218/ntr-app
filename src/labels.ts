@@ -11,18 +11,16 @@ export function unionLabels(remembered: string[], derived: string[]): string[] {
 
 // Fields the add form contributes to a todo.txt line.
 export interface ComposeFields {
-  priority: string;
   description: string;
   project: string;
   contexts: string[];
   due: string;
 }
 
-// Build a todo.txt line from the form controls. Priority must lead the line; the rest of the
-// order is cosmetic. Each label select contributes at most one label (picker-only single-select).
+// Build a todo.txt line from the form controls. Each label select contributes at most one label.
 export function composeText(f: ComposeFields): string {
   const parts: string[] = [];
-  if (f.priority) parts.push(`(${f.priority})`);
+  validateDescription(f.description);
   const desc = f.description.trim();
   if (desc) parts.push(desc);
   if (f.project) parts.push(`+${f.project}`);
@@ -37,7 +35,7 @@ export function composeText(f: ComposeFields): string {
 // Only the metadata needed for editing: no transport dependency or duplicate form state.
 interface EditableTask {
   completed: boolean;
-  priority: string | null;
+  raw: string;
   completion_date: string | null;
   creation_date: string | null;
   description: string;
@@ -46,23 +44,45 @@ interface EditableTask {
   tags: Record<string, string>;
 }
 
-export function getTaskPriority(task: Pick<EditableTask, "completed" | "priority" | "description">): string {
-  if (task.priority) return task.priority;
-  if (!task.completed) return "";
-  const saved = task.description.split(/\s+/).find((token) => /^pri:[A-Z]$/.test(token));
-  return saved?.slice(4) ?? "";
+export function validateDescription(description: string): void {
+  if (/^\([A-Z]\)(?:\s|$)/.test(description.trim())) {
+    throw new Error("Description cannot begin with (A)–(Z): this position is reserved for legacy data. Move the token later in the text.");
+  }
 }
 
-// Updates replace whole task lines. Keep lifecycle metadata and hidden contexts here,
-// with completed priority stored as pri:X so the existing backend can restore it.
+// Validate raw independently of the editable body; DTO dates remain authoritative.
+function legacyPrefix(task: EditableTask): string | null {
+  const fail = () => { throw new Error("Cannot safely edit this task: raw text is missing or inconsistent. Reload or upgrade the server."); };
+  if (typeof task.raw !== "string" || !task.raw.trim() || /[\r\n]/.test(task.raw)) return fail();
+  let rest = task.raw.trim();
+  const completed = rest.startsWith("x ");
+  if (completed !== task.completed) return fail();
+  if (completed) rest = rest.slice(2).trimStart();
+  const match = rest.match(/^\([A-Z]\)(?=\s|$)/);
+  const prefix = match?.[0] ?? null;
+  if (prefix) rest = rest.slice(prefix.length).trimStart();
+  const takeDate = () => {
+    const token = rest.split(/\s/)[0];
+    if (!isTaskDate(token)) return null;
+    rest = rest.slice(token.length).trimStart();
+    return token;
+  };
+  const completion = completed ? takeDate() : null;
+  const creation = !completed || completion ? takeDate() : null;
+  if (completion !== task.completion_date || creation !== task.creation_date || rest !== task.description) return fail();
+  return prefix;
+}
+
+// Updates replace whole task lines, retaining hidden legacy data and lifecycle metadata.
 export function composeEditedTask(task: EditableTask, fields: Omit<ComposeFields, "contexts">, editDate: string): string {
+  validateDescription(fields.description);
   if (!isTaskDate(editDate)) throw new Error("Invalid task edit date");
   if (task.completed && task.creation_date && !task.completion_date) {
     throw new Error("Cannot preserve creation date on a completed task without a completion date");
   }
+  const prefix = legacyPrefix(task);
   const descriptionTokens = fields.description.split(/\s+/).filter((token) => token &&
-    !token.startsWith("updated:") && !token.startsWith("due:") &&
-    !(task.completed && /^pri:[A-Z]$/.test(token)));
+    !token.startsWith("updated:") && !token.startsWith("due:"));
   if (!descriptionTokens.length && !task.contexts.length) return "";
 
   const submittedKeys = new Set(descriptionTokens.map(tagEntry).filter((entry) => entry !== null).map(([key]) => key));
@@ -82,12 +102,11 @@ export function composeEditedTask(task: EditableTask, fields: Omit<ComposeFields
   for (const [key, value] of Object.entries(task.tags)) {
     if (!["due", "updated", "pri"].includes(key) && !submittedKeys.has(key)) body.push(`${key}:${value}`);
   }
-  if (task.completed && fields.priority) body.push(`pri:${fields.priority}`);
   body.push(`updated:${editDate}`);
 
   const parts: string[] = [];
   if (task.completed) parts.push("x");
-  else if (fields.priority) parts.push(`(${fields.priority})`);
+  if (prefix) parts.push(prefix);
   if (task.completed && task.completion_date) {
     parts.push(task.completion_date);
     if (task.creation_date) parts.push(task.creation_date);
@@ -136,7 +155,7 @@ export function bareDescription(
   return stripTokens(description, [
     ...projects.map((p) => `+${p}`),
     ...contexts.map((c) => `@${c}`),
-    ...Object.entries(tags).map(([k, v]) => `${k}:${v}`),
+    ...Object.entries(tags).filter(([k]) => k !== "pri").map(([k, v]) => `${k}:${v}`),
   ]);
 }
 

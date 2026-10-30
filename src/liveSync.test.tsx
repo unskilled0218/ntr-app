@@ -45,7 +45,7 @@ it("recovers both real panes after connected even when one GET fails and no furt
         return { ok: false, status: 503, status_text: "Unavailable", body: "" };
       }
       const task: Task = {
-        id: 1, completed: false, priority: null, completion_date: null, creation_date: null,
+        id: 1, completed: false, completion_date: null, creation_date: null,
         description: taskText, projects: [], contexts: [], tags: {}, raw: taskText,
       };
       body = JSON.stringify([task]);

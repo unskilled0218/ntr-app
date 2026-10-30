@@ -12,7 +12,6 @@ import { classifyConflict } from "./lib/conflict";
 export interface Task {
   id: number;
   completed: boolean;
-  priority: string | null;
   completion_date: string | null;
   creation_date: string | null;
   description: string;
@@ -25,7 +24,6 @@ export interface Task {
 // Filters for listing tasks — the server's query params, now command arguments.
 export interface TaskFilter {
   completed?: boolean | null;
-  priority?: string | null;
   project?: string | null;
   context?: string | null;
 }
@@ -165,7 +163,6 @@ export function listTasks(filter: TaskFilter, context = captureTransport()): Pro
   if (context.url) {
     const params = new URLSearchParams();
     if (filter.completed != null) params.set("completed", String(filter.completed));
-    if (filter.priority != null) params.set("priority", filter.priority);
     if (filter.project != null) params.set("project", filter.project);
     if (filter.context != null) params.set("context", filter.context);
     const qs = params.toString();
@@ -173,7 +170,6 @@ export function listTasks(filter: TaskFilter, context = captureTransport()): Pro
   }
   return invoke("list_tasks", {
     completed: filter.completed ?? null,
-    priority: filter.priority ?? null,
     project: filter.project ?? null,
     context: filter.context ?? null,
   });

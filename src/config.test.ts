@@ -6,7 +6,6 @@ function task(over: Partial<Task>): Task {
   return {
     id: 0,
     completed: false,
-    priority: null,
     completion_date: null,
     creation_date: null,
     description: "",
@@ -34,13 +33,13 @@ describe("sortTasks", () => {
     expect(sortTasks(tasks, "file")).toBe(tasks);
   });
 
-  it("priority sort is ascending with missing priorities last, file order breaking ties", () => {
-    const a = task({ id: 1, priority: "B" });
-    const b = task({ id: 2, priority: null });
-    const c = task({ id: 3, priority: "A" });
-    const d = task({ id: 4, priority: "A" });
+  it("removed priority sort falls back to file order", () => {
+    const a = task({ id: 1 });
+    const b = task({ id: 2 });
+    const c = task({ id: 3 });
+    const d = task({ id: 4 });
     const out = sortTasks([a, b, c, d], "priority").map((t) => t.id);
-    expect(out).toEqual([3, 4, 1, 2]); // A(3),A(4) by file order, then B(1), then missing(2)
+    expect(out).toEqual([1, 2, 3, 4]);
   });
 
   it("due sort reads the due tag and sinks tasks without one", () => {
@@ -63,11 +62,11 @@ describe("sortTasks", () => {
   });
 
   it("desc reverses a comparator sort, putting missing-key tasks first", () => {
-    const a = task({ id: 1, priority: "B" });
-    const b = task({ id: 2, priority: null });
-    const c = task({ id: 3, priority: "A" });
+    const a = task({ id: 1, creation_date: "2026-06-02" });
+    const b = task({ id: 2 });
+    const c = task({ id: 3, creation_date: "2026-06-01" });
     // asc is [A, B, missing] = [3, 1, 2]; desc negates the comparator => [2, 1, 3].
-    expect(sortTasks([a, b, c], "priority", "desc").map((t) => t.id)).toEqual([2, 1, 3]);
+    expect(sortTasks([a, b, c], "created", "desc").map((t) => t.id)).toEqual([2, 1, 3]);
   });
 
   it("desc on file order returns the backend order reversed", () => {
@@ -76,13 +75,13 @@ describe("sortTasks", () => {
   });
 
   it("omitting the direction defaults to ascending", () => {
-    const a = task({ id: 1, priority: "B" });
-    const c = task({ id: 3, priority: "A" });
+    const a = task({ id: 1 });
+    const c = task({ id: 3 });
     expect(sortTasks([a, c], "priority")).toEqual(sortTasks([a, c], "priority", "asc"));
   });
 
   it("never mutates the input array (asc comparator, desc comparator, file desc)", () => {
-    const tasks = [task({ id: 1, priority: "B" }), task({ id: 2, priority: "A" })];
+    const tasks = [task({ id: 1 }), task({ id: 2 })];
     const before = tasks.map((t) => t.id);
     sortTasks(tasks, "priority");
     sortTasks(tasks, "priority", "desc");
@@ -90,7 +89,7 @@ describe("sortTasks", () => {
     expect(tasks.map((t) => t.id)).toEqual(before);
   });
 
-  it("offers exactly the file/priority/due/created/projects sorts", () => {
-    expect(Object.keys(SORTS)).toEqual(["file", "priority", "due", "created", "projects"]);
+  it("offers exactly the file/due/created/projects sorts", () => {
+    expect(Object.keys(SORTS)).toEqual(["file", "due", "created", "projects"]);
   });
 });

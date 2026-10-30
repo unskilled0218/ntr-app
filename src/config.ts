@@ -24,17 +24,6 @@ export const ADD_VALUE = "+add";
 // is the real no-selection state; this is only its label, kept in one place.
 export const EMPTY_LABEL = "None";
 
-// Priority letters offered by the add/edit pickers. A–C covers the common cases; tasks with
-// higher priorities set via raw todo.txt are preserved and displayed but not offered as picker options.
-export const PRIORITIES = ["A", "B", "C"] as const;
-
-// The Priority picker's options, with the no-selection "None" first. Defined once here so the
-// add form and the edit modal offer the identical list instead of each rebuilding it (DRY).
-export const PRIORITY_OPTIONS = [
-  { value: "", label: EMPTY_LABEL },
-  ...PRIORITIES.map((p) => ({ value: p as string, label: p as string })),
-];
-
 // How long after the last keystroke the note auto-saves. One named source, not a magic number.
 export const NOTE_SAVE_DELAY_MS = 800;
 
@@ -49,8 +38,8 @@ export const NOTE_UNDO_LIMIT = 200;
 export const LONG_PRESS_MS = 500;
 
 // Compare two optional sort keys ascending, with absent values (null/undefined) always ordering
-// after present ones — so "no priority" / "no due date" sink to the bottom. ISO date strings and
-// single-char priorities compare correctly with <, so no parsing is needed.
+// after present ones — so "no due date" sinks to the bottom. ISO date strings
+// compare correctly with <, so no parsing is needed.
 export function cmpMissingLast(a: string | null | undefined, b: string | null | undefined): number {
   if (a == null && b == null) return 0;
   if (a == null) return 1;
@@ -71,7 +60,6 @@ function firstLabel(labels: string[]): string | null {
 // among ties. The project sort keys off the task's alphabetically-first project.
 export const SORTS: Record<string, { label: string; compare: ((a: Task, b: Task) => number) | null }> = {
   file: { label: "File order", compare: null },
-  priority: { label: "Priority", compare: (a, b) => cmpMissingLast(a.priority, b.priority) },
   due: { label: "Due date", compare: (a, b) => cmpMissingLast(a.tags.due, b.tags.due) },
   created: { label: "Created", compare: (a, b) => cmpMissingLast(a.creation_date, b.creation_date) },
   projects: { label: "Projects", compare: (a, b) => cmpMissingLast(firstLabel(a.projects), firstLabel(b.projects)) },
@@ -100,7 +88,7 @@ export const SWIPE_MIN = 50;
 // the exact reverse of asc — including sinking missing-key tasks to the top — one rule, no special
 // case. Stable sort keeps file order among ties in both directions.
 export function sortTasks(tasks: Task[], sort: string, dir: Direction = "asc"): Task[] {
-  const compare = SORTS[sort].compare;
+  const compare = (SORTS[sort] ?? SORTS.file).compare;
   if (!compare) return dir === "asc" ? tasks : [...tasks].reverse();
   const sign = dir === "asc" ? 1 : -1;
   return [...tasks].sort((a, b) => sign * compare(a, b));

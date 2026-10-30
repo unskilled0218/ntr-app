@@ -450,12 +450,6 @@ li.task.completed .text {
   text-decoration: line-through;
 }
 
-.priority {
-  font-weight: 700;
-  color: var(--accent);
-  margin-right: 0.3rem;
-}
-
 .meta {
   display: block;
   font-size: 0.8rem;

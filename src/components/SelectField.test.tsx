@@ -127,7 +127,7 @@ describe("SelectField", () => {
     expect(onAction).toHaveBeenCalledWith(action === "choice" ? "home" : "work");
   });
 
-  it.each(["Priority", "Project"])("keeps label-wrapped %s closed under modeled removed-target label activation", (name) => {
+  it.each(["Project"])("keeps label-wrapped %s closed under modeled removed-target label activation", (name) => {
     const onChange = vi.fn();
     render(<label>{name}<SelectField ariaLabel={name} value="work" options={OPTIONS} onChange={onChange} /></label>);
     const trigger = screen.getByRole("button", { name });

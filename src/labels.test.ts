@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bareDescription, composeEditedTask, composeText, getTaskPriority, hideContexts, parseLabelInput, planLabelRemoval, removeLabel, unionLabels } from "./labels";
+import { bareDescription, composeEditedTask, composeText, hideContexts, parseLabelInput, planLabelRemoval, removeLabel, unionLabels } from "./labels";
 
 describe("unionLabels", () => {
   it("merges and de-duplicates remembered and derived labels", () => {
@@ -16,31 +16,31 @@ describe("unionLabels", () => {
 });
 
 describe("composeText", () => {
-  it("puts the priority first and appends label sigils and due tag", () => {
+  it("appends label sigils and due tag", () => {
     expect(
-      composeText({ priority: "A", description: "call bank", project: "money", contexts: ["phone"], due: "2026-06-30" }),
-    ).toBe("(A) call bank +money @phone due:2026-06-30");
+      composeText({ description: "call bank", project: "money", contexts: ["phone"], due: "2026-06-30" }),
+    ).toBe("call bank +money @phone due:2026-06-30");
   });
 
   it("omits empty fields and trims the description", () => {
-    expect(composeText({ priority: "", description: "  buy milk  ", project: "", contexts: [], due: "" })).toBe(
+    expect(composeText({ description: "  buy milk  ", project: "", contexts: [], due: "" })).toBe(
       "buy milk",
     );
   });
 
   it("emits project before context", () => {
-    expect(composeText({ priority: "", description: "x", project: "p", contexts: ["c"], due: "" })).toBe("x +p @c");
+    expect(composeText({ description: "x", project: "p", contexts: ["c"], due: "" })).toBe("x +p @c");
   });
 
   it("does not duplicate preserved contexts already typed in the description", () => {
-    expect(composeText({ priority: "", description: "call @phone", project: "", contexts: ["phone", "store", "store"], due: "" })).toBe("call @phone @store");
+    expect(composeText({ description: "call @phone", project: "", contexts: ["phone", "store", "store"], due: "" })).toBe("call @phone @store");
   });
 });
 
 describe("composeEditedTask", () => {
   const original = {
     completed: false,
-    priority: "A",
+    raw: "(A) 2026-06-01 call bank @phone @store",
     creation_date: "2026-06-01",
     completion_date: null,
     description: "call bank @phone @store",
@@ -48,35 +48,35 @@ describe("composeEditedTask", () => {
     projects: [],
     tags: {} as Record<string, string>,
   };
-  const fields = { priority: "B", description: "call later", project: "work", due: "2026-06-30" };
+  const fields = { description: "call later", project: "work", due: "2026-06-30" };
 
   it("keeps active creation date and every hidden context while changing visible fields", () => {
-    expect(composeEditedTask(original, fields, "2026-10-11")).toBe("(B) 2026-06-01 call later +work @phone @store due:2026-06-30 updated:2026-10-11");
+    expect(composeEditedTask(original, fields, "2026-10-11")).toBe("(A) 2026-06-01 call later +work @phone @store due:2026-06-30 updated:2026-10-11");
   });
 
   it.each([{ contexts: [] }, { contexts: ["phone"] }, { contexts: ["phone", "store"] }])("retains context values $contexts", ({ contexts }) => {
-    expect(composeEditedTask({ ...original, contexts }, { ...fields, priority: "", project: "", due: "" }, "2026-10-11")).toBe(["2026-06-01 call later", ...contexts.map((c) => `@${c}`), "updated:2026-10-11"].join(" "));
+    expect(composeEditedTask({ ...original, contexts }, { ...fields, project: "", due: "" }, "2026-10-11")).toBe(["(A) 2026-06-01 call later", ...contexts.map((c) => `@${c}`), "updated:2026-10-11"].join(" "));
   });
 
-  it.each(["A", "B", "Z", ""])("serializes completed effective priority '%s' without stale tags", (priority) => {
-    const completed = { ...original, completed: true, priority: null, completion_date: "2026-06-02", description: "call bank @phone @store pri:A" };
-    const text = composeEditedTask(completed, { ...fields, priority, description: "call later pri:A pri:B" }, "2026-10-11");
-    expect(text).toBe(`x 2026-06-02 2026-06-01 call later +work @phone @store due:2026-06-30${priority ? ` pri:${priority}` : ""} updated:2026-10-11`);
+  it.each(["pri:A", "pri:A pri:B", "pri:B pri:A", "pri:A pri:A", ""])("serializes submitted ordinary tokens '%s' exactly", (tokens) => {
+    const completed = { ...original, completed: true, completion_date: "2026-06-02", description: "call bank @phone @store pri:A", raw: "x (A) 2026-06-02 2026-06-01 call bank @phone @store pri:A", tags: { pri: "A" } };
+    const text = composeEditedTask(completed, { ...fields, description: `call later${tokens ? ` ${tokens}` : ""}` }, "2026-10-11");
+    expect(text).toBe(`x (A) 2026-06-02 2026-06-01 call later${tokens ? ` ${tokens}` : ""} +work @phone @store due:2026-06-30 updated:2026-10-11`);
   });
 
   it("rejects inconsistent completed dates instead of losing creation", () => {
-    expect(() => composeEditedTask({ ...original, completed: true }, { ...fields, priority: "" }, "2026-10-11")).toThrow("without a completion date");
+    expect(() => composeEditedTask({ ...original, completed: true }, fields, "2026-10-11")).toThrow("without a completion date");
   });
 
   it("supports context-only edits without inventing a description", () => {
-    expect(composeEditedTask({ ...original, creation_date: null }, { priority: "", description: "", project: "", due: "" }, "2026-10-11")).toBe("@phone @store updated:2026-10-11");
+    expect(composeEditedTask({ ...original, creation_date: null, raw: original.description }, { description: "", project: "", due: "" }, "2026-10-11")).toBe("@phone @store updated:2026-10-11");
   });
 
   it("replaces old stamps while preserving original dates, multiple projects, and hidden tags", () => {
     const source = { ...original, projects: ["work", "cart"], tags: { updated: "2026-10-10", custom: "old", url: "https://old:443/path" } };
     const snapshot = structuredClone(source);
     const first = composeEditedTask(source, { ...fields, description: "call later custom:new updated:2026-10-09 updated:bad due:old +work @phone @phone" }, "2026-10-11");
-    expect(first).toBe("(B) 2026-06-01 call later custom:new +work @phone +cart @store due:2026-06-30 url:https://old:443/path updated:2026-10-11");
+    expect(first).toBe("(A) 2026-06-01 call later custom:new +work @phone +cart @store due:2026-06-30 url:https://old:443/path updated:2026-10-11");
     expect(first).not.toContain("custom:old");
     const second = composeEditedTask({ ...source, tags: { ...source.tags, custom: "new", updated: "2026-10-11" } }, { ...fields, description: "call again" }, "2026-10-12");
     expect(second).toContain("2026-06-01 call again +work +cart");
@@ -105,22 +105,37 @@ describe("composeEditedTask", () => {
   });
 
   it("edits no-date legacy records without inventing history and rejects an updated-only body", () => {
-    const source = { ...original, completed: true, creation_date: null, contexts: [] };
-    expect(composeEditedTask(source, { ...fields, priority: "" }, "2026-10-11")).toBe("x call later +work due:2026-06-30 updated:2026-10-11");
+    const source = { ...original, completed: true, creation_date: null, contexts: [], raw: `x ${original.description}` };
+    expect(composeEditedTask(source, fields, "2026-10-11")).toBe("x call later +work due:2026-06-30 updated:2026-10-11");
     expect(composeEditedTask(source, { ...fields, description: "updated:old" }, "2026-10-11")).toBe("");
     expect(() => composeEditedTask(original, fields, "2026-02-30")).toThrow("Invalid task edit date");
   });
-});
 
-describe("getTaskPriority", () => {
-  it.each(["A", "Z"])("restores completed priority %s from its saved tag", (priority) => {
-    expect(getTaskPriority({ completed: true, priority: null, description: `task pri:${priority}` })).toBe(priority);
+  it.each([false, true])("validates raw lifecycle data for old and new DTO shapes (completed=%s)", (completed) => {
+    const source = { ...original, completed, completion_date: completed ? "2026-06-02" : null,
+      raw: `${completed ? "x " : ""}(A) ${completed ? "2026-06-02 " : ""}2026-06-01 ${original.description}` };
+    for (const dto of [source, { ...source, priority: "Z" }]) {
+      expect(composeEditedTask(dto, fields, "2026-10-11")).toContain("(A)");
+      for (const changes of [
+        { raw: undefined }, { raw: "" }, { raw: `${dto.raw}\nother` },
+        { completed: !completed }, { creation_date: "2026-06-03" },
+        { completion_date: "2026-06-03" }, { description: "inconsistent body" },
+        { raw: dto.raw.replace("(A) ", "(A)") },
+      ]) {
+        const invalid = { ...dto, ...changes } as typeof source;
+        expect(() => composeEditedTask(invalid, fields, "2026-10-11")).toThrow(/Cannot safely edit|without a completion date/);
+      }
+    }
   });
 
-  it("prefers a leading priority and ignores invalid or active saved tags", () => {
-    expect(getTaskPriority({ completed: true, priority: "B", description: "task pri:A" })).toBe("B");
-    expect(getTaskPriority({ completed: true, priority: null, description: "task pri:AA pri:a" })).toBe("");
-    expect(getTaskPriority({ completed: false, priority: null, description: "task pri:A" })).toBe("");
+  it.each(["(A)", "(A) call", " (Z) call", "(A)\tcall"])("rejects ambiguous submitted description %s", (description) => {
+    expect(() => composeText({ description, project: "", contexts: [], due: "" })).toThrow("reserved for legacy data");
+    expect(() => composeEditedTask(original, { ...fields, description }, "2026-10-11")).toThrow("reserved for legacy data");
+  });
+
+  it.each(["(A)call", "(a) call", "(AA) call", "call (A)"])("keeps ordinary submitted description %s", (description) => {
+    expect(composeText({ description, project: "", contexts: [], due: "" })).toBe(description);
+    expect(composeEditedTask(original, { ...fields, description }, "2026-10-11")).toContain(`2026-06-01 ${description}`);
   });
 });
 

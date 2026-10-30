@@ -22,6 +22,37 @@ function addLabelViaModal(kind: "project", name: string) {
 }
 
 describe("AddForm", () => {
+  it.each([false, true])("accepts ordinary text and repeated pri: tokens (compact=%s)", async (compact) => {
+    const onAdd = vi.fn().mockResolvedValue(true);
+    render(<AddForm serverLabels={EMPTY_LABELS} onAdd={onAdd} compact={compact} />);
+    for (const description of ["(A)call", "(a) call", "call (A)", "call pri:A pri:B pri:A"]) {
+      fireEvent.change(screen.getByRole("textbox", { name: "New task" }), { target: { value: description } });
+      fireEvent.submit(document.getElementById("add-form")!);
+      await waitFor(() => expect(onAdd).toHaveBeenLastCalledWith(description));
+      await waitFor(() => expect((screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement).value).toBe(""));
+    }
+    expect(screen.queryByRole("button", { name: "Priority" })).toBeNull();
+  });
+
+  it.each([false, true])("rejects ambiguous input without losing fields (compact=%s)", (compact) => {
+    const onAdd = vi.fn();
+    render(<AddForm serverLabels={EMPTY_LABELS} onAdd={onAdd} compact={compact} />);
+    if (compact) fireEvent.click(screen.getByRole("button", { name: "Task options" }));
+    fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2026-12-01" } });
+    if (compact) fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    const input = screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement;
+    for (const value of ["(A) call", "(A)"]) {
+      fireEvent.change(input, { target: { value } });
+      fireEvent.submit(document.getElementById("add-form")!);
+      expect(screen.getByRole("alert").textContent).toContain("reserved for legacy data");
+      expect(input.value).toBe(value);
+      if (compact) fireEvent.click(screen.getByRole("button", { name: "Task options" }));
+      expect((screen.getByLabelText("Due date") as HTMLInputElement).value).toBe("2026-12-01");
+      if (compact) fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      expect(onAdd).not.toHaveBeenCalled();
+    }
+  });
+
   // The reported bug: with LabelModal nested inside <form id="add-form">, the modal's submit
   // bubbled (through the React tree) into the add form, creating a stray task and clearing the
   // just-picked label. The modal is now a sibling of the form, so neither happens.
@@ -74,10 +105,10 @@ describe("AddForm", () => {
     expect(form.getByRole("button", { name: /^add$/i })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^priority$/i })).toBeNull();
 
-    // Opening the Options modal reveals only Priority / Project / Due controls.
+    // Opening the Options modal reveals only Project / Due controls.
     fireEvent.click(screen.getByRole("button", { name: /task options/i }));
     const options = within(document.querySelector("dialog.options-modal[open]") as HTMLElement);
-    expect(options.getByRole("button", { name: /^priority$/i })).toBeTruthy();
+    expect(options.queryByRole("button", { name: /^priority$/i })).toBeNull();
     expect(options.getByRole("button", { name: /^project$/i })).toBeTruthy();
     expect(options.queryByRole("button", { name: /^context$/i })).toBeNull();
     expect(options.getByLabelText(/due date/i)).toBeTruthy();
@@ -128,7 +159,7 @@ describe("AddForm", () => {
       fireEvent.change(description, { target: { value: "unfinished task" } });
       if (compact) fireEvent.click(screen.getByRole("button", { name: "Task options" }));
       fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2026-12-01" } });
-      for (const [field, value] of [["Priority", "A"], ["Project", "work"]]) {
+      for (const [field, value] of [["Project", "work"]]) {
         fireEvent.click(screen.getByRole("button", { name: field }));
         clickWithRemovedTargetLabelActivation(within(document.querySelector("dialog.select-modal[open]")!).getByRole("button", { name: value }));
         deferred.flush();
@@ -168,7 +199,7 @@ describe("AddForm", () => {
       expect(handoffs.pickerClosedAtOpen).toEqual([true, true]);
       expect(description.value).toBe("unfinished task");
       expect((screen.getByLabelText("Due date") as HTMLInputElement).value).toBe("2026-12-01");
-      expect(screen.getByRole("button", { name: "Priority" }).textContent).toBe("A");
+      expect(screen.queryByRole("button", { name: "Priority" })).toBeNull();
       expect(onAdd).not.toHaveBeenCalled();
       if (compact) expect((document.querySelector("dialog.options-modal") as HTMLDialogElement).open).toBe(true);
       fireEvent.click(screen.getByRole("button", { name: "Project" }));
