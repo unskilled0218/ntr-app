@@ -8,7 +8,6 @@ import { cancelDialog } from "../test/dialog";
 
 const SORT_OPTIONS: FieldOption[] = [
   { value: "file", label: "File order" },
-  { value: "priority", label: "Priority" },
   { value: "due", label: "Due date" },
   { value: "created", label: "Created" },
   { value: "projects", label: "Projects" },
@@ -43,8 +42,8 @@ afterEach(() => { cleanup(); });
 
 describe("SortField", () => {
   it("has a 'Sort' trigger showing the current sort and direction", () => {
-    renderField({ sort: "priority", dir: "desc" });
-    expect(screen.getByRole("button", { name: "Sort" }).textContent).toBe("Priority · DESC");
+    renderField({ sort: "due", dir: "desc" });
+    expect(screen.getByRole("button", { name: "Sort" }).textContent).toBe("Due date · DESC");
   });
 
   it("is closed until the trigger is clicked, then shows both the sort and direction options", () => {
@@ -56,6 +55,7 @@ describe("SortField", () => {
     // Sort keys (incl. the task-16 additions, no A-Z) ...
     expect(dialog.getByRole("button", { name: "Projects" })).toBeTruthy();
     expect(dialog.queryByRole("button", { name: "Contexts" })).toBeNull();
+    expect(dialog.queryByRole("button", { name: "Priority" })).toBeNull();
     expect(dialog.queryByRole("button", { name: /^a-z$/i })).toBeNull();
     // ... and the directions, in the same modal.
     expect(dialog.getByRole("button", { name: "ASC" })).toBeTruthy();
@@ -63,10 +63,10 @@ describe("SortField", () => {
   });
 
   it("marks the current sort and direction rows", () => {
-    renderField({ sort: "priority", dir: "desc" });
+    renderField({ sort: "due", dir: "desc" });
     fireEvent.click(screen.getByRole("button", { name: "Sort" }));
     const dialog = openDialog();
-    expect(dialog.getByRole("button", { name: "Priority" }).getAttribute("aria-current")).toBe("true");
+    expect(dialog.getByRole("button", { name: "Due date" }).getAttribute("aria-current")).toBe("true");
     expect(dialog.getByRole("button", { name: "DESC" }).getAttribute("aria-current")).toBe("true");
   });
 

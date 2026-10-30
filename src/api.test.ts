@@ -129,7 +129,7 @@ describe("listTasks (server mode)", () => {
 
   it("appends only non-null filter params", async () => {
     mockServer([[[]]]);
-    await listTasks({ completed: false, project: "work", context: null, priority: null });
+    await listTasks({ completed: false, project: "work", context: null });
     const url = reqOf(0).url;
     expect(url).toContain("completed=false");
     expect(url).toContain("project=work");
@@ -149,7 +149,7 @@ describe("listTasks (local mode)", () => {
     localStorage.removeItem("ntr.serverUrl");
     vi.mocked(invoke).mockResolvedValueOnce([TASK]);
     await expect(listTasks({ project: "work" })).resolves.toEqual([TASK]);
-    expect(invoke).toHaveBeenCalledWith("list_tasks", { completed: null, priority: null, project: "work", context: null });
+    expect(invoke).toHaveBeenCalledWith("list_tasks", { completed: null, project: "work", context: null });
   });
 });
 

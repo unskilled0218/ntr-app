@@ -6,7 +6,7 @@ import TaskItem from "./TaskItem";
 afterEach(cleanup);
 
 const task: Task = {
-  id: 1, completed: false, priority: "A", creation_date: "2026-06-01", completion_date: null,
+  id: 1, completed: false, creation_date: "2026-06-01", completion_date: null,
   description: "call @phone @store +work mail@phone https://site/@phone",
   projects: ["work"], contexts: ["phone", "store"], tags: {}, raw: "",
 };
@@ -14,7 +14,8 @@ const task: Task = {
 describe("TaskItem", () => {
   it("hides project/context tokens from description while retaining project metadata and ordinary @ text", () => {
     const { container } = render(<TaskItem task={task} onToggle={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />);
-    expect(container.querySelector(".text")!.textContent).toBe("(A)call mail@phone https://site/@phone");
+    expect(container.querySelector(".text")!.textContent).toBe("call mail@phone https://site/@phone");
+    expect(container.querySelector(".priority")).toBeNull();
     expect(container.querySelector(".meta")!.textContent).toBe("+work created:2026-06-01");
   });
 
@@ -70,7 +71,7 @@ describe("TaskItem", () => {
 
   it.each([false, true])("preserves lifecycle metadata and original action payloads when completed=%s", (completed) => {
     const original: Task = {
-      ...task, completed, priority: completed ? null : "A", completion_date: completed ? "2026-06-02" : null,
+      ...task, completed, completion_date: completed ? "2026-06-02" : null,
       description: "call +work @phone due:2026-06-30", tags: { due: "2026-06-30" },
       raw: `${completed ? "x 2026-06-02" : "(A)"} 2026-06-01 call +work @phone due:2026-06-30`,
     };
@@ -81,7 +82,7 @@ describe("TaskItem", () => {
     const { container } = render(<TaskItem task={original} onToggle={onToggle} onEdit={onEdit} onDelete={onDelete} />);
     expect(container.querySelector("li.task")!.classList.contains("completed")).toBe(completed);
     expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(completed);
-    expect(container.querySelector(".text")!.textContent).toBe(`${completed ? "" : "(A)"}call`);
+    expect(container.querySelector(".text")!.textContent).toBe("call");
     expect(container.querySelector(".meta")!.textContent).toBe(`+work due:2026-06-30 created:2026-06-01${completed ? " done:2026-06-02" : ""}`);
     fireEvent.click(screen.getByRole("checkbox"));
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));

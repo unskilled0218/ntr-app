@@ -1,16 +1,15 @@
-// The add form: free-text description + priority/due/project controls, and the label-add
+// The add form: free-text description + due/project controls, and the label-add
 // modal it drives. Ported from #add-form + app.js (composeText, the label-select change handling,
 // staging). Owns its own field state and the session's staged labels (labels created in the modal
 // but not yet attached to any task; they persist for the session, exactly as app.js's module-level
 // `staged` does).
 
 import { useState } from "react";
-import { PRIORITY_OPTIONS } from "../config";
+import { errMsg } from "../api";
 import { composeText } from "../labels";
 import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
 import OptionsModal from "./OptionsModal";
-import SelectField from "./SelectField";
 
 interface Props {
   serverLabels: { project: string[]; context: string[] };
@@ -21,7 +20,7 @@ interface Props {
 
 export default function AddForm({ serverLabels, onAdd, compact }: Props) {
   const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState("");
+  const [error, setError] = useState("");
   const [due, setDue] = useState("");
   const [project, setProject] = useState("");
   const [staged, setStaged] = useState<string[]>([]);
@@ -38,11 +37,17 @@ export default function AddForm({ serverLabels, onAdd, compact }: Props) {
     e.preventDefault();
     // A description is the one required field; without it an add is a no-op.
     if (!description.trim()) return;
-    const text = composeText({ priority, description, project, contexts: [], due });
+    setError("");
+    let text: string;
+    try {
+      text = composeText({ description, project, contexts: [], due });
+    } catch (err) {
+      setError(errMsg(err));
+      return;
+    }
     const ok = await onAdd(text);
     if (ok) {
       setDescription("");
-      setPriority("");
       setDue("");
       setProject("");
     }
@@ -53,14 +58,10 @@ export default function AddForm({ serverLabels, onAdd, compact }: Props) {
   // form's onSubmit (creating a stray task and clearing the just-picked label). Keeping it outside
   // matches EditTaskModal and the original web UI (server/web/index.html), where #label-modal is a
   // top-level sibling of #add-form.
-  // The three field controls, defined once and rendered either inline (default) or inside the
+  // The field controls, defined once and rendered either inline (default) or inside the
   // compact Options modal — so their props and wiring live in exactly one place.
   const fields = (
     <>
-      <label>
-        Priority
-        <SelectField ariaLabel="Priority" value={priority} options={PRIORITY_OPTIONS} onChange={setPriority} />
-      </label>
       <label>
         Due
         <input type="date" aria-label="Due date" value={due} onChange={(e) => setDue(e.currentTarget.value)} />
@@ -95,6 +96,7 @@ export default function AddForm({ serverLabels, onAdd, compact }: Props) {
           <button type="submit">Add</button>
           {compact && <OptionsModal ariaLabel="Task options">{fields}</OptionsModal>}
         </div>
+        {error && <p className="modal-error" role="alert">{error}</p>}
       </form>
       <LabelModal kind={modalKind} onConfirm={(_, name) => onConfirm(name)} onClose={() => setModalKind(null)} />
     </>

@@ -120,13 +120,13 @@ describe("getCompactUi / setCompactUi", () => {
 });
 
 describe("clearLegacyTodoPreferences", () => {
-  it.each(["active", "completed", "all", "bogus"])("removes legacy status %s without changing sort options", (status) => {
+  it.each(["active", "completed", "all", "bogus"])("removes legacy status %s and falls back from priority while retaining direction", (status) => {
     localStorage.setItem("ntr.status", status);
     setSort("priority");
     setDirection("desc");
     clearLegacyTodoPreferences();
     expect(localStorage.getItem("ntr.status")).toBeNull();
-    expect(getSort()).toBe("priority");
+    expect(getSort()).toBe("file");
     expect(getDirection()).toBe("desc");
   });
 });
@@ -142,9 +142,9 @@ describe("getSort / setSort", () => {
   });
 
   it("round-trips a valid non-default sort key", () => {
-    setSort("priority");
-    expect(localStorage.getItem("ntr.sort")).toBe("priority");
-    expect(getSort()).toBe("priority");
+    setSort("due");
+    expect(localStorage.getItem("ntr.sort")).toBe("due");
+    expect(getSort()).toBe("due");
   });
 
   it("falls back from the removed contexts sort while retaining direction", () => {

@@ -39,7 +39,6 @@ function task(id: number, raw: string, projects: string[], contexts: string[]): 
   return {
     id,
     completed: false,
-    priority: null,
     completion_date: null,
     creation_date: null,
     description: raw,

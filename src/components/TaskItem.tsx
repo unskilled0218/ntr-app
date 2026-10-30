@@ -1,4 +1,4 @@
-// One task row: checkbox, priority/description/meta, Edit/Delete. Direct port of app.js
+// One task row: checkbox, description/meta, Edit/Delete. Direct port of app.js
 // taskElement; class names match style.css.
 
 import type { Task } from "../api";
@@ -29,7 +29,6 @@ export default function TaskItem({ task, onToggle, onEdit, onDelete }: Props) {
       <input type="checkbox" checked={task.completed} onChange={() => onToggle(task)} />
       <div className="body">
         <span className="text">
-          {task.priority && <span className="priority">({task.priority})</span>}
           {/* Hide date tokens only when their effective value is displayed below. */}
           {listDescription(task.description, task.projects, task.contexts, dates) || "Task without description"}
         </span>

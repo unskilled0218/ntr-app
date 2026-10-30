@@ -11,7 +11,6 @@ use std::collections::BTreeMap;
 pub struct TaskDto {
   pub id: u64,
   pub completed: bool,
-  pub priority: Option<char>,
   pub completion_date: Option<String>,
   pub creation_date: Option<String>,
   pub description: String,
@@ -27,7 +26,6 @@ impl TaskDto {
     TaskDto {
       id: e.id,
       completed: e.task.completed,
-      priority: e.task.priority,
       completion_date: e.task.completion_date.map(|x| x.to_string()),
       creation_date: e.task.creation_date.map(|x| x.to_string()),
       description: e.task.description.clone(),
