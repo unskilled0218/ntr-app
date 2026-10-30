@@ -9,7 +9,8 @@
 
 import PickerList, { optionLabel, type FieldOption } from "./PickerList";
 import { usePickerDialog } from "./usePickerDialog";
-import type { ProjectAction } from "../lib/projectActions";
+import { useEffect, useRef, useState } from "react";
+import type { ProjectAction, ProjectSelectorSession } from "../lib/projectActions";
 
 // Re-exported so the many existing `import { FieldOption } from "./SelectField"` callers are
 // untouched; the type's home is now PickerList (it describes a picker row).
@@ -20,24 +21,53 @@ interface Props {
   value: string;
   options: FieldOption[];
   onChange(value: string): void;
-  onRemove?(value: string): void;
-  onRename?(value: string): void;
+  onRemove?(value: string, session?: ProjectSelectorSession): void;
+  onRename?(value: string, session?: ProjectSelectorSession): void;
+  retainActions?: boolean;
+  revision?: number;
   recoveries?: { id: number; label: string; kind: ProjectAction }[];
-  onRecover?(id: number): void;
+  onRecover?(id: number, session?: ProjectSelectorSession): void;
 }
 
-export default function SelectField({ ariaLabel, value, options, onChange, onRemove, onRename, recoveries, onRecover }: Props) {
+export default function SelectField({ ariaLabel, value, options, onChange, onRemove, onRename, recoveries, onRecover, retainActions, revision = 0 }: Props) {
   const { dialogRef, open, setOpen, closePicker, onClose, onCancel } = usePickerDialog();
+  const generation = useRef(0);
+  const [focus, setFocus] = useState<{ name: string; revision: number; generation: number } | null>(null);
+  useEffect(() => () => { generation.current++; }, []);
+  useEffect(() => {
+    if (!focus || !open || focus.generation !== generation.current || revision < focus.revision) return;
+    const dialog = dialogRef.current;
+    if (!dialog?.open || !dialog.isConnected) return;
+    const buttons = [...dialog.querySelectorAll<HTMLButtonElement>("button")];
+    const target = buttons.find((button) => button.getAttribute("aria-label") === `Rename ${focus.name}`)
+      ?? buttons.find((button) => button.textContent === focus.name)
+      ?? buttons.find((button) => button.textContent === "Cancel");
+    target?.focus(); setFocus(null);
+  }, [focus, open, revision, options]);
+  function session(): ProjectSelectorSession | undefined {
+    if (!retainActions) { closePicker(); return; }
+    const id = generation.current;
+    return {
+      close() {
+        if (id !== generation.current || !dialogRef.current?.open) return false;
+        generation.current++; closePicker(); return true;
+      },
+      restore(name, mappedRevision = 0) {
+        if (id === generation.current && dialogRef.current?.open) setFocus({ name, revision: mappedRevision, generation: id });
+      },
+    };
+  }
 
   function choose(v: string) {
     closePicker();
     onChange(v);
   }
 
-  function remove(v: string) {
+  function dispatch<T extends string | number>(callback: ((value: T, origin?: ProjectSelectorSession) => void) | undefined, value: T) {
     // Close first so a confirm dialog the parent opens from onRemove is not stacked under us.
-    closePicker();
-    onRemove?.(v);
+    // Retained sessions instead let the owner choose after resolving any recovery record.
+    const origin = session();
+    if (origin) callback?.(value, origin); else callback?.(value);
   }
 
   return (
@@ -47,7 +77,7 @@ export default function SelectField({ ariaLabel, value, options, onChange, onRem
         className="select-field"
         aria-label={ariaLabel}
         aria-haspopup="dialog"
-        onClick={() => setOpen(true)}
+        onClick={() => { generation.current++; setOpen(true); }}
       >
         {optionLabel(options, value)}
       </button>
@@ -61,10 +91,10 @@ export default function SelectField({ ariaLabel, value, options, onChange, onRem
               options={options}
               value={value}
               onChoose={choose}
-              onRemove={onRemove ? remove : undefined}
-              onRename={onRename ? (value) => { closePicker(); onRename(value); } : undefined}
+              onRemove={onRemove ? (value) => dispatch(onRemove, value) : undefined}
+              onRename={onRename ? (value) => dispatch(onRename, value) : undefined}
               recoveries={recoveries}
-              onRecover={(id) => { closePicker(); onRecover?.(id); }}
+              onRecover={(id) => dispatch(onRecover, id)}
             />
             <div className="modal-actions">
               <button type="button" onClick={(event) => {

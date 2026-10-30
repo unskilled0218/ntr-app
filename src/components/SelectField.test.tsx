@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import SelectField, { type FieldOption } from "./SelectField";
 import { cancelDialog, clickWithRemovedTargetLabelActivation, deferDialogCloseEvents } from "../test/dialog";
+import type { ProjectSelectorSession } from "../lib/projectActions";
 
 // The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
 
@@ -18,6 +19,25 @@ afterEach(() => { cleanup(); });
 const openDialog = () => within(document.querySelector("dialog.select-modal[open]") as HTMLElement);
 
 describe("SelectField", () => {
+  it("waits for the mapped revision before focusing and ignores an obsolete session", () => {
+    let session: ProjectSelectorSession | undefined;
+    const onRename = vi.fn((_name: string, origin?: ProjectSelectorSession) => { session = origin; });
+    const options = [{ value: "work", label: "work", renamable: true }];
+    const view = render(<SelectField ariaLabel="Project" value="work" options={options} onChange={vi.fn()} onRename={onRename} retainActions revision={0} />);
+    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+    const old = openDialog().getByRole("button", { name: "Rename work" }); old.focus(); fireEvent.click(old);
+    act(() => session!.restore("team", 1));
+    expect(document.activeElement).toBe(old);
+    view.rerender(<SelectField ariaLabel="Project" value="team" options={[{ value: "team", label: "team", renamable: true }]} onChange={vi.fn()} onRename={onRename} retainActions revision={1} />);
+    expect(document.activeElement).toBe(openDialog().getByRole("button", { name: "Rename team" }));
+    const obsolete = session!;
+    fireEvent.click(openDialog().getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+    const cancel = openDialog().getByRole("button", { name: "Cancel" }); cancel.focus();
+    act(() => obsolete.restore("team", 1));
+    expect(document.activeElement).toBe(cancel);
+    act(() => obsolete.close()); expect(document.querySelector("dialog.select-modal[open]")).toBeTruthy();
+  });
   it("shows the selected option's label on the trigger", () => {
     render(<SelectField ariaLabel="Project filter" value="work" options={OPTIONS} onChange={vi.fn()} />);
     expect(screen.getByRole("button", { name: /project filter/i }).textContent).toBe("work");

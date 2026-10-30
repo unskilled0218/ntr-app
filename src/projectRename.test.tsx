@@ -110,12 +110,11 @@ describe("project rename through real panes and transport", () => {
     fireEvent.click(screen.getByRole("button", { name: "Project filter" }));
     fireEvent.click(within(document.querySelector("dialog.select-modal[open]") as HTMLElement).getByRole("button", { name: "old" }));
     await openRename(); await submitRename();
-    expect(within(renameDialog()).getByRole("status").textContent).toContain("completed");
+    expect(renameDialog().open).toBe(false);
     expect(writes).toEqual([1, 2]);
     expect(data.tasks.map((found) => found.raw)).toEqual(["first +new", "x second +new"]);
     expect(data.labels).toEqual({ project: ["new", "other"], context: ["phone"] });
     expect(labelsWritten).toHaveLength(1);
-    await clickRename("Close");
     expect(screen.getByRole("button", { name: "Project filter" }).textContent).toBe("new");
     expect((screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement).value).toBe("draft +new +oldish");
   });
@@ -131,9 +130,8 @@ describe("project rename through real panes and transport", () => {
     fixture(false); render(<TodoPane compact />); await act(settle);
     fireEvent.click(screen.getByRole("button", { name: "Filter options" })); await act(settle);
     await openRename(); await submitRename();
-    expect(renameDialog().textContent).toContain("completed");
-    expect(document.querySelectorAll("dialog[open]")).toHaveLength(1);
-    await clickRename("Close");
+    expect(renameDialog().open).toBe(false);
+    expect(document.querySelectorAll("dialog[open]")).toHaveLength(0);
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Filter options" }));
   });
   it("waits for delayed own rescans, ignores duplicate submissions, and keeps busy dismissal from losing work", async () => {
@@ -174,7 +172,7 @@ describe("project rename through real panes and transport", () => {
   });
   it("retains unrelated task-derived project suggestions after completion", async () => {
     const model = fixture(); model.data.tasks.push(task(3, "unrelated +unremembered"));
-    render(<App />); await act(settle); await openRename(); await submitRename(); await clickRename("Close");
+    render(<App />); await act(settle); await openRename(); await submitRename(); expect(renameDialog().open).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Project filter" }));
     expect(within(document.querySelector("dialog.select-modal[open]") as HTMLElement).getByRole("button", { name: "unremembered" })).toBeTruthy();
     expect(model.data.tasks[2].raw).toBe("unrelated +unremembered");
@@ -286,7 +284,7 @@ describe("project rename through real panes and transport", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
     fireEvent.change(screen.getByRole("textbox", { name: "Task description" }), { target: { value: "edited +old +oldish" } });
     act(() => ref.current!.reviewRemote()); await act(settle);
-    await openRename(); await submitRename(); await clickRename("Close");
+    await openRename(); await submitRename(); expect(renameDialog().open).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Resume task draft" }));
     expect((screen.getByRole("textbox", { name: "Task description" }) as HTMLInputElement).value).toBe("edited +new +oldish");
     await act(async () => { fireEvent.submit(document.querySelector("#edit-task-form")!); await settle(); });

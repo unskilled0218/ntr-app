@@ -8,6 +8,8 @@ import TodoPane, { type TodoPaneHandle } from "./components/TodoPane";
 import { activateTransport, type Task, type Labels } from "./api";
 import { settle } from "./test/deferred";
 import { setEditorText } from "./lib/caret";
+import { setCompactUi } from "./settings";
+import { deferDialogCloseEvents } from "./test/dialog";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -75,6 +77,9 @@ type Origin = "add" | "filter";
 const currentPicker = () => document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
 async function picker(origin: Origin = "add") {
   const label = origin === "add" ? "Project" : "Project filter";
+  const existing = currentPicker();
+  if (existing?.getAttribute("aria-label") === label) return existing;
+  if (existing) { fireEvent.click(within(existing).getByRole("button", { name: "Cancel" })); await act(settle); }
   if (!screen.queryByRole("button", { name: label })) {
     fireEvent.click(screen.getByRole("button", { name: origin === "add" ? "Task options" : "Filter options" })); await act(settle);
   }
@@ -84,7 +89,8 @@ async function picker(origin: Origin = "add") {
 async function action(kind: "Rename" | "Remove", name = "work", origin: Origin = "add") {
   const opened = await picker(origin);
   fireEvent.click(within(opened).getByRole("button", { name: `${kind} ${name}` })); await act(settle);
-  expect(opened.open).toBe(false);
+  const renameOpen = dialog("rename").open || dialog("rename", true).open;
+  expect(opened.open).toBe(origin === "add" && renameOpen);
 }
 const dialog = (kind: "rename" | "remove", draft = false) => document.querySelector(draft ? `#draft-${kind}-project-dialog` : kind === "rename" ? "#rename-project-dialog" : "#remove-label-dialog") as HTMLDialogElement;
 async function clickDialog(kind: "rename" | "remove", name: string, draft = false) {
@@ -105,6 +111,82 @@ beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers(); });
 afterEach(async () => { cleanup(); await settle(); localStorage.clear(); vi.useRealTimers(); });
 
 describe("project selector actions", () => {
+  it.each([false, true].flatMap((compact) => ["Cancel", "Escape", "backdrop", "same-name"].map((method) => ({ compact, method }))))(
+    "dismisses only rename and keeps its original selector usable ($method, compact=$compact)", async ({ compact, method }) => {
+      const model = fixture(false); render(<TodoPane compact={compact} />); await act(settle);
+      fireEvent.change(screen.getByRole("textbox", { name: "New task" }), { target: { value: "unsaved +work" } });
+      const opened = await picker();
+      fireEvent.click(within(opened).getByRole("button", { name: "Rename work" })); await act(settle);
+      expect(within(dialog("rename")).getByText("Original")).toBeTruthy();
+      expect(within(dialog("rename")).getByText("work")).toBeTruthy();
+      expect(within(dialog("rename")).queryByRole("status")).toBeNull();
+      if (method === "Cancel") await clickDialog("rename", "Cancel");
+      else if (method === "Escape") { fireEvent(dialog("rename"), new Event("cancel", { cancelable: true })); await act(settle); }
+      else if (method === "backdrop") { fireEvent.click(dialog("rename")); await act(settle); }
+      else await rename("work");
+      expect(dialog("rename").open).toBe(false); expect(currentPicker()).toBe(opened);
+      expect(document.activeElement).toBe(within(opened).getByRole("button", { name: "Rename work" }));
+      expect(document.querySelectorAll("dialog[open]")).toHaveLength(compact ? 2 : 1);
+      expect(model.writes).toEqual([]);
+      expect((screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement).value).toBe("unsaved +work");
+      fireEvent.click(within(opened).getByRole("button", { name: "other" })); await act(settle);
+      expect(screen.getByRole("button", { name: "Project" }).textContent).toBe("other");
+    },
+  );
+  it.each([false, true])("restores the committed target row after mapping a staged old source (compact=%s)", async (compact) => {
+    const model = fixture(); setCompactUi(compact); render(<App />); await act(settle); await stage("work");
+    await action("Rename"); const opened = currentPicker(); await rename("team");
+    expect(dialog("rename").open).toBe(false); expect(currentPicker()).toBe(opened);
+    expect(within(opened).queryByRole("button", { name: "Rename work" })).toBeNull();
+    const target = within(opened).getByRole("button", { name: "Rename team" });
+    expect(document.activeElement).toBe(target); expect(target.isConnected).toBe(true);
+    expect(model.data.tasks.every((found) => found.projects.includes("team"))).toBe(true);
+  });
+  it.each([false, true])("restores a staged-only target after its state commit (compact=%s)", async (compact) => {
+    const model = fixture(false); render(<TodoPane compact={compact} />); await act(settle); await stage("scratch");
+    await action("Rename", "scratch"); const opened = currentPicker(); await rename("newScratch", true);
+    expect(dialog("rename", true).open).toBe(false); expect(currentPicker()).toBe(opened);
+    expect(within(opened).queryByRole("button", { name: "Rename scratch" })).toBeNull();
+    expect(document.activeElement).toBe(within(opened).getByRole("button", { name: "Rename newScratch" }));
+    expect(model.writes).toEqual([]);
+  });
+  it("ignores delayed child-close events after reopening rename over the same picker", async () => {
+    fixture(false); render(<TodoPane compact />); await act(settle); await action("Rename");
+    const opened = currentPicker(), delayed = deferDialogCloseEvents();
+    try {
+      await clickDialog("rename", "Cancel");
+      fireEvent.click(within(opened).getByRole("button", { name: "Rename work" })); await act(settle);
+      await act(async () => { delayed.flush(); await settle(); });
+      expect(dialog("rename").open).toBe(true); expect(currentPicker()).toBe(opened);
+      expect(document.querySelectorAll("dialog[open]")).toHaveLength(3);
+    } finally { delayed.restore(); }
+  });
+  it("keeps the selector after explicit rename abandonment without undoing partial work", async () => {
+    const model = fixture(false); render(<TodoPane compact />); await act(settle);
+    await action("Rename"); model.failTask(2); await rename("team");
+    const opened = currentPicker();
+    await clickDialog("rename", "Stop retry; keep partial changes");
+    expect(dialog("rename").open).toBe(false); expect(currentPicker()).toBe(opened);
+    expect(document.activeElement).toBe(within(opened).getByRole("button", { name: "Rename work" }));
+    expect(model.data.tasks.map((found) => found.raw)).toEqual(["first +team", "second +work"]);
+    expect(model.writes.filter((write) => write.kind === "task").map((write) => write.id)).toEqual([1, 2]);
+  });
+  it.each([false, true])("releases the entire rename stack for approval without implicit retry (compact=%s)", async (compact) => {
+    const model = fixture(); setCompactUi(compact); render(<App />); await act(settle);
+    model.afterWrite((id) => { if (id === 1) model.data.tasks[1] = task(90, "foreign +work"); });
+    await action("Rename"); await rename("team");
+    expect(dialog("rename").open).toBe(true); expect(currentPicker().open).toBe(true);
+    await clickDialog("rename", "Review update");
+    expect(document.querySelectorAll("dialog[open]")).toHaveLength(1);
+    const remote = document.querySelector("#remote-update") as HTMLDialogElement;
+    expect(remote.open).toBe(true); expect(remote.textContent).toContain("foreign +work");
+    expect(model.writes.filter((write) => write.kind === "task").map((write) => write.id)).toEqual([1]);
+    await act(async () => { fireEvent.click(within(remote).getByRole("button", { name: "Update" })); await settle(); });
+    expect(model.writes.filter((write) => write.kind === "task").map((write) => write.id)).toEqual([1]);
+    model.afterWrite(); await action("Rename"); await clickDialog("rename", "Retry rename");
+    expect(dialog("rename").open).toBe(false); expect(currentPicker().open).toBe(true);
+    expect(model.writes.filter((write) => write.kind === "task").map((write) => write.id)).toEqual([1, 90]);
+  });
   it.each([false, true])("offers icon-only actions from the create selector without submitting its draft (compact=%s)", async (compact) => {
     const model = fixture(false); render(<TodoPane compact={compact} />); await act(settle);
     fireEvent.change(screen.getByRole("textbox", { name: "New task" }), { target: { value: "draft +work +workshop" } });
@@ -116,12 +198,12 @@ describe("project selector actions", () => {
     }
     expect(within(opened).queryByRole("button", { name: "Remove None" })).toBeNull();
     fireEvent.click(within(opened).getByRole("button", { name: "Rename work" })); await act(settle);
-    expect(document.querySelectorAll("dialog[open]")).toHaveLength(1);
-    await rename("team"); await clickDialog("rename", "Close");
+    expect(document.querySelectorAll("dialog[open]")).toHaveLength(compact ? 3 : 2);
+    await rename("team"); expect(dialog("rename").open).toBe(false); expect(opened.open).toBe(true);
     expect(model.data.tasks.map((found) => found.raw)).toEqual(["first +team", "second +team"]);
     expect((screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement).value).toBe("draft +team +workshop");
     expect(model.writes.filter((write) => write.kind === "create")).toHaveLength(0);
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: compact ? "Task options" : "Project" }));
+    expect(document.activeElement).toBe(within(opened).getByRole("button", { name: "Rename team" }));
     expect(screen.queryByText("Review rename progress")).toBeNull();
   });
   it.each([false, true])("removes a global project without deleting tasks or losing unrelated fields (server=%s)", async (server) => {
@@ -175,11 +257,11 @@ describe("project selector actions", () => {
     await clickDialog("rename", "Cancel", true);
     expect(screen.getByRole("button", { name: "Project" }).textContent).toBe("scratch");
   });
-  it("hands compact staged-only actions off without a parent modal or store write", async () => {
+  it("keeps compact staged-only rename above its parent modals without a store write", async () => {
     const model = fixture(false); render(<TodoPane compact />); await act(settle); await stage("scratch");
-    await action("Rename", "scratch"); expect(document.querySelectorAll("dialog[open]")).toHaveLength(1);
+    await action("Rename", "scratch"); expect(document.querySelectorAll("dialog[open]")).toHaveLength(3);
     await rename("scratchNew", true);
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Task options" }));
+    expect(document.activeElement).toBe(within(currentPicker()).getByRole("button", { name: "Rename scratchNew" }));
     await action("Remove", "scratchNew");
     fireEvent(dialog("remove", true), new Event("cancel", { cancelable: true })); await act(settle);
     expect(model.writes).toEqual([]);
@@ -221,6 +303,7 @@ describe("project selector actions", () => {
   it("prioritizes retained rename over a staged-only source after known choices move to the target", async () => {
     const model = fixture(); render(<App />); await act(settle); await stage("work");
     await action("Rename"); model.failLabel("committed"); await rename("team"); await clickDialog("rename", "Close");
+    fireEvent.click(within(currentPicker()).getByRole("button", { name: "Cancel" })); await act(settle);
     model.data.tasks.push(task(3, "unrelated")); await model.signal("tasks");
     await act(async () => { fireEvent.click(within(document.querySelector("#remote-update") as HTMLElement).getByRole("button", { name: "Update" })); await settle(); });
     const before = model.writes.length;
@@ -234,6 +317,7 @@ describe("project selector actions", () => {
   it("keeps rename resolution reachable when neither source nor target appears in current rows", async () => {
     const model = fixture(); render(<App />); await act(settle);
     await action("Rename"); model.failLabel("committed"); await rename("team"); await clickDialog("rename", "Close");
+    fireEvent.click(within(currentPicker()).getByRole("button", { name: "Cancel" })); await act(settle);
     model.data.tasks = []; model.data.labels.project = ["other"]; await model.signal("tasks");
     await act(async () => { fireEvent.click(within(document.querySelector("#remote-update") as HTMLElement).getByRole("button", { name: "Update" })); await settle(); });
     const before = model.writes.length, opened = await picker("filter");

@@ -17,6 +17,39 @@ beforeEach(() => { localStorage.setItem("ntr.serverUrl", "http://shared"); activ
 afterEach(() => { instances.splice(0).forEach((updates) => updates.cancel()); localStorage.clear(); vi.useRealTimers(); });
 
 describe("remote approval ownership", () => {
+  it("captures immutable accepted and incoming task evidence rather than transport references", async () => {
+    const { updates, content } = setup();
+    const original = { id: 1, raw: "old", projects: ["work"], contexts: [], tags: {} } as unknown as Task;
+    content.tasks = [original]; updates.register("tasks", content.tasks); await settle();
+    original.raw = "outside mutation";
+    expect(updates.accepted("tasks")![0].raw).toBe("old");
+    content.tasks = [{ ...original, raw: "incoming" }]; await updates.review("tasks");
+    const offer = updates.state("tasks").pending!;
+    content.tasks[0].raw = "later mutation";
+    expect(offer.baseline[0].raw).toBe("old"); expect(offer.snapshot[0].raw).toBe("incoming");
+    expect(Object.isFrozen(offer.baseline[0].projects)).toBe(true);
+  });
+  it("rebases a deferred preview without resurrecting its notification and rejects its old click", async () => {
+    const { updates, content } = setup(); updates.register("note", "A"); await settle();
+    content.note = "remote"; await updates.review("note");
+    const old = updates.state("note").pending!; updates.defer("note");
+    updates.begin("note")("own saved version");
+    expect(updates.state("note").phase).toBe("deferred");
+    const rebased = updates.state("note").pending!;
+    expect(rebased).not.toBe(old); expect(rebased.baseline).toBe("own saved version");
+    expect(rebased.snapshot).toBe("remote"); expect(await updates.prepare(old)).toBeNull();
+    await settle(); expect(updates.state("note").phase).toBe("deferred");
+    await updates.review("note");
+    const token = await updates.prepare(rebased);
+    expect(updates.commit(token!, () => {})).toBe(true);
+  });
+  it("clears converged evidence on a verified own write", async () => {
+    const { updates, content } = setup(); updates.register("note", "A"); await settle();
+    content.note = "B"; await updates.review("note");
+    const old = updates.state("note").pending!;
+    updates.begin("note")("B");
+    expect(updates.state("note").pending).toBeUndefined(); expect(await updates.prepare(old)).toBeNull();
+  });
   it("waits for explicit task validation and never clears a pending note", async () => {
     const { updates, content, read } = setup();
     updates.register("tasks", []); updates.register("note", "A"); await settle();
@@ -100,7 +133,8 @@ describe("remote approval ownership", () => {
     const pending = updates.state("note").pending;
     const held = deferred<string>(); read.mockImplementationOnce(() => held.promise as Promise<never>);
     const done = updates.begin("note"); done("B");
-    expect(updates.state("note").pending).toBe(pending);
+    expect(updates.state("note").pending).not.toBe(pending);
+    expect(updates.state("note").pending).toMatchObject({ snapshot: "C", baseline: "B" });
     const failed = updates.begin("note"); failed();
     held.resolve("A"); await settle();
     expect(updates.accepted("note")).toBe("B");

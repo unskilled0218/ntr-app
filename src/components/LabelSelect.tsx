@@ -4,7 +4,7 @@
 
 import { ADD_VALUE, EMPTY_LABEL, KINDS, type Kind } from "../config";
 import SelectField, { type FieldOption } from "./SelectField";
-import { recoveryEntries, relatedRecovery, type ProjectActionRequest, type ProjectManagement } from "../lib/projectActions";
+import { recoveryEntries, relatedRecovery, type ProjectActionRequest, type ProjectManagement, type ProjectSelectorSession } from "../lib/projectActions";
 
 interface Props {
   kind: Kind;
@@ -15,10 +15,11 @@ interface Props {
   onAdd(): void;
   management?: ProjectManagement;
   onProjectAction?: (request: ProjectActionRequest) => void;
-  onRecover?: (id: number) => void;
+  onRecover?: (id: number, session?: ProjectSelectorSession) => void;
+  revision?: number;
 }
 
-export default function LabelSelect({ kind, value, serverLabels, staged, onChange, onAdd, management, onProjectAction, onRecover }: Props) {
+export default function LabelSelect({ kind, value, serverLabels, staged, onChange, onAdd, management, onProjectAction, onRecover, revision }: Props) {
   const names = [...new Set([...serverLabels, ...staged])].sort();
   const label = KINDS[kind].singular;
 
@@ -41,8 +42,10 @@ export default function LabelSelect({ kind, value, serverLabels, staged, onChang
       value={value}
       options={options}
       onChange={handleChange}
-      onRename={onProjectAction && management ? (name) => onProjectAction({ action: "rename", name, scope: serverLabels.includes(name) ? "known" : "staged", destination: management.destination, origin: "add", recoveryId: relatedRecovery(name, management)?.id }) : undefined}
-      onRemove={onProjectAction && management ? (name) => onProjectAction({ action: "remove", name, scope: serverLabels.includes(name) ? "known" : "staged", destination: management.destination, origin: "add", recoveryId: relatedRecovery(name, management)?.id }) : undefined}
+      retainActions={!!onProjectAction}
+      revision={revision}
+      onRename={onProjectAction && management ? (name, session) => onProjectAction({ action: "rename", name, scope: serverLabels.includes(name) ? "known" : "staged", destination: management.destination, origin: "add", recoveryId: relatedRecovery(name, management)?.id, session }) : undefined}
+      onRemove={onProjectAction && management ? (name, session) => onProjectAction({ action: "remove", name, scope: serverLabels.includes(name) ? "known" : "staged", destination: management.destination, origin: "add", recoveryId: relatedRecovery(name, management)?.id, session }) : undefined}
       recoveries={recoveryEntries(names, management)}
       onRecover={onRecover}
     />
