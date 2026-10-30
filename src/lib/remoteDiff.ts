@@ -70,11 +70,6 @@ export function remoteDiff(offer: Offer): DiffDocument {
   for (const task of after) if (!old.has(task.id) || taskIdentity(task) !== taskIdentity(old.get(task.id)!)) sections.push({ kind: "added", text: taskText(task) });
   return { sections };
 }
-export function fullEvidence(offer: Offer, side: "accepted" | "incoming"): DiffSection[] {
-  const snapshot = side === "accepted" ? offer.baseline : offer.snapshot;
-  return offer.resource === "note" ? [{ kind: "context", text: snapshot as string }]
-    : (snapshot as Task[]).map((task) => ({ kind: "context", text: taskText(task) }));
-}
 // A cursor pages through original sections without expanding a huge line into DOM nodes.
 // Every view (including fallback blocks) uses the same character and line budgets.
 export function previewPage(sections: DiffSection[], cursor: Cursor) {
