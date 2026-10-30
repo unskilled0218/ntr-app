@@ -9,6 +9,7 @@ import {
   CHANGE_TASKS,
   activateTransport,
   captureTransport,
+  destination,
   isTransportCurrent,
   onChange,
   reconcileWithServer,
@@ -23,6 +24,8 @@ import TodoPane, { type TodoPaneHandle } from "./components/TodoPane";
 import SettingsButton from "./components/SettingsButton";
 import SettingsModal from "./components/SettingsModal";
 import ConflictDialog from "./components/ConflictDialog";
+import RemoteUpdateDialog from "./components/RemoteUpdateDialog";
+import { RemoteUpdates, type Offer } from "./lib/remoteUpdates";
 
 export default function App() {
   const [view, setView] = useState<View>(() => {
@@ -33,8 +36,24 @@ export default function App() {
   // The compact-controls layout choice; re-read from settings on close (the modal covers the view,
   // so applying live behind it would be invisible — same "apply on close" model as the others).
   const [compact, setCompact] = useState(getCompactUi);
-  // Bumped on settings close to force the onChange useEffect to re-subscribe with the new transport.
+  // Bumped only when settings change the transport; unchanged settings leave the subscription alone.
   const [connectionKey, setConnectionKey] = useState(0);
+  const [destinationKey, setDestinationKey] = useState(0);
+  const [ready, setReady] = useState(false);
+  const initializedDestination = useRef<number | null>(null);
+  const [updates] = useState(() => new RemoteUpdates());
+  const [, redraw] = useState(0);
+  const activeContext = useRef(captureTransport());
+  const [noteDialog, setNoteDialog] = useState(false);
+  const [taskDialog, setTaskDialog] = useState(false);
+  const [otherDialog, setOtherDialog] = useState(false);
+  useEffect(() => {
+    const observer = new MutationObserver(() => setOtherDialog(!!document.querySelector("dialog[open]:not(#remote-update)")));
+    observer.observe(document.body, { attributes: true, attributeFilter: ["open"], subtree: true });
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => updates.subscribe(() => redraw((n) => n + 1)), [updates]);
+  useEffect(() => { updates.resume(); return () => updates.cancel(); }, [updates]);
   // Outstanding server/local divergences awaiting a user choice, handled one at a time.
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const noteRef = useRef<NotePaneHandle>(null);
@@ -43,21 +62,27 @@ export default function App() {
   const swipeStartX = useRef<number | null>(null);
   const swipeStartY = useRef<number | null>(null);
 
-  // On mount and after every server-mode change: reconcile local files with the server.
+  // On first initialization and genuine destination changes: reconcile local files with the server.
   // Auto-resolved divergences are written through; the rest (strategy "ask") queue for the
   // ConflictDialog below. Guarded against a late resolve after the transport changed again.
   useEffect(() => {
+    if (initializedDestination.current === destinationKey) return;
     let cancelled = false;
     const controller = new AbortController();
     const context = captureTransport();
     reconcileWithServer(context, controller.signal).then((found) => {
-      if (!cancelled && isTransportCurrent(context)) setConflicts(found);
+      if (!cancelled && isTransportCurrent(context)) {
+        initializedDestination.current = destinationKey;
+        setConflicts(found);
+        setReady(true);
+        if (destinationKey && !found.length) refreshPanes();
+      }
     });
     return () => {
       cancelled = true;
       controller.abort();
     };
-  }, [connectionKey]);
+  }, [destinationKey, connectionKey]);
 
   function refreshPanes() {
     todoRef.current?.onTasksChanged();
@@ -72,24 +97,38 @@ export default function App() {
     if (choice && head) {
       try {
         await resolveConflict(head, choice);
-        if (isTransportCurrent(context)) refreshPanes();
+        if (isTransportCurrent(context)) {
+          updates.initialize(head.resource);
+        }
       } catch (e) {
         console.warn("conflict resolution failed:", e);
       }
     }
-    if (isTransportCurrent(context)) setConflicts(rest);
+    if (isTransportCurrent(context)) {
+      setConflicts(rest);
+      if (!rest.length) refreshPanes();
+    }
   }
 
-  // The live stream: a `change` event re-fetches tasks or reconciles the note. Re-wired whenever
-  // connectionKey changes (i.e., after settings close) so the new transport is picked up.
+  // The live stream detects remote changes without adopting them; local watcher events retain
+  // their pane refresh behavior. Re-wire only when connectionKey identifies a replacement transport.
   useEffect(() => {
     const controller = new AbortController();
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    onChange((kind) => {
-      if (kind === CHANGE_TASKS) todoRef.current?.onTasksChanged();
+    const context = captureTransport();
+    const changed = (kind: string) => {
+      if (context.url) {
+        if (kind === CHANGE_TASKS || kind === CHANGE_NOTE) updates.request(kind);
+      } else if (initializedDestination.current !== destinationKey) return;
+      else if (kind === CHANGE_TASKS) todoRef.current?.onTasksChanged();
       else if (kind === CHANGE_NOTE) noteRef.current?.onNoteChange();
-    }, { signal: controller.signal, onConnected: refreshPanes }).then((un) => {
+    };
+    onChange((kind) => {
+      changed(kind);
+    }, { signal: controller.signal, onConnected: () => {
+      changed(CHANGE_TASKS); changed(CHANGE_NOTE);
+    } }).then((un) => {
       if (cancelled) un();
       else unlisten = un;
     }).catch((error) => console.warn("live subscription failed:", error));
@@ -101,15 +140,35 @@ export default function App() {
   }, [connectionKey]); // onChange is module-stable; refs excluded by React convention
 
   function onSettingsClose() {
-    activateTransport();
-    setConflicts([]);
     setSettingsOpen(false);
-    setConnectionKey((k) => k + 1); // re-wire onChange subscription
     setCompact(getCompactUi()); // pick up a compact-controls toggle made in the modal
-    // Explicit reload: mode may have changed, so both panes need fresh data.
-    todoRef.current?.onTasksChanged();
-    noteRef.current?.onNoteChange();
+    const before = activeContext.current;
+    const next = captureTransport();
+    if (before.url === next.url && before.allowInvalidCert === next.allowInvalidCert
+      && before.generation === next.generation) return;
+    const context = activateTransport();
+    activeContext.current = context;
+    updates.activate(context);
+    setConnectionKey((k) => k + 1);
+    if (destination(before) !== destination(context)) {
+      noteRef.current?.prepareDestination();
+      setConflicts([]);
+      setDestinationKey((k) => k + 1);
+    } else {
+      // Rebind persistence ownership without granting remote approval.
+      refreshPanes();
+    }
   }
+
+  async function acceptUpdate(offer: Offer) {
+    const token = await updates.prepare(offer);
+    if (!token) return;
+    if (token.resource === "note") noteRef.current?.applyRemote(token as import("./lib/remoteUpdates").ApplicationToken<"note">);
+    else await todoRef.current?.applyRemote(token as import("./lib/remoteUpdates").ApplicationToken<"tasks">);
+  }
+  const offered = (["tasks", "note"] as const).map((resource) => updates.state(resource))
+    .find((state) => state.pending && (state.phase === "offered" || state.phase === "applying"));
+  const visibleOffer = settingsOpen || conflicts.length || noteDialog || taskDialog || otherDialog || !ready ? null : offered?.pending ?? null;
 
   // "Are we in the mobile single-pane layout?" — read CSS's own decision (the bottom bar is
   // display:none on desktop, shown on mobile) instead of re-encoding the 720px breakpoint here.
@@ -153,8 +212,8 @@ export default function App() {
       </header>
 
       <div className="panes" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-        <NotePane ref={noteRef} />
-        <TodoPane ref={todoRef} compact={compact} />
+        {ready && <NotePane ref={noteRef} updates={updates} onDialogChange={setNoteDialog} />}
+        {ready && <TodoPane ref={todoRef} compact={compact} updates={updates} onDialogChange={setTaskDialog} />}
       </div>
 
       {/* View-button order must match VIEWS: swipe direction is computed from that array, so the
@@ -178,6 +237,20 @@ export default function App() {
       </nav>
 
       <SettingsModal open={settingsOpen} onClose={onSettingsClose} />
+      <aside className="remote-updates" aria-label="Remote updates">
+        {(["tasks", "note"] as const).map((resource) => {
+          const state = updates.state(resource);
+          return (state.pending || state.error) && <div key={resource} role="status">
+            {state.error || (resource === "note" ? "Remote update pending; automatic saving paused" : "Tasks update pending")}
+            <button type="button" onClick={() => {
+              if (resource === "tasks") todoRef.current?.reviewRemote();
+              void updates.review(resource);
+            }}>Review update<span className="sr-only"> for {resource}</span></button>
+          </div>;
+        })}
+      </aside>
+      <RemoteUpdateDialog offer={visibleOffer} busy={offered?.phase === "applying"} error={offered?.error ?? ""}
+        onUpdate={(offer) => { void acceptUpdate(offer); }} onDismiss={(offer) => updates.defer(offer.resource)} />
       <ConflictDialog
         conflict={conflicts[0] ?? null}
         onChoose={endConflict}

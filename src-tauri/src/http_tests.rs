@@ -44,6 +44,60 @@ async fn read_headers(socket: &mut tokio::net::TcpStream) {
 }
 
 #[tokio::test]
+async fn client_id_is_forwarded_on_mutations_and_the_sse_handshake() {
+  let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let address = listener.local_addr().unwrap();
+  let server = tokio::spawn(async move {
+    for sse in [false, true] {
+      let (mut socket, _) = listener.accept().await.unwrap();
+      let mut request = Vec::new();
+      while !request.ends_with(b"\r\n\r\n") {
+        let mut byte = [0];
+        socket.read_exact(&mut byte).await.unwrap();
+        request.push(byte[0]);
+      }
+      let request = String::from_utf8(request).unwrap().to_lowercase();
+      assert!(request.contains("x-ntr-client-id: client-session\r\n"));
+      let response = if sse {
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: tasks\n\n"
+      } else {
+        "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n"
+      };
+      socket.write_all(response.as_bytes()).await.unwrap();
+    }
+  });
+  let client = reqwest::Client::new();
+  let response = fetch_response(
+    &client,
+    ServerRequest {
+      url: format!("http://{address}/api/note"),
+      method: "PUT".into(),
+      body: Some("note".into()),
+      content_type: Some("text/plain".into()),
+      allow_invalid_cert: false,
+      client_id: Some("client-session".into()),
+    },
+    Duration::from_secs(1),
+  )
+  .await
+  .unwrap();
+  assert!(response.ok);
+  let delivered = std::sync::Mutex::new(Vec::new());
+  let _ = sse_attempt(
+    &client,
+    &format!("http://{address}/api/events"),
+    Some("client-session"),
+    timing(),
+    &|kind| {
+      delivered.lock().unwrap().push(kind.to_string());
+    },
+  )
+  .await;
+  server.await.unwrap();
+  assert_eq!(*delivered.lock().unwrap(), ["connected", "tasks"]);
+}
+
+#[tokio::test]
 async fn idle_deadline_enters_the_reconnect_loop_without_eof() {
   let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
   let address = listener.local_addr().unwrap();
@@ -103,6 +157,7 @@ fn bridge(
   let task = tokio::spawn(run_sse(
     reqwest::Client::new(),
     format!("http://{address}/api/events"),
+    None,
     timing,
     move |kind| {
       let _ = tx.send(kind.to_string());
@@ -176,7 +231,7 @@ async fn handshake_and_ordinary_get_have_finite_deadlines() {
   let fixture = fixture_at("127.0.0.1:0", vec![""]).await;
   let url = format!("http://{}/api/events", fixture.address);
   let client = reqwest::Client::new();
-  let result = sse_attempt(&client, &url, timing(), &|_| {
+  let result = sse_attempt(&client, &url, None, timing(), &|_| {
     panic!("not an accepted stream")
   })
   .await;
@@ -189,6 +244,7 @@ async fn handshake_and_ordinary_get_have_finite_deadlines() {
       body: None,
       content_type: None,
       allow_invalid_cert: false,
+      client_id: None,
     },
     Duration::from_millis(100),
   )

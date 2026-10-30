@@ -14,12 +14,13 @@ import { formatLocalTaskDate } from "../lib/taskDates";
 
 interface Props {
   task: Task | null;
+  suspended?: boolean;
   serverLabels: { project: string[]; context: string[] };
   onSave(id: number, text: string): Promise<void>;
   onClose(): void;
 }
 
-export default function EditTaskModal({ task, serverLabels, onSave, onClose }: Props) {
+export default function EditTaskModal({ task, suspended, serverLabels, onSave, onClose }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [description, setDescription] = useState("");
   const [due, setDue] = useState("");
@@ -38,11 +39,13 @@ export default function EditTaskModal({ task, serverLabels, onSave, onClose }: P
       setStaged([]);
       setModalKind(null);
       setError("");
-      if (!el.open) el.showModal();
-    } else {
-      el.close();
     }
   }, [task]);
+  useEffect(() => {
+    const el = dialogRef.current!;
+    if (task && !suspended && !el.open) el.showModal();
+    else if ((!task || suspended) && el.open) el.close();
+  }, [task, suspended]);
 
   const onConfirm = (name: string) => {
     setStaged((s) => [...new Set([...s, name])]);

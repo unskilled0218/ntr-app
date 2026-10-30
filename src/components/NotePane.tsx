@@ -20,9 +20,12 @@ import { ResourceRefresh } from "../lib/resourceRefresh";
 import NoteConflictDialog from "./NoteConflictDialog";
 import OpenLinkDialog from "./OpenLinkDialog";
 import { useLinkGestures } from "./useLinkGestures";
+import type { ApplicationToken, RemoteUpdates } from "../lib/remoteUpdates";
 
 export interface NotePaneHandle {
   onNoteChange: () => void;
+  applyRemote: (token: ApplicationToken<"note">) => boolean;
+  prepareDestination: () => void;
 }
 
 // View generations and certificate policy can change while a write still targets
@@ -38,7 +41,8 @@ interface NoteSaveAttempt {
   editRevision: number;
 }
 
-const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
+interface Props { updates?: RemoteUpdates; onDialogChange?: (open: boolean) => void }
+const NotePane = forwardRef<NotePaneHandle, Props>(({ updates, onDialogChange }, ref) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const links = useLinkGestures();
 
@@ -57,17 +61,33 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   const context = useRef(captureTransport());
   const baselineRevision = useRef(0);
   const transferredDraft = useRef(false);
+  const destinationPaused = useRef(false);
   const conflictContext = useRef<TransportContext | null>(null);
   const saveError = useRef<string | null>(null);
   const recovery = useRef<ResourceRefresh | null>(null);
   // While a live update conflicts with unsaved edits, holds the incoming remote text awaiting the
   // user's choice (null = none). An empty remote note also blocks saves.
   const noteConflict = useRef<string | null>(null);
+  const approval = useRef<ApplicationToken<"note"> | null>(null);
+  const pendingSelection = useRef<ReturnType<typeof getCaretRange>>(null);
+  const remote = () => context.current.url ? updates : undefined;
+  const remoteBlocked = () => !!remote()?.blocked("note");
+  const [, redraw] = useState(0);
+  useEffect(() => updates?.subscribe(() => {
+    if (updates.state("note").pending && document.activeElement === editor()) pendingSelection.current = getCaretRange(editor());
+    if (updates.state("note").pending && noteSaveTimer.current) {
+      clearTimeout(noteSaveTimer.current);
+      noteSaveTimer.current = null;
+    }
+    if (mounted.current && !updates.blocked("note") && !saveError.current && noteDirty()) scheduleNoteSave();
+    redraw((n) => n + 1);
+  }), [updates]);
 
   const [status, setStatus] = useState<{ msg: string; isError: boolean }>({ msg: "", isError: false });
   const [conflictMine, setConflictMine] = useState("");
   const [conflictTheirs, setConflictTheirs] = useState("");
   const [conflictOpen, setConflictOpen] = useState(false);
+  useEffect(() => { onDialogChange?.(conflictOpen || !!links.pending); }, [conflictOpen, links.pending, onDialogChange]);
 
   const editor = () => editorRef.current!;
   const noteDirty = () => readNoteText(editor()) !== savedNote.current;
@@ -108,7 +128,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   const scheduleNoteSave = () => {
     if (noteSaveTimer.current) clearTimeout(noteSaveTimer.current);
     noteSaveTimer.current = null;
-    if (!mounted.current || recovery.current?.busy || noteConflict.current !== null || transferredDraft.current) return;
+    if (!mounted.current || destinationPaused.current || remoteBlocked() || recovery.current?.busy || noteConflict.current !== null || transferredDraft.current) return;
     noteSaveTimer.current = setTimeout(flushNote, NOTE_SAVE_DELAY_MS);
   };
 
@@ -131,6 +151,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     baselineRevision.current++;
     noteConflict.current = null;
     conflictContext.current = null;
+    approval.current = null;
     setConflictOpen(false);
     saveError.current = null;
     if (noteSaveTimer.current) clearTimeout(noteSaveTimer.current);
@@ -139,7 +160,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   }
 
   function requestNote() {
-    if (!mounted.current) return;
+    if (!mounted.current || destinationPaused.current) return;
     syncContext();
     if (noteSaveTimer.current) clearTimeout(noteSaveTimer.current);
     noteSaveTimer.current = null;
@@ -152,10 +173,11 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
   async function flushNote(authorized = false) {
     if (noteSaveTimer.current) clearTimeout(noteSaveTimer.current);
     noteSaveTimer.current = null;
-    if (!mounted.current) return;
+    if (!mounted.current || destinationPaused.current) return;
     if (!isTransportCurrent(context.current)) { requestNote(); return; }
     if (composingNote.current) return; // never persist an IME's transient preedit
     if (noteConflict.current !== null) return;
+    if (!authorized && remoteBlocked()) return;
     if (!authorized && (recovery.current?.busy || transferredDraft.current)) return;
     if (noteSaving()) return; // single-flight for this destination, not just this view
     if (!noteDirty()) return;
@@ -164,12 +186,15 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     const life = lifetime.current;
     const destination = noteDestination(owner);
     const attempt = { owner, life, text, editRevision: editRevision.current };
+    const settle = remote()?.begin("note");
+    let saved = false;
     baselineRevision.current++;
     noteSaves.current.set(destination, attempt);
     unreconciledSave.current = attempt;
     setNoteStatus("Saving…", false);
     try {
       await putNote(text, owner);
+      saved = true;
       if (!mounted.current || life !== lifetime.current || !isTransportCurrent(owner)) return;
       savedNote.current = attempt.text;
       retireSaveProvenance(attempt);
@@ -183,6 +208,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
       // Invalidating a view does not cancel its PUT. Release only this attempt,
       // even when another destination is now active or the pane has unmounted.
       if (noteSaves.current.get(destination) === attempt) noteSaves.current.delete(destination);
+      settle?.(saved ? text : undefined);
       if (mounted.current && life === lifetime.current && noteDestination(captureTransport()) === destination) {
         if (!isTransportCurrent(owner)) {
           // The old result cannot rebase the new view. Fetch current storage
@@ -209,7 +235,9 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
 
   // Make the editor show `text` as the saved, clean note: new base, render in place, clear status.
   const adoptNote = (text: string) => {
-    const selection = document.activeElement === editor() ? getCaretRange(editor()) : null;
+    const selection = document.activeElement === editor() ? getCaretRange(editor())
+      : remote()?.state("note").pending ? pendingSelection.current : null;
+    pendingSelection.current = null;
     savedNote.current = text;
     unreconciledSave.current = null; // an authoritative replacement ends the previous editor's intent
     saveError.current = null;
@@ -220,10 +248,22 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     setNoteStatus("", false);
   };
 
-  // Fetch the backend's note and bring the editor in line with it: silently when nothing would be
-  // lost (noop / in-sync / adopt) or by prompting when unsaved edits differ (conflict).
+  // Initial/local reads reconcile the editor: silently when nothing would be lost (noop / in-sync /
+  // adopt), or by prompting for differing unsaved edits. Initialized server reads only detect changes.
   async function reconcileNote() {
     const owner = context.current;
+    if (owner.url && updates?.accepted("note") !== undefined) {
+      const known = updates.accepted("note")!;
+      const provenance = activeSaveProvenance();
+      if (!noteSaving() && provenance?.text === known) {
+        // A successful same-destination write may outlive its view generation.
+        // Rebase persistence evidence only; never paint over later edits or undo.
+        savedNote.current = known;
+        retireSaveProvenance(provenance);
+      }
+      updates.request("note");
+      return;
+    }
     const life = lifetime.current;
     const revision = baselineRevision.current;
     let remote: string;
@@ -233,11 +273,16 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
       throw error;
     }
     if (!mounted.current || life !== lifetime.current || !isTransportCurrent(owner)) return;
+    if (owner.url && updates?.accepted("note") !== undefined) {
+      updates.request("note");
+      return;
+    }
     if (revision !== baselineRevision.current || noteSaving() || composingNote.current) {
       recovery.current!.pending = true;
       return;
     }
     if (noteConflict.current !== null || transferredDraft.current) {
+      if (owner.url) updates?.register("note", remote);
       openNoteConflict(remote);
       return;
     }
@@ -260,10 +305,12 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
         savedNote.current = remote;
         break;
       case "conflict":
+        if (owner.url) updates?.register("note", remote);
         openNoteConflict(remote);
         return; // retain provenance if settings later invalidate this conflict
     }
     retireSaveProvenance(provenance);
+    if (owner.url) updates?.register("note", remote);
   }
 
   if (!recovery.current) recovery.current = new ResourceRefresh(reconcileNote, {
@@ -282,16 +329,28 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     setConflictTheirs(remote);
     if (wasOpen) return;
     setConflictMine(readNoteText(editor()));
+    onDialogChange?.(true);
     setConflictOpen(true);
   }
 
   // Resolve the pending conflict. Idempotent (the button click closes the dialog, whose close
   // event calls this again — the second call no-ops). "Use theirs" discards local edits; "keep
-  // mine" treats remote as the new base and saves local over it. Escape routes here as keep-mine.
+  // mine" treats remote as the new base and saves local over it. Local/handoff dismissal retains
+  // legacy keep-mine behavior; runtime remote approval dismissal uses the read-only handler below.
   function resolveNoteConflict(useTheirs: boolean) {
     if (noteConflict.current === null) return;
     if (!conflictContext.current || !isTransportCurrent(conflictContext.current)) { requestNote(); return; }
     const remote = noteConflict.current;
+    const token = approval.current;
+    if (useTheirs && token && (composingNote.current || noteSaving())) {
+      dismissRemoteConflict();
+      return;
+    }
+    if (token && !updates?.valid(token)) {
+      dismissRemoteConflict();
+      void updates?.review("note");
+      return;
+    }
     unreconciledSave.current = null; // this current explicit choice resolves the old save uncertainty
     noteConflict.current = null;
     conflictContext.current = null;
@@ -299,12 +358,35 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     baselineRevision.current++;
     setConflictOpen(false);
     if (useTheirs) {
-      adoptNote(remote);
+      if (token) updates!.commit(token, adoptNote);
+      else adoptNote(remote);
       void recovery.current?.resume();
     } else {
       savedNote.current = remote; // their version is the base; editor is dirty against it...
       void flushNote(true); // explicit choice authorizes this scoped overwrite
     }
+    approval.current = null;
+  }
+
+  function dismissRemoteConflict() {
+    if (!approval.current) { resolveNoteConflict(false); return; }
+    approval.current = null;
+    noteConflict.current = null;
+    conflictContext.current = null;
+    setConflictOpen(false);
+    updates?.defer("note");
+  }
+
+  function applyRemote(token: ApplicationToken<"note">) {
+    if (!updates?.valid(token)) return false;
+    if (composingNote.current || noteSaving()) { updates.defer("note"); return false; }
+    if (noteDirty() || hasNewerSaveDraft() || transferredDraft.current) {
+      approval.current = token;
+      openNoteConflict(token.snapshot);
+      updates.defer("note");
+      return false;
+    }
+    return updates.commit(token, adoptNote);
   }
 
   const noteEdited = (text: string, caret: number | null, kind: "type" | "chunk") => {
@@ -404,7 +486,11 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useImperativeHandle(ref, () => ({ onNoteChange: requestNote }));
+  useImperativeHandle(ref, () => ({
+    onNoteChange: () => { destinationPaused.current = false; requestNote(); },
+    applyRemote,
+    prepareDestination: () => { destinationPaused.current = true; syncContext(); },
+  }));
 
   return (
     <section className="pane note-pane" id="note-view">
@@ -468,6 +554,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
         }}
         {...links.handlers}
         onBlur={() => {
+          pendingSelection.current = getCaretRange(editor());
           void flushNote();
           setEditLine(editor(), null); // collapse every link when focus leaves the note
         }}
@@ -486,8 +573,9 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
       />
       <div className="note-bar">
         <span id="note-status" className={"note-status" + (status.isError ? " is-error" : "")} role="status">
-          {status.msg}
+          {remote()?.state("note").pending ? "Remote update pending; automatic saving paused" : status.msg}
         </span>
+        {remote()?.state("note").pending && <button type="button" onClick={() => { void updates?.review("note"); }}>Review update</button>}
       </div>
 
       <NoteConflictDialog
@@ -496,7 +584,7 @@ const NotePane = forwardRef<NotePaneHandle>((_, ref) => {
         theirs={conflictTheirs}
         onKeepMine={() => resolveNoteConflict(false)}
         onUseTheirs={() => resolveNoteConflict(true)}
-        onClose={() => resolveNoteConflict(false)}
+        onClose={dismissRemoteConflict}
       />
 
       <OpenLinkDialog url={links.pending} onConfirm={links.confirm} onCancel={links.dismiss} />

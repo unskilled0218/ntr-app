@@ -16,7 +16,7 @@ Tasks and notes are stored in the Tauri app-data directory by default. Use the `
 
 Priority controls, sorting, and filtering are removed in `0.15.18`. Existing leading tokens stay hidden and preserved; `pri:` remains editable text. See [task text and compatibility](docs/task-text.md).
 
-Note recovery preserves newer edits and undo, including a return to empty text, across unchanged server settings. See [note-save safety](docs/live-sync.md#note-save-ownership) for conflict choices and limits.
+Remote task and note changes now ask before updating. Declined changes remain reviewable; pending remote notes pause autosave. See [update choices and save safety](docs/live-sync.md).
 
 ## Documentation
 

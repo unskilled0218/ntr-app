@@ -1,7 +1,8 @@
 // The note conflict dialog: two side-by-side version previews and a keep-mine / use-theirs
 // choice. Native <dialog> gives the focus trap, backdrop, and Escape handling; the `close` event
-// (Escape / dismiss) defaults to keep-mine upstream so an unanswered prompt never throws away the
-// user's unsaved work. Ported from #note-conflict + app.js.
+// (Escape / dismiss) delegates upstream: runtime remote updates defer without writing, while local
+// watcher and destination handoff conflicts retain the legacy keep-mine behavior. Neither path
+// throws away the user's unsaved work. Ported from #note-conflict + app.js.
 
 import { useEffect, useRef } from "react";
 import { useBackdropClose } from "./useBackdropClose";
@@ -13,7 +14,7 @@ interface Props {
   theirs: string;
   onKeepMine: () => void;
   onUseTheirs: () => void;
-  onClose: () => void; // fired by the native close event (Escape / dismiss) = keep mine
+  onClose: () => void; // fired by the native close event (Escape / dismiss); caller owns write policy
 }
 
 export default function NoteConflictDialog({ open, mine, theirs, onKeepMine, onUseTheirs, onClose }: Props) {
@@ -26,7 +27,7 @@ export default function NoteConflictDialog({ open, mine, theirs, onKeepMine, onU
     else if (!open && dialog.open) dialog.close();
   }, [open]);
 
-  // Click outside the box dismisses it (keep-mine, same as Escape) via the onClose below.
+  // Click outside the box dismisses it (same as Escape) via the caller-owned onClose below.
   useBackdropClose(dialogRef);
 
   return (

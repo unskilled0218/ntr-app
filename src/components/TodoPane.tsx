@@ -6,6 +6,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import {
   completeTask,
   captureTransport,
+  destination,
   isTransportCurrent,
   deleteTask as apiDeleteTask,
   errMsg,
@@ -33,26 +34,37 @@ import FilterBar from "./FilterBar";
 import RemoveLabelDialog from "./RemoveLabelDialog";
 import TaskItem from "./TaskItem";
 import { ResourceRefresh } from "../lib/resourceRefresh";
+import type { ApplicationToken, RemoteUpdates } from "../lib/remoteUpdates";
 
 export interface TodoPaneHandle {
   onTasksChanged: () => void;
+  applyRemote: (token: ApplicationToken<"tasks">) => Promise<boolean>;
+  reviewRemote: () => void;
 }
 
 interface Props {
   compact: boolean; // collapse the add fields and filter choosers into "Options" modals
+  updates?: RemoteUpdates;
+  onDialogChange?: (open: boolean) => void;
 }
 
-const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
+const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialogChange }, ref) => {
   // Sort / direction are seeded from the local cache (lazy useState initializer runs once
   // on mount) and written back in their change handlers below, so the view options survive relaunch.
   const [project, setProject] = useState("");
   const [sort, setSort] = useState(getSort);
   const [dir, setDir] = useState<Direction>(getDirection);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const taskProjection = useRef(tasks);
+  const projectTasks = (found: Task[]) => { taskProjection.current = found; setTasks(found); };
+  const remote = () => captureTransport().url ? updates : undefined;
   const [serverLabels, setServerLabels] = useState<Labels>({ project: [], context: [] });
   const [error, setError] = useState("");
   const [editTask, setEditTask] = useState<Task | null>(null);
+  const editOwner = useRef(captureTransport());
+  const [editSuspended, setEditSuspended] = useState(false);
   const [removing, setRemoving] = useState<{ kind: "project"; name: string } | null>(null);
+  useEffect(() => { onDialogChange?.((!!editTask && !editSuspended) || !!removing); }, [editTask, editSuspended, removing, onDialogChange]);
   const mounted = useRef(false);
   const tasksRequest = useRef(0);
   const labelsRequest = useRef(0);
@@ -71,19 +83,21 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
     };
   }, []);
 
-  // Fetch active and completed tasks with the current project filter
-  // (sort is applied client-side at render). Mirrors app.js refresh() + buildQuery().
+  // Initial/local reads fetch all active and completed tasks. Project filtering and sorting
+  // derive from this accepted projection at render; subsequent server reads only detect changes.
   const refresh = useCallback(async () => {
     const context = captureTransport();
     const request = ++tasksRequest.current;
     const current = () => mounted.current && request === tasksRequest.current && isTransportCurrent(context);
+    if (context.url && updates?.accepted("tasks") !== undefined) {
+      updates.request("tasks");
+      return true;
+    }
     try {
-      const filter = {
-        project: project || null,
-      };
-      const found = await listTasks(filter, context);
+      const found = await listTasks({}, context);
       if (current()) {
-        setTasks(found);
+        if (context.url && updates) updates.register("tasks", found);
+        projectTasks(context.url && updates ? updates.accepted("tasks")! : found);
         readErrors.current.tasks = "";
         setError(readErrors.current.labels);
       }
@@ -95,14 +109,14 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
       }
       return !current();
     }
-  }, [project]);
+  }, [updates]);
 
   // Merge task-derived labels into the remembered backend resource. A task mutation can grow this
   // set, but only explicit label removal shrinks it.
   // Stable (no project deps): a vanished filter is dropped via the functional setState
   // updater, which reads the latest value without closing over it — so this is created once and
   // is a correct dependency for the effect and the imperative handle below.
-  const loadLabels = useCallback(async () => {
+  const loadLabels = useCallback(async (persist = false) => {
     const context = captureTransport();
     const request = ++labelsRequest.current;
     const current = () => mounted.current && request === labelsRequest.current && isTransportCurrent(context);
@@ -117,7 +131,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
         return knownLabels.current;
       });
       if (!current()) return true;
-      all = await listTasks({}, context);
+      all = taskProjection.current;
     } catch (err) {
       if (current()) {
         readErrors.current.labels = `Could not load label suggestions: ${errMsg(err)}`;
@@ -141,7 +155,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
     setServerLabels(merged);
     setProject((p) => (p && !merged.project.includes(p) ? "" : p));
     if (
-      !labelsFailed && (merged.project.length !== remembered.project.length ||
+      (persist || !context.url) && !labelsFailed && (merged.project.length !== remembered.project.length ||
       merged.context.length !== remembered.context.length)
     ) {
       await putLabels(merged, context).catch(() => {});
@@ -152,7 +166,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
   const readers = useRef({ refresh, loadLabels });
   readers.current = { refresh, loadLabels };
   if (!recovery.current) recovery.current = new ResourceRefresh(async () => {
-    const results = await Promise.all([readers.current.refresh(), readers.current.loadLabels()]);
+    const results = [await readers.current.refresh(), await readers.current.loadLabels()];
     if (results.includes(false)) throw new Error("Task recovery pending");
   }, { canRun: () => mounted.current && isTransportCurrent(recoveryContext.current), onError: () => {} });
 
@@ -166,8 +180,8 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
     recovery.current!.request();
   }
 
-  // Initial/filter reads and live events share per-resource recovery. A newer
-  // request or transport invalidates old responses without clearing visible data.
+  // Initial/local reads and recovery share one resource runner. A newer request or transport
+  // invalidates old responses without clearing visible data; filters never start a remote read.
   useEffect(() => {
     requestTasks();
   }, [refresh]);
@@ -182,15 +196,59 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
       onTasksChanged: () => {
         requestTasks();
       },
+      applyRemote: async (token) => {
+        if (!updates || (editTask && !editSuspended) || removing) {
+          updates?.defer("tasks");
+          setError("Close the task dialog, then review the update. Your draft is unchanged.");
+          return false;
+        }
+        try {
+          const owner = captureTransport();
+          const labels = await getLabels(owner);
+          return updates.commit(token, (snapshot) => {
+            projectTasks(snapshot);
+            setServerLabels({
+              project: unionLabels(labels.project, snapshot.flatMap((task) => task.projects)),
+              context: unionLabels(labels.context, snapshot.flatMap((task) => task.contexts)),
+            });
+            setError("");
+          });
+        } catch (error) {
+          if (updates.valid(token)) updates.fail("tasks", `Could not load update: ${errMsg(error)}`);
+          return false;
+        }
+      },
+      reviewRemote: () => { setEditSuspended(true); setRemoving(null); },
     }),
-    [refresh, loadLabels],
+    [refresh, loadLabels, updates, editTask, editSuspended, removing],
   );
+
+  function safeAction() {
+    if (!remote() || (remote()!.accepted("tasks") !== undefined && !remote()!.blocked("tasks"))) return true;
+    setEditSuspended(true);
+    setRemoving(null);
+    void remote()!.review("tasks");
+    setError("Review the task update before using task IDs. Choose the action again after updating.");
+    return false;
+  }
+  async function mutate(action: () => Promise<Task | void>, removeId?: number) {
+    const owner = captureTransport();
+    const settle = remote()?.begin("tasks");
+    try {
+      const task = await action();
+      if (destination(owner) !== destination(captureTransport()) || !mounted.current) { settle?.(); return; }
+      const known = remote()?.accepted("tasks") ?? taskProjection.current;
+      const next = task ? (known.some((t) => t.id === task.id)
+        ? known.map((t) => t.id === task.id ? task : t) : [...known, task]) : known.filter((t) => t.id !== removeId);
+      settle?.(next);
+      projectTasks(next);
+      await loadLabels(true);
+    } catch (error) { settle?.(); throw error; }
+  }
 
   async function onAdd(text: string): Promise<boolean> {
     try {
-      await createTask(text);
-      await refresh();
-      await loadLabels();
+      await mutate(() => createTask(text));
       return true;
     } catch (err) {
       setError(errMsg(err));
@@ -199,61 +257,70 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
   }
 
   async function onToggle(task: Task) {
+    if (!safeAction()) return;
     try {
-      await (task.completed ? uncompleteTask(task.id) : completeTask(task.id));
-      await refresh();
+      await mutate(() => task.completed ? uncompleteTask(task.id) : completeTask(task.id));
     } catch (err) {
       setError(errMsg(err));
-      await refresh();
     }
   }
 
   async function onDelete(task: Task) {
+    if (!safeAction()) return;
     try {
-      await apiDeleteTask(task.id);
-      await refresh();
+      await mutate(() => apiDeleteTask(task.id), task.id);
     } catch (err) {
       setError(errMsg(err));
     }
   }
 
   function onEdit(task: Task) {
+    if (!safeAction()) return;
+    setEditSuspended(false);
+    editOwner.current = captureTransport();
     setEditTask(task);
   }
 
   // Remove a project from the whole store: strip its token from every task that carries
-  // it. Fetch the full list (not the filtered view) so removal spans every task, including
-  // completed ones; update each affected task sequentially (the file-backed, one-writer model);
-  // then reload. loadLabels then drops the now-unused name and clears a filter that selected it.
+  // it. Use the full accepted list (not the filtered view) so removal spans completed tasks too;
+  // update each affected task sequentially (the file-backed, one-writer model), retaining each
+  // successful response. loadLabels drops the unused name and clears a filter that selected it.
   async function confirmRemove() {
     if (!removing) return;
+    if (!safeAction()) return;
     const { kind, name } = removing;
     setRemoving(null);
     try {
-      const all = await listTasks({});
-      for (const u of planLabelRemoval(all, kind, name)) await updateTask(u.id, u.text);
+      const all = taskProjection.current;
+      for (const u of planLabelRemoval(all, kind, name)) {
+        if (!safeAction()) return;
+        await mutate(() => updateTask(u.id, u.text));
+      }
       const remembered = await getLabels().catch(() => ({ project: [], context: [] }));
       await putLabels({ ...remembered, project: remembered.project.filter((n) => n !== name) });
-      await refresh();
       await loadLabels();
     } catch (err) {
-      // Reload first to reflect whatever landed before the failure, then set the error LAST:
-      // refresh() clears the error at its start, so setting it after the reload keeps the
-      // message visible (unlike onToggle, where the trailing refresh would wipe it).
-      await refresh();
+      // Successful responses already projected their own changes; never import an unrelated
+      // remote list to recover a partial failure. Refresh label suggestions first, then set the
+      // error last so label loading cannot clear the task mutation's actionable failure message.
       await loadLabels();
       setError(errMsg(err));
     }
   }
 
   async function onEditSave(id: number, text: string) {
-    await updateTask(id, text); // throws on error → caught by EditTaskModal
+    if (destination(editOwner.current) !== destination(captureTransport())) {
+      throw new Error("The destination changed. Copy your draft and choose Edit on the current destination.");
+    }
+    if (!safeAction()) throw new Error("Review the task update first. Your draft is unchanged.");
+    if (remote() && !remote()!.accepted("tasks")?.some((task) => task.id === id && task.raw === editTask?.raw)) {
+      throw new Error("This task changed. Copy your draft and choose Edit on the updated task; the old action cannot be replayed.");
+    }
+    await mutate(() => updateTask(id, text)); // throws on error → caught by EditTaskModal
     setEditTask(null);
-    await refresh();
-    await loadLabels();
   }
 
-  const sorted = sortTasks(tasks, sort, dir);
+  const sorted = sortTasks(tasks.filter((task) => !project || task.projects.includes(project)), sort, dir);
 
   return (
     <section className="pane todo-pane" id="todo-view">
@@ -279,7 +346,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
             <TaskItem key={task.id} task={task} onToggle={onToggle} onEdit={onEdit} onDelete={onDelete} />
           ))}
         </ul>
-        <p id="empty" hidden={tasks.length !== 0}>
+        <p id="empty" hidden={sorted.length !== 0}>
           No tasks.
         </p>
         <p id="error" role="alert" hidden={!error}>
@@ -288,9 +355,11 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact }, ref) => {
       </div>
 
       <AddForm serverLabels={serverLabels} onAdd={onAdd} compact={compact} />
+      {editTask && editSuspended && <button type="button" onClick={() => setEditSuspended(false)}>Resume task draft</button>}
 
       <EditTaskModal
         task={editTask}
+        suspended={editSuspended}
         serverLabels={serverLabels}
         onSave={onEditSave}
         onClose={() => setEditTask(null)}

@@ -92,7 +92,7 @@ function mockServer(
 }
 
 // The `req` of the nth `server_fetch` invoke call.
-function reqOf(call: number): { url: string; method: string; body: string | null; contentType: string | null; allowInvalidCert: boolean } {
+function reqOf(call: number): { url: string; method: string; body: string | null; contentType: string | null; allowInvalidCert: boolean; clientId: string | null } {
   const calls = vi.mocked(invoke).mock.calls.filter((c) => c[0] === "server_fetch");
   return (calls[call][1] as { req: ReturnType<typeof reqOf> }).req;
 }
@@ -117,6 +117,7 @@ describe("listTasks (server mode)", () => {
       body: null,
       contentType: null,
       allowInvalidCert: false,
+      clientId: null,
     });
   });
 
@@ -268,6 +269,22 @@ describe("labels (server mode)", () => {
 });
 
 describe("onChange (server mode)", () => {
+  it("reuses one session origin across mutations and replacement subscriptions, not connection IDs or unrelated GETs", async () => {
+    vi.mocked(listen).mockResolvedValue(vi.fn());
+    mockServer([[null, 204], ["saved"]]);
+    const first = await onChange(() => {});
+    await putNote("saved");
+    await getNote();
+    const second = await onChange(() => {});
+    const connections = vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "server_connect")
+      .map(([, args]) => args as { connectionId: string; clientId: string });
+    expect(connections).toHaveLength(2);
+    expect(connections[0].clientId).toBe(connections[1].clientId);
+    expect(connections[0].connectionId).not.toBe(connections[1].connectionId);
+    expect(reqOf(0).clientId).toBe(connections[0].clientId);
+    expect(reqOf(1).clientId).toBeNull();
+    first(); second(); await settle();
+  });
   it("starts the SSE bridge, fires the handler on a change event, and tears down on unlisten", async () => {
     let captured: ((e: { payload: { connectionId: string; kind: string } }) => void) | undefined;
     const unlistenSpy = vi.fn();
@@ -283,6 +300,7 @@ describe("onChange (server mode)", () => {
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("server_connect", {
       url: `${SERVER}/api/events`,
       allowInvalidCert: false,
+      clientId: expect.any(String),
       connectionId: expect.any(String),
     });
     const connectionId = (vi.mocked(invoke).mock.calls[0][1] as { connectionId: string }).connectionId;

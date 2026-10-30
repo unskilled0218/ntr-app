@@ -65,7 +65,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); localStorage.clear(); });
 
 describe("TodoPane removal glue", () => {
-  it("removing a project updates every task that carries it and reloads", async () => {
+  it("removing a project updates known tasks without a full-list reload", async () => {
     render(<TodoPane compact={false} />);
 
     // Open the Project filter picker and click the "work" row's Remove button.
@@ -83,11 +83,10 @@ describe("TodoPane removal glue", () => {
     expect(vi.mocked(updateTask).mock.calls.some(([id]) => id === 2)).toBe(false);
     expect(vi.mocked(putLabels)).toHaveBeenCalledWith({ project: ["home"], context: ["phone"] });
 
-    // And the store is re-queried afterwards (the reload).
-    await waitFor(() => expect(vi.mocked(listTasks).mock.calls.length).toBeGreaterThan(callsBefore));
+    expect(vi.mocked(listTasks).mock.calls.length).toBe(callsBefore);
   });
 
-  it("still reloads when an update fails", async () => {
+  it("retains visible content when an update fails", async () => {
     vi.mocked(updateTask).mockRejectedValueOnce(new Error("network error"));
     render(<TodoPane compact={false} />);
 
@@ -98,8 +97,8 @@ describe("TodoPane removal glue", () => {
     fireEvent.click(dialog.getByRole("button", { name: /^remove$/i }));
 
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("network error"));
-    // The catch path reloads too, so the UI reflects whatever landed before the failure.
-    await waitFor(() => expect(vi.mocked(listTasks).mock.calls.length).toBeGreaterThan(callsBefore));
+    expect(vi.mocked(listTasks).mock.calls.length).toBe(callsBefore);
+    expect(document.querySelector("#tasks")!.textContent).toContain("call bank");
   });
 });
 
@@ -306,7 +305,8 @@ describe.each([false, true])("TodoPane simplified workflow (compact=%s)", (compa
     await waitFor(() => expect(screen.queryByText("tidy")).toBeNull());
     const finished = screen.getByText("finished").closest("li")!;
     expect(finished.querySelector(".meta")!.textContent).toBe("+work");
-    expect(listTasks).toHaveBeenCalledWith({ project: "work" }, expect.objectContaining({ url: "" }));
+    expect(listTasks).toHaveBeenCalledTimes(1);
+    expect(listTasks).toHaveBeenCalledWith({}, expect.objectContaining({ url: "" }));
   });
 
   it("completes and reopens a task without hiding it", async () => {
