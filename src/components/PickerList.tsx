@@ -1,3 +1,7 @@
+import { useId } from "react";
+import ProjectActionIcon from "./ProjectActionIcon";
+import type { ProjectAction } from "../lib/projectActions";
+
 // One group of selectable rows inside a picker modal: a vertical <ul> of option buttons with the
 // current selection marked (aria-current), plus an optional Remove button per row (label pickers
 // only). Shared by SelectField (its one group) and SortField (the Sort and Direction groups) so an
@@ -8,6 +12,7 @@ export interface FieldOption {
   label: string;
   removable?: boolean; // show a Remove button on this row's right (needs onRemove)
   renamable?: boolean;
+  description?: string;
 }
 
 // The label of the option whose value matches, falling back to the first option's, then "" — the
@@ -23,17 +28,21 @@ interface Props {
   onChoose(value: string): void;
   onRemove?(value: string): void;
   onRename?(value: string): void;
+  recoveries?: { id: number; label: string; kind: ProjectAction }[];
+  onRecover?(id: number): void;
 }
 
-export default function PickerList({ options, value, onChoose, onRemove, onRename }: Props) {
+export default function PickerList({ options, value, onChoose, onRemove, onRename, recoveries, onRecover }: Props) {
+  const id = useId();
   return (
     <ul className="picker-list">
-      {options.map((o) => (
+      {options.map((o, index) => (
         <li key={o.value} className="picker-option">
           <button
             type="button"
             className="picker-choice"
             aria-current={o.value === value ? "true" : undefined}
+            aria-describedby={o.description ? `${id}-${index}` : undefined}
             onClick={(event) => {
               // Closing a picker can remove this button before its label's default activation.
               event.preventDefault();
@@ -42,24 +51,30 @@ export default function PickerList({ options, value, onChoose, onRemove, onRenam
           >
             {o.label}
           </button>
-          {o.renamable && onRename && <button type="button" className="picker-rename" aria-label={`Rename ${o.label}`} onClick={(event) => {
+          {o.description && <span className="sr-only" id={`${id}-${index}`}>{o.description}</span>}
+          {o.renamable && onRename && <button type="button" className="picker-rename" title={`Rename ${o.label}`} aria-label={`Rename ${o.label}`} aria-describedby={o.description ? `${id}-${index}` : undefined} onClick={(event) => {
             event.preventDefault(); onRename(o.value);
-          }}>Rename</button>}
+          }}><ProjectActionIcon action="rename" /></button>}
           {o.removable && onRemove && (
             <button
               type="button"
               className="picker-remove"
               aria-label={`Remove ${o.label}`}
+              title={`Remove ${o.label}`}
+              aria-describedby={o.description ? `${id}-${index}` : undefined}
               onClick={(event) => {
                 event.preventDefault();
                 onRemove(o.value);
               }}
             >
-              Remove
+              <ProjectActionIcon action="remove" />
             </button>
           )}
         </li>
       ))}
+      {recoveries?.map((entry) => <li key={`recovery-${entry.id}`} className="picker-recovery"><button type="button" onClick={(event) => {
+        event.preventDefault(); onRecover?.(entry.id);
+      }}><ProjectActionIcon action={entry.kind} /><span>{entry.label}</span></button></li>)}
     </ul>
   );
 }

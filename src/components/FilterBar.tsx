@@ -13,6 +13,7 @@ import { useRef } from "react";
 import OptionsModal, { type OptionsModalHandle } from "./OptionsModal";
 import SelectField, { type FieldOption } from "./SelectField";
 import SortField from "./SortField";
+import { recoveryEntries, relatedRecovery, type ProjectManagement } from "../lib/projectActions";
 
 interface Props {
   project: string;
@@ -25,6 +26,7 @@ interface Props {
   onDir: (d: string) => void;
   onRemove: (kind: "project", name: string) => void;
   onRename?: (name: string) => void;
+  management?: ProjectManagement;
 }
 
 const SORT_OPTIONS: FieldOption[] = Object.entries(SORTS).map(([value, s]) => ({
@@ -56,6 +58,7 @@ export default function FilterBar({
   onDir,
   onRemove,
   onRename,
+  management,
 }: Props) {
   const optionsRef = useRef<OptionsModalHandle>(null);
   // The two choosers, defined once and rendered either inline (default) or inside the compact
@@ -67,10 +70,19 @@ export default function FilterBar({
         <SelectField
           ariaLabel="Project filter"
           value={project}
-          options={labelOptions(serverLabels.project)}
+          options={labelOptions(serverLabels.project).map((option) => ({ ...option, description: management ? relatedRecovery(option.value, management)?.summary : undefined }))}
           onChange={onProject}
-          onRemove={(name) => onRemove("project", name)}
-          onRename={onRename ? (name) => { optionsRef.current?.close(); onRename(name); } : undefined}
+          onRemove={(name) => {
+            if (management) { optionsRef.current?.close(); management.onAction({ action: "remove", name, scope: "known", destination: management.destination, origin: "filter", recoveryId: relatedRecovery(name, management)?.id }); }
+            else onRemove("project", name);
+          }}
+          onRename={management || onRename ? (name) => {
+            optionsRef.current?.close();
+            if (management) management.onAction({ action: "rename", name, scope: "known", destination: management.destination, origin: "filter", recoveryId: relatedRecovery(name, management)?.id });
+            else onRename?.(name);
+          } : undefined}
+          recoveries={recoveryEntries(serverLabels.project, management)}
+          onRecover={(id) => { optionsRef.current?.close(); management?.onRecover(id, "filter"); }}
         />
       </label>
       <label>

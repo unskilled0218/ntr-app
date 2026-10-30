@@ -28,7 +28,7 @@ import {
   getDirection,
   setDirection as persistDir,
 } from "../settings";
-import { parseLabelInput, planLabelRemoval, renameProjectText, unionLabels } from "../labels";
+import { parseLabelInput, removeProjectText, renameProjectText, unionLabels } from "../labels";
 import AddForm from "./AddForm";
 import FilterBar from "./FilterBar";
 import RemoveLabelDialog from "./RemoveLabelDialog";
@@ -38,6 +38,10 @@ import type { ApplicationToken, RemoteUpdates } from "../lib/remoteUpdates";
 import RenameProjectDialog from "./RenameProjectDialog";
 import { ProjectRename, ProjectReviewRequired, projectRenameIO, type ProjectRenameEvent } from "../lib/projectRename";
 import type { TransportContext } from "../api";
+import { ProjectRemoval, type ProjectRemovalEvent } from "../lib/projectRemoval";
+import type { ProjectActionRequest, ProjectManagement, ProjectOrigin, ProjectRecovery } from "../lib/projectActions";
+
+type ProjectRecord = { id: number; kind: "rename"; operation: ProjectRename } | { id: number; kind: "remove"; operation: ProjectRemoval };
 
 export interface TodoPaneHandle {
   onTasksChanged: () => void;
@@ -70,8 +74,14 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
   const [removing, setRemoving] = useState<{ kind: "project"; name: string } | null>(null);
   const [renameSource, setRenameSource] = useState<string | null>(null);
   const [renameOperation, setRenameOperation] = useState<ProjectRename | null>(null);
-  const renameRef = useRef<ProjectRename | null>(null);
+  const [removeOperation, setRemoveOperation] = useState<ProjectRemoval | null>(null);
+  const records = useRef(new Map<string, ProjectRecord>());
+  const displayedRecord = useRef<ProjectRecord | null>(null);
+  const promptContext = useRef(captureTransport());
+  const promptOrigin = useRef<ProjectOrigin>("filter");
+  const [projectNotice, setProjectNotice] = useState("");
   const [renameEvent, setRenameEvent] = useState<ProjectRenameEvent>();
+  const [removalEvent, setRemovalEvent] = useState<ProjectRemovalEvent>();
   const renameSequence = useRef(0);
   const [, redraw] = useState(0);
   const bulkOwner = useRef<TransportContext | null>(null);
@@ -258,6 +268,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
         ? known.map((t) => t.id === task.id ? task : t) : [...known, task]) : known.filter((t) => t.id !== removeId);
       settle?.(next);
       projectTasks(next);
+      if (!persistLabels) setServerLabels((labels) => ({ project: unionLabels(labels.project, next.flatMap((found) => found.projects)), context: unionLabels(labels.context, next.flatMap((found) => found.contexts)) }));
       if (persistLabels) await loadLabels(true);
       return task;
     } catch (error) { settle?.(); throw error; }
@@ -306,33 +317,17 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
   // update each affected task sequentially (the file-backed, one-writer model), retaining each
   // successful response. loadLabels drops the unused name and clears a filter that selected it.
   async function confirmRemove() {
-    if (!removing) return;
-    if (!safeAction()) return;
-    const { kind, name } = removing;
-    setRemoving(null);
+    if (!removing || bulkOwner.current) return;
     const owner = captureTransport();
+    if (!isTransportCurrent(promptContext.current)) { setProjectNotice("The connection changed. Close and reopen the selector before confirming."); return; }
+    let record = displayedRecord.current;
+    if (!record) record = createRecord("remove", removing.name, "", owner);
+    if (record.kind !== "remove" || record.operation.targetDestination !== destination(owner)) return;
+    setProjectNotice("");
+    setRemoveOperation(record.operation);
     startBulk(owner);
-    try {
-      const all = await validateProjectTasks(owner);
-      for (const u of planLabelRemoval(all, kind, name)) {
-        const current = await validateProjectTasks(owner);
-        if (current.find((task) => task.id === u.id)?.raw !== all.find((task) => task.id === u.id)?.raw) throw new ProjectReviewRequired();
-        await mutate(() => updateTask(u.id, u.text, owner), undefined, owner, false);
-        await validateProjectTasks(owner);
-      }
-      const remembered = await getLabels(owner);
-      ensureProjectContext(owner);
-      await putLabels({ ...remembered, project: remembered.project.filter((n) => n !== name) }, owner);
-      ensureProjectContext(owner);
-      await loadLabels();
-    } catch (err) {
-      // Successful responses already projected their own changes; never import an unrelated
-      // remote list or erase labels to recover a partial failure.
-      if (mounted.current && isTransportCurrent(owner)) {
-        setError(`Project removal stopped; completed changes remain. ${errMsg(err)}`);
-        if (err instanceof ProjectReviewRequired) void remote()?.review("tasks");
-      }
-    } finally { finishBulk(owner); }
+    try { await record.operation.run(owner); }
+    finally { finishBulk(owner); }
   }
 
   function ensureProjectContext(owner: TransportContext) {
@@ -364,59 +359,107 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
     return found;
   }
   function guardDraft(text: string) {
-    const operation = renameRef.current;
+    const operation = records.current.get(destination(captureTransport()))?.operation;
     if (operation?.started && operation.phase !== "completed" && operation.targetDestination === destination(captureTransport())
-      && text.split(/\s+/).includes(`+${operation.from}`)) throw new Error("This draft refers to a partially renamed project. Finish or resolve the rename before saving it.");
+      && text.split(/\s+/).includes(`+${operation.from}`)) throw new Error("This draft refers to an unfinished project operation. Finish it or explicitly stop retry before saving it.");
   }
-  function openRename(name: string) {
-    if (bulkOwner.current) return;
-    const existing = renameRef.current;
-    if (existing?.started && existing.phase !== "completed") {
-      setRenameSource(existing.from);
-      return;
+  function openRecord(record: ProjectRecord, origin: ProjectOrigin) {
+    displayedRecord.current = record;
+    promptOrigin.current = origin; promptContext.current = captureTransport();
+    if (record.kind === "rename") {
+      setRemoving(null); setRemoveOperation(null); setRenameOperation(record.operation); setRenameSource(record.operation.from);
+    } else {
+      setRenameSource(null); setRenameOperation(null); setRemoveOperation(record.operation); setRemoving({ kind: "project", name: record.operation.from });
     }
-    renameRef.current = null; setRenameOperation(null); setRenameSource(name);
+  }
+  function recoverProject(id: number, origin: ProjectOrigin) {
+    if (bulkOwner.current) { setError("Wait for the current project attempt to settle."); return; }
+    const record = [...records.current.values()].find((found) => found.id === id);
+    if (record) { setProjectNotice(""); openRecord(record, origin); }
+  }
+  function projectAction(request: ProjectActionRequest): boolean {
+    if (request.destination !== destination(captureTransport())) { setError("The destination changed. Reopen the selector."); return true; }
+    if (bulkOwner.current) { setError("Wait for the current project attempt to settle."); return true; }
+    const existing = records.current.get(request.destination);
+    const pending = existing && existing.operation.started && existing.operation.phase !== "completed" ? existing : undefined;
+    if (pending) {
+      const related = pending.operation.from === request.name || (pending.kind === "rename" && pending.operation.to === request.name);
+      if (related || request.scope === "known" || request.recoveryId !== undefined) {
+        setProjectNotice(related && pending.kind === request.action ? "" : "Finish or explicitly stop this pending operation before starting another project action.");
+        openRecord(pending, request.origin); return true;
+      }
+    }
+    if (request.recoveryId !== undefined) { setError("That operation result changed. Reopen the selector."); return true; }
+    if (request.scope === "staged") return false;
+    if (!knownLabels.current.project.includes(request.name)) { setError("That project changed. Reopen the selector for a new confirmation."); return true; }
+    displayedRecord.current = null;
+    promptContext.current = captureTransport(); promptOrigin.current = request.origin;
+    setProjectNotice(""); setRenameOperation(null); setRemoveOperation(null);
+    if (request.action === "rename") { setRemoving(null); setRenameSource(request.name); }
+    else { setRenameSource(null); setRemoving({ kind: "project", name: request.name }); }
+    return true;
+  }
+  function createRecord(kind: "rename" | "remove", from: string, to: string, owner: TransportContext): ProjectRecord {
+    let record: ProjectRecord;
+    const ports = {
+      ...projectRenameIO, validate: validateProjectTasks,
+      write: async (id: number, text: string, context: TransportContext) => {
+        const task = await mutate(() => updateTask(id, text, context), undefined, context, false);
+        if (!task) throw new Error("The task write returned no task. Revalidate before retrying.");
+        return task;
+      },
+      staged: () => [...draftProjects.current.add, ...draftProjects.current.edit],
+      current: () => mounted.current && records.current.get(record.operation.targetDestination) === record,
+      changed: () => { if (mounted.current) redraw((n) => n + 1); },
+      completed: (labels: Labels) => completeProject(record, labels),
+    };
+    record = kind === "rename" ? { id: ++renameSequence.current, kind, operation: new ProjectRename(from, to, owner, ports) }
+      : { id: ++renameSequence.current, kind, operation: new ProjectRemoval(from, owner, ports) };
+    records.current.set(destination(owner), record); displayedRecord.current = record;
+    return record;
+  }
+  function completeProject(record: ProjectRecord, labels: Labels) {
+    ensureProjectContext(captureTransport());
+    const operation = record.operation;
+    if (destination(captureTransport()) !== operation.targetDestination) return;
+    const known = remote()?.accepted("tasks") ?? taskProjection.current;
+    setServerLabels({ project: unionLabels(labels.project, known.flatMap((task) => task.projects)), context: unionLabels(labels.context, known.flatMap((task) => task.contexts)) });
+    const transform = (text: string) => record.kind === "rename" ? renameProjectText(text, operation.from, record.operation.to) : removeProjectText(text, operation.from);
+    const updated = operation.done.get(editExpected.current?.id ?? -1);
+    if (updated && editExpected.current && destination(editOwner.current) === operation.targetDestination && transform(editExpected.current.raw) === updated.raw) editExpected.current = updated;
+    const event = { id: ++renameSequence.current, destination: operation.targetDestination, from: operation.from, tasks: [...operation.done.values()] };
+    if (record.kind === "rename") {
+      setProject((selected) => selected === operation.from ? record.operation.to : selected);
+      setRenameEvent({ ...event, to: record.operation.to });
+    } else {
+      setProject((selected) => selected === operation.from ? "" : selected);
+      setRemovalEvent(event);
+    }
+    setProjectNotice(""); setError("");
   }
   async function confirmRename(name: string) {
     if (renameSource === null || bulkOwner.current) return;
     const parsed = parseLabelInput(name);
     if ("error" in parsed) return;
     const owner = captureTransport();
-    let operation = renameRef.current;
-    if (!operation || !operation.started) {
-      operation = new ProjectRename(renameSource, parsed.name, owner, {
-        ...projectRenameIO,
-        validate: validateProjectTasks,
-        write: async (id, text, context) => (await mutate(() => updateTask(id, text, context), undefined, context, false))!,
-        staged: () => [...draftProjects.current.add, ...draftProjects.current.edit],
-        current: () => mounted.current && renameRef.current === operation,
-        changed: () => { if (mounted.current) redraw((n) => n + 1); },
-        completed: (labels) => {
-          ensureProjectContext(captureTransport());
-          const completed = operation!;
-          const known = remote()?.accepted("tasks") ?? taskProjection.current;
-          setServerLabels({
-            project: unionLabels(labels.project, known.flatMap((task) => task.projects)),
-            context: unionLabels(labels.context, known.flatMap((task) => task.contexts)),
-          });
-          setProject((selected) => selected === completed.from ? completed.to : selected);
-          const updated = completed.done.get(editExpected.current?.id ?? -1);
-          if (updated && editExpected.current && renameProjectText(editExpected.current.raw, completed.from, completed.to) === updated.raw) editExpected.current = updated;
-          setRenameEvent({ id: ++renameSequence.current, destination: completed.targetDestination, from: completed.from, to: completed.to, tasks: [...completed.done.values()] });
-          setError("");
-        },
-      });
-      renameRef.current = operation; setRenameOperation(operation);
-    }
+    if (!isTransportCurrent(promptContext.current)) { setProjectNotice("The connection changed. Close and reopen the selector before confirming."); return; }
+    let record = displayedRecord.current;
+    if (!record || !record.operation.started) record = createRecord("rename", renameSource, parsed.name, owner);
+    if (record.kind !== "rename" || record.operation.targetDestination !== destination(owner)) return;
+    setProjectNotice("");
+    setRenameOperation(record.operation);
     startBulk(owner);
-    try { await operation.run(owner); }
+    try { await record.operation.run(owner); }
     finally { finishBulk(owner); }
   }
   function closeRename() {
-    if (renameRef.current?.busy) return;
-    setRenameSource(null);
-    document.querySelector<HTMLButtonElement>(compact ? 'button[aria-label="Filter options"]' : 'button[aria-label="Project filter"]')?.focus();
-    if (!renameRef.current?.started) { renameRef.current = null; setRenameOperation(null); }
+    if (displayedRecord.current?.operation.busy) return;
+    setRenameSource(null); setRemoving(null);
+    const record = displayedRecord.current;
+    if (record && (!record.operation.started || record.operation.phase === "completed")) records.current.delete(record.operation.targetDestination);
+    const selector = promptOrigin.current === "add" ? (compact ? '#add-form button[aria-label="Task options"]' : '#add-form button[aria-label="Project"]')
+      : (compact ? 'button[aria-label="Filter options"]' : 'button[aria-label="Project filter"]');
+    document.querySelector<HTMLButtonElement>(selector)?.focus();
   }
   function reviewRename() {
     if (bulkOwner.current) return;
@@ -425,8 +468,10 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
   }
   function abandonRename() {
     if (bulkOwner.current) return;
-    renameRef.current = null; setRenameOperation(null); setRenameSource(null);
-    setError("Rename retry stopped. Partial task and label changes remain; no changes were rolled back.");
+    const record = displayedRecord.current;
+    if (record) records.current.delete(record.operation.targetDestination);
+    closeRename(); displayedRecord.current = null; setRenameOperation(null); setRemoveOperation(null);
+    setError("Project retry stopped. Partial task and label changes remain; no changes were rolled back.");
   }
 
   async function onEditSave(id: number, text: string) {
@@ -443,6 +488,11 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
   }
 
   const sorted = sortTasks(tasks.filter((task) => !project || task.projects.includes(project)), sort, dir);
+  const pending: ProjectRecovery[] = [...records.current.values()].filter((record) => record.operation.started && record.operation.phase !== "completed").map((record) => ({
+    id: record.id, kind: record.kind, from: record.operation.from, to: record.kind === "rename" ? record.operation.to : undefined,
+    destination: record.operation.targetDestination, summary: `Unfinished ${record.kind === "rename" ? "rename" : "removal"}: ${record.operation.done.size} tasks updated. Open its action to finish or stop retry.`,
+  }));
+  const management: ProjectManagement = { destination: destination(captureTransport()), pending, onAction: projectAction, onRecover: recoverProject };
 
   return (
     <section className="pane todo-pane" id="todo-view">
@@ -459,7 +509,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
           onSort={(s) => { setSort(s); persistSort(s); }}
           onDir={(d) => { const next = d as Direction; setDir(next); persistDir(next); }}
           onRemove={(kind, name) => setRemoving({ kind, name })}
-          onRename={openRename}
+          management={management}
         />
       </div>
       
@@ -477,8 +527,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
         </p>
       </div>
 
-      <AddForm serverLabels={serverLabels} onAdd={onAdd} compact={compact} rename={renameEvent} onProjectsChange={addProjects} />
-      {renameOperation?.started && renameSource === null && <button type="button" onClick={() => setRenameSource(renameOperation.from)}>Review rename progress</button>}
+      <AddForm serverLabels={serverLabels} onAdd={onAdd} compact={compact} rename={renameEvent} removal={removalEvent} onProjectsChange={addProjects} management={management} />
       {editTask && editSuspended && <button type="button" onClick={() => setEditSuspended(false)}>Resume task draft</button>}
 
       <EditTaskModal
@@ -488,12 +537,15 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
         onSave={onEditSave}
         onClose={() => setEditTask(null)}
         rename={renameEvent}
+        removal={removalEvent}
         onProjectsChange={editProjects}
       />
 
-      <RemoveLabelDialog target={removing} onConfirm={confirmRemove} onCancel={() => setRemoving(null)} />
+      <RemoveLabelDialog target={removing} operation={removeOperation} error={projectNotice} onConfirm={() => { void confirmRemove(); }} onCancel={closeRename}
+        onReview={reviewRename} onAbandon={abandonRename} readOnly={!!removeOperation && removeOperation.targetDestination !== management.destination} />
       <RenameProjectDialog source={renameSource} operation={renameOperation} count={tasks.filter((task) => task.projects.includes(renameSource ?? "")).length}
-        onConfirm={(name) => { void confirmRename(name); }} onClose={closeRename} onReview={reviewRename} onAbandon={abandonRename} />
+        onConfirm={(name) => { void confirmRename(name); }} onClose={closeRename} onReview={reviewRename} onAbandon={abandonRename} error={projectNotice}
+        readOnly={!!renameOperation && renameOperation.targetDestination !== management.destination} />
     </section>
   );
 });

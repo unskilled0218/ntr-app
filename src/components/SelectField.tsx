@@ -9,6 +9,7 @@
 
 import PickerList, { optionLabel, type FieldOption } from "./PickerList";
 import { usePickerDialog } from "./usePickerDialog";
+import type { ProjectAction } from "../lib/projectActions";
 
 // Re-exported so the many existing `import { FieldOption } from "./SelectField"` callers are
 // untouched; the type's home is now PickerList (it describes a picker row).
@@ -21,9 +22,11 @@ interface Props {
   onChange(value: string): void;
   onRemove?(value: string): void;
   onRename?(value: string): void;
+  recoveries?: { id: number; label: string; kind: ProjectAction }[];
+  onRecover?(id: number): void;
 }
 
-export default function SelectField({ ariaLabel, value, options, onChange, onRemove, onRename }: Props) {
+export default function SelectField({ ariaLabel, value, options, onChange, onRemove, onRename, recoveries, onRecover }: Props) {
   const { dialogRef, open, setOpen, closePicker, onClose, onCancel } = usePickerDialog();
 
   function choose(v: string) {
@@ -60,6 +63,8 @@ export default function SelectField({ ariaLabel, value, options, onChange, onRem
               onChoose={choose}
               onRemove={onRemove ? remove : undefined}
               onRename={onRename ? (value) => { closePicker(); onRename(value); } : undefined}
+              recoveries={recoveries}
+              onRecover={(id) => { closePicker(); onRecover?.(id); }}
             />
             <div className="modal-actions">
               <button type="button" onClick={(event) => {

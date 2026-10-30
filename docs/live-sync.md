@@ -22,6 +22,8 @@ Project filtering and sorting use the accepted unfiltered task snapshot. Own tas
 
 [Project renaming](project-renaming.md) and project removal wait for fresh task validation between writes, including slow own-write rescans. Foreign divergence stops further stale-ID writes. A paused rename can yield its modal to Review update without losing progress, but approval does not retry it. Renames finalize remembered labels separately, keep pending note approval independent, and expose partial completion and explicit retry rather than promising a multi-resource transaction. Labels-only renames have no dedicated SSE token; other clients discover them on a deliberate label read.
 
+Pencil/trash actions in filter and create-task project selectors share these global safeguards. Staged-only choices stay draft-local unless a same-destination retained operation owns the name. Both rename and removal results reopen through related row icons or an in-selector fallback; opening a result is read-only. Partial removal retains its source guard and task/label progress until verified completion or explicit abandonment. Another destination keeps separate stopped records and cannot acquire their write authority. Compact selectors and their Options dialogs close before action/approval handoff.
+
 The app supplies one random session ID in the optional `X-Ntr-Client-Id` mutation and SSE headers. Server `0.2.9` or later filters that subscriber's own events; watcher changes and other clients still notify. The header is advisory, not authentication. Older servers retain the approval boundary and equal-content echo suppression, but cannot provide precise author attribution. Differing content is never discarded as a presumed self-event.
 
 ## Connection recovery

@@ -1,5 +1,5 @@
 import { destination, errMsg, getLabels, isTransportCurrent, putLabels, updateTask, type Labels, type Task, type TransportContext } from "../api";
-import { planProjectRename, renameProjectNames } from "../labels";
+import { equalLabels as sameLabels, planProjectRename, renameProjectNames } from "../labels";
 
 export type RenamePhase = "ready" | "checking" | "running" | "paused-for-review" | "failed" | "labels-pending" | "completed";
 export interface ProjectRenameEvent {
@@ -23,11 +23,6 @@ export interface ProjectRenamePorts {
   completed(labels: Labels): void;
 }
 export const projectRenameIO = { write: updateTask, labels: getLabels, saveLabels: putLabels };
-const sameNames = (a: string[], b: string[]) => {
-  const left = new Set(a), right = new Set(b);
-  return left.size === right.size && [...left].every((name) => right.has(name));
-};
-const sameLabels = (a: Labels, b: Labels) => sameNames(a.project, b.project) && sameNames(a.context, b.context);
 
 // One operation owns provenance; each explicit run gets fresh, scoped write authority.
 // No React/DOM dependency and no retry, rollback, or remote approval hidden in this helper.
