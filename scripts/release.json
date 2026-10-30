@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "gitea": "https://git.lan",
+  "repository": "ntr/ntr-app",
+  "username": "dev",
+  "token_file": "~/.config/git/token",
+  "notes": "docs/releases/0.15.28.md",
+  "targets": ["desktop", "android"],
+  "android_certificate_sha256": null
+}

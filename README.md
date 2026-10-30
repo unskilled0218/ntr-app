@@ -5,6 +5,8 @@
 
 A local-first task manager and Markdown notes app built with Tauri, React, and TypeScript. Runs on desktop and Android, using local files or an optional `my-ntr-server` connection.
 
+Version `0.15.28` adds guarded [app releases](docs/forgejo-publishing.md) and APK-only [local Android signing](docs/android-signing.md). See [release notes](docs/releases/0.15.28.md); local validation does not publish anything.
+
 ## Quick start
 
 ```sh
