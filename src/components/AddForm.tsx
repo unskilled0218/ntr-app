@@ -17,6 +17,7 @@ import LabelSelect from "./LabelSelect";
 import OptionsModal, { type OptionsModalHandle } from "./OptionsModal";
 
 interface Props {
+  disabled?: boolean;
   serverLabels: { project: string[]; context: string[] };
   // Returns true on success (so the form resets) or false on error (kept for correction).
   onAdd: (text: string) => Promise<boolean>;
@@ -27,7 +28,7 @@ interface Props {
   management?: ProjectManagement;
 }
 
-export default function AddForm({ serverLabels, onAdd, compact, rename, onProjectsChange, removal, management }: Props) {
+export default function AddForm({ serverLabels, onAdd, compact, rename, onProjectsChange, removal, management, disabled = false }: Props) {
   const [description, setDescription] = useState("");
   const [error, setError] = useState("");
   const [due, setDue] = useState("");
@@ -126,6 +127,7 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onProjec
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (disabled) return;
     // A description is the one required field; without it an add is a no-op.
     if (!description.trim()) return;
     setError("");
@@ -168,7 +170,7 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onProjec
           onAdd={() => setModalKind("project")}
           management={management}
           revision={mappedRevision}
-          onProjectAction={management ? projectAction : undefined}
+          onProjectAction={management && !disabled ? projectAction : undefined}
           onRecover={(id, picker) => {
             management?.onRecover(id, "add", ownSession(picker));
           }}
@@ -190,7 +192,7 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onProjec
             value={description}
             onChange={(e) => setDescription(e.currentTarget.value)}
           />
-          <button type="submit">Add</button>
+           <button type="submit" disabled={disabled}>Add</button>
           {compact && <OptionsModal ref={optionsRef} ariaLabel="Task options">{fields}</OptionsModal>}
         </div>
         {error && <p className="modal-error" role="alert">{error}</p>}

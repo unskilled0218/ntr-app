@@ -1,7 +1,8 @@
 // The note conflict dialog: two side-by-side version previews and a keep-mine / use-theirs
 // choice. Native <dialog> gives the focus trap, backdrop, and Escape handling; the `close` event
 // (Escape / dismiss) delegates upstream: runtime remote updates defer without writing, while local
-// watcher and destination handoff conflicts retain the legacy keep-mine behavior. Neither path
+// watcher conflicts retain the legacy keep-mine behavior. Managed destination handoffs
+// retain drafts without saving until an explicit choice. Neither path
 // throws away the user's unsaved work. Ported from #note-conflict + app.js.
 
 import { useEffect, useRef } from "react";

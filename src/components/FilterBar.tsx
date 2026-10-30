@@ -16,6 +16,7 @@ import SortField from "./SortField";
 import { recoveryEntries, relatedRecovery, type ProjectManagement } from "../lib/projectActions";
 
 interface Props {
+  disabled?: boolean;
   project: string;
   sort: string;
   dir: string;
@@ -48,6 +49,7 @@ function labelOptions(names: string[]): FieldOption[] {
 }
 
 export default function FilterBar({
+  disabled = false,
   project,
   sort,
   dir,
@@ -70,7 +72,7 @@ export default function FilterBar({
         <SelectField
           ariaLabel="Project filter"
           value={project}
-          options={labelOptions(serverLabels.project).map((option) => ({ ...option, description: management ? relatedRecovery(option.value, management)?.summary : undefined }))}
+          options={labelOptions(serverLabels.project).map((option) => ({ ...option, removable: !disabled && option.removable, renamable: !disabled && option.renamable, description: management ? relatedRecovery(option.value, management)?.summary : undefined }))}
           onChange={onProject}
           onRemove={(name) => {
             if (management) { optionsRef.current?.close(); management.onAction({ action: "remove", name, scope: "known", destination: management.destination, origin: "filter", recoveryId: relatedRecovery(name, management)?.id }); }

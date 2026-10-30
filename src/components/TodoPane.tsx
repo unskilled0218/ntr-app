@@ -8,6 +8,8 @@ import {
   captureTransport,
   destination,
   isTransportCurrent,
+  canMutate,
+  markResourceReady,
   deleteTask as apiDeleteTask,
   errMsg,
   listTasks,
@@ -50,12 +52,13 @@ export interface TodoPaneHandle {
 }
 
 interface Props {
+  disabled?: boolean;
   compact: boolean; // collapse the add fields and filter choosers into "Options" modals
   updates?: RemoteUpdates;
   onDialogChange?: (open: boolean) => void;
 }
 
-const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialogChange }, ref) => {
+const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialogChange, disabled = false }, ref) => {
   // Sort / direction are seeded from the local cache (lazy useState initializer runs once
   // on mount) and written back in their change handlers below, so the view options survive relaunch.
   const [project, setProject] = useState("");
@@ -63,6 +66,8 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
   const [dir, setDir] = useState<Direction>(getDirection);
   const [tasks, setTasks] = useState<Task[]>([]);
   const taskProjection = useRef(tasks);
+  const projectionOwner = useRef(captureTransport());
+  const addOwner = useRef(captureTransport());
   const projectTasks = (found: Task[]) => { taskProjection.current = found; setTasks(found); };
   const remote = () => captureTransport().url ? updates : undefined;
   const [serverLabels, setServerLabels] = useState<Labels>({ project: [], context: [] });
@@ -116,6 +121,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
     const request = ++tasksRequest.current;
     const current = () => mounted.current && request === tasksRequest.current && isTransportCurrent(context);
     if (context.url && updates?.accepted("tasks") !== undefined) {
+      if (destination(projectionOwner.current) === destination(context)) projectionOwner.current = context;
       updates.request("tasks");
       return true;
     }
@@ -124,6 +130,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
       if (current()) {
         if (context.url && updates) updates.register("tasks", found);
         projectTasks(context.url && updates ? updates.accepted("tasks")! : found);
+        projectionOwner.current = context;
         readErrors.current.tasks = "";
         setError(readErrors.current.labels);
       }
@@ -179,6 +186,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
       context: unionLabels(remembered.context, [...contexts]),
     };
     setServerLabels(merged);
+    if (!labelsFailed && isTransportCurrent(projectionOwner.current) && !readErrors.current.tasks) markResourceReady("tasks", context);
     setProject((p) => (p && !merged.project.includes(p) ? "" : p));
     if (
       (persist || !context.url) && !labelsFailed && (merged.project.length !== remembered.project.length ||
@@ -251,6 +259,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
   );
 
   function safeAction() {
+    if (!canMutate("tasks") || !isTransportCurrent(projectionOwner.current)) { setError("Destination is still loading. Choose the action again when ready."); return false; }
     if (bulkOwner.current) { setError("Wait for the project operation to stop before changing tasks."); return false; }
     if (!remote() || (remote()!.accepted("tasks") !== undefined && !remote()!.blocked("tasks"))) return true;
     setEditSuspended(true);
@@ -276,11 +285,17 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
   }
 
   async function onAdd(text: string): Promise<boolean> {
+    const owner = captureTransport();
     try {
+      if (!canMutate("tasks") || !isTransportCurrent(projectionOwner.current)) throw new Error("Destination is still loading.");
+      if (destination(addOwner.current) !== destination(captureTransport())) {
+        addOwner.current = captureTransport();
+        throw new Error("The destination changed. Submit again to add this draft to the current destination.");
+      }
       if (bulkOwner.current) throw new Error("Wait for the project operation to stop before adding tasks.");
       guardDraft(text);
       await mutate(() => createTask(text));
-      return true;
+      return isTransportCurrent(owner);
     } catch (err) {
       setError(errMsg(err));
       return false;
@@ -382,6 +397,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
   }
   function projectAction(request: ProjectActionRequest): boolean {
     function reject(message: string) { request.session?.close(); setError(message); return true; }
+    if (!canMutate("tasks") || !isTransportCurrent(projectionOwner.current)) return reject("Destination is still loading. Reopen the selector when ready.");
     if (request.destination !== destination(captureTransport())) return reject("The destination changed. Reopen the selector.");
     if (bulkOwner.current) return reject("Wait for the current project attempt to settle.");
     const existing = records.current.get(request.destination);
@@ -490,6 +506,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
   }
 
   async function onEditSave(id: number, text: string) {
+    const owner = captureTransport();
     if (destination(editOwner.current) !== destination(captureTransport())) {
       throw new Error("The destination changed. Copy your draft and choose Edit on the current destination.");
     }
@@ -499,6 +516,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
       throw new Error("This task changed. Copy your draft and choose Edit on the updated task; the old action cannot be replayed.");
     }
     await mutate(() => updateTask(id, text)); // throws on error → caught by EditTaskModal
+    if (!isTransportCurrent(owner)) throw new Error("The destination changed while saving. Your draft is unchanged; revalidate before retrying.");
     setEditTask(null);
   }
 
@@ -515,6 +533,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
         <h1>todo</h1>
 
         <FilterBar
+          disabled={disabled}
           project={project}
           sort={sort}
           dir={dir}
@@ -529,23 +548,26 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
       </div>
       
       <div className="task-list">
-        <ul id="tasks">
-          {sorted.map((task) => (
-            <TaskItem key={task.id} task={task} onToggle={onToggle} onEdit={onEdit} onDelete={onDelete} />
-          ))}
-        </ul>
-        <p id="empty" hidden={sorted.length !== 0}>
-          No tasks.
-        </p>
-        <p id="error" role="alert" hidden={!error}>
-          {error}
-        </p>
+        <fieldset className="destination-controls" disabled={disabled}>
+          <ul id="tasks">
+            {sorted.map((task) => (
+              <TaskItem key={task.id} task={task} onToggle={onToggle} onEdit={onEdit} onDelete={onDelete} />
+            ))}
+          </ul>
+          <p id="empty" hidden={sorted.length !== 0}>
+            No tasks.
+          </p>
+          <p id="error" role="alert" hidden={!error}>
+            {error}
+          </p>
+        </fieldset>
       </div>
 
-      <AddForm serverLabels={serverLabels} onAdd={onAdd} compact={compact} rename={renameEvent} removal={removalEvent} onProjectsChange={addProjects} management={management} />
+      <AddForm serverLabels={serverLabels} onAdd={onAdd} compact={compact} rename={renameEvent} removal={removalEvent} onProjectsChange={addProjects} management={management} disabled={disabled} />
       {editTask && editSuspended && <button type="button" onClick={() => setEditSuspended(false)}>Resume task draft</button>}
 
       <EditTaskModal
+        disabled={disabled}
         task={editTask}
         suspended={editSuspended}
         serverLabels={serverLabels}
@@ -557,10 +579,10 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
       />
 
       <RemoveLabelDialog target={removing} operation={removeOperation} error={projectNotice} onConfirm={() => { void confirmRemove(); }} onCancel={closeRename}
-        onReview={reviewRename} onAbandon={abandonRename} readOnly={!!removeOperation && removeOperation.targetDestination !== management.destination} />
+        onReview={reviewRename} onAbandon={abandonRename} readOnly={disabled || (!!removeOperation && removeOperation.targetDestination !== management.destination)} />
       <RenameProjectDialog source={renameSource} operation={renameOperation}
         onConfirm={(name) => { void confirmRename(name); }} onClose={closeRename} onReview={reviewRename} onAbandon={abandonRename} error={projectNotice}
-        readOnly={!!renameOperation && renameOperation.targetDestination !== management.destination} />
+        readOnly={disabled || (!!renameOperation && renameOperation.targetDestination !== management.destination)} />
     </section>
   );
 });

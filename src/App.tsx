@@ -8,6 +8,14 @@ import {
   CHANGE_NOTE,
   CHANGE_TASKS,
   activateTransport,
+  startTransportSession,
+  endTransportSession,
+  subscribeTransport,
+  transportStatus,
+  reconnectTransport,
+  canMutate,
+  needsInitialization,
+  finishInitialization,
   captureTransport,
   destination,
   isTransportCurrent,
@@ -36,7 +44,7 @@ export default function App() {
   // The compact-controls layout choice; re-read from settings on close (the modal covers the view,
   // so applying live behind it would be invisible — same "apply on close" model as the others).
   const [compact, setCompact] = useState(getCompactUi);
-  // Bumped only when settings change the transport; unchanged settings leave the subscription alone.
+  // Bumped for transport replacement, including automatic fallback and explicit reconnect.
   const [connectionKey, setConnectionKey] = useState(0);
   const [destinationKey, setDestinationKey] = useState(0);
   const [ready, setReady] = useState(false);
@@ -62,6 +70,27 @@ export default function App() {
   const swipeStartX = useRef<number | null>(null);
   const swipeStartY = useRef<number | null>(null);
 
+  useEffect(() => {
+    const initial = startTransportSession();
+    activeContext.current = initial;
+    updates.activate(initial);
+    const unsubscribe = subscribeTransport(() => {
+      const next = captureTransport();
+      const before = activeContext.current;
+      if (before.generation !== next.generation) {
+        activeContext.current = next;
+        updates.activate(next);
+        noteRef.current?.prepareDestination();
+        setConflicts([]);
+        setConnectionKey((k) => k + 1);
+        if (destination(before) !== destination(next) || needsInitialization()) setDestinationKey((k) => k + 1);
+        else refreshPanes();
+      }
+      redraw((n) => n + 1);
+    });
+    return () => { unsubscribe(); endTransportSession(); };
+  }, [updates]);
+
   // On first initialization and genuine destination changes: reconcile local files with the server.
   // Auto-resolved divergences are written through; the rest (strategy "ask") queue for the
   // ConflictDialog below. Guarded against a late resolve after the transport changed again.
@@ -77,7 +106,7 @@ export default function App() {
         setReady(true);
         if (destinationKey && !found.length) refreshPanes();
       }
-    });
+    }).catch(() => { /* The transport exposes initialization errors; Connect retries explicitly. */ });
     return () => {
       cancelled = true;
       controller.abort();
@@ -102,11 +131,12 @@ export default function App() {
         }
       } catch (e) {
         console.warn("conflict resolution failed:", e);
+        return;
       }
     }
     if (isTransportCurrent(context)) {
       setConflicts(rest);
-      if (!rest.length) refreshPanes();
+      if (!rest.length) { finishInitialization(context); refreshPanes(); }
     }
   }
 
@@ -144,20 +174,10 @@ export default function App() {
     setCompact(getCompactUi()); // pick up a compact-controls toggle made in the modal
     const before = activeContext.current;
     const next = captureTransport();
-    if (before.url === next.url && before.allowInvalidCert === next.allowInvalidCert
+    if (before.url === next.url && before.configuredUrl === next.configuredUrl && before.allowInvalidCert === next.allowInvalidCert
       && before.generation === next.generation) return;
-    const context = activateTransport();
-    activeContext.current = context;
-    updates.activate(context);
-    setConnectionKey((k) => k + 1);
-    if (destination(before) !== destination(context)) {
-      noteRef.current?.prepareDestination();
-      setConflicts([]);
-      setDestinationKey((k) => k + 1);
-    } else {
-      // Rebind persistence ownership without granting remote approval.
-      refreshPanes();
-    }
+    if (before.configuredUrl !== next.configuredUrl) reconnectTransport();
+    else activateTransport();
   }
 
   async function acceptUpdate(offer: Offer) {
@@ -213,7 +233,7 @@ export default function App() {
 
       <div className="panes" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         {ready && <NotePane ref={noteRef} updates={updates} onDialogChange={setNoteDialog} />}
-        {ready && <TodoPane ref={todoRef} compact={compact} updates={updates} onDialogChange={setTaskDialog} />}
+        {ready && <TodoPane ref={todoRef} compact={compact} updates={updates} onDialogChange={setTaskDialog} disabled={!canMutate("tasks")} />}
       </div>
 
       {/* View-button order must match VIEWS: swipe direction is computed from that array, so the
@@ -237,6 +257,7 @@ export default function App() {
       </nav>
 
       <SettingsModal open={settingsOpen} onClose={onSettingsClose} />
+      {transportStatus() && <p role="status" className="connection-status">{transportStatus()}</p>}
       <aside className="remote-updates" aria-label="Remote updates">
         {(["tasks", "note"] as const).map((resource) => {
           const state = updates.state(resource);

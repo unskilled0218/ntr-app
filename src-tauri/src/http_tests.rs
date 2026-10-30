@@ -5,6 +5,35 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+fn get_request(url: String) -> ServerRequest {
+  ServerRequest { url, method: "GET".into(), body: None, content_type: None, allow_invalid_cert: false, client_id: None }
+}
+
+#[tokio::test]
+async fn ordinary_connection_errors_are_typed_and_keep_the_ipc_message() {
+  let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let address = listener.local_addr().unwrap();
+  drop(listener);
+  let error = fetch_response(&reqwest::Client::new(), get_request(format!("http://{address}/api/note")), Duration::from_millis(50)).await.unwrap_err();
+  let serialized = serde_json::to_value(&error).unwrap();
+  assert_eq!(serialized["kind"], "connection");
+  assert!(serialized["message"].as_str().unwrap().contains("error sending request"));
+}
+
+#[tokio::test]
+async fn ordinary_get_timeout_is_connection_failure_but_bad_url_and_http_status_are_not() {
+  let fixture = fixture_at("127.0.0.1:0", vec![""]).await;
+  let client = reqwest::Client::new();
+  let error = fetch_response(&client, get_request(format!("http://{}/api/note", fixture.address)), Duration::from_millis(10)).await.unwrap_err();
+  assert_eq!(error.kind, "connection");
+  let error = fetch_response(&client, get_request("not a URL".into()), Duration::from_millis(10)).await.unwrap_err();
+  assert_eq!(error.kind, "request");
+  let fixture = fixture_at("127.0.0.1:0", vec!["HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\n\r\n"]).await;
+  let response = fetch_response(&client, get_request(format!("http://{}/api/note", fixture.address)), Duration::from_secs(1)).await.unwrap();
+  assert_eq!(response.status, 503);
+  assert!(!response.ok);
+}
+
 struct Fixture {
   address: SocketAddr,
   task: JoinHandle<()>,
