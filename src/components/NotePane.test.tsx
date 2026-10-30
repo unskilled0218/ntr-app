@@ -100,6 +100,137 @@ describe("NotePane autosave", () => {
 });
 
 describe("NotePane text key handling", () => {
+  it("joins after a hidden Markdown link, saves once, and undoes", async () => {
+    const link = "[example](https://exmaple.com)";
+    getNote.mockResolvedValue(`${link}\n`);
+    const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);
+    await flushMicrotasks();
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    editor.focus();
+    const range = document.createRange();
+    range.setStart(editor.lastElementChild!, 0);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const event = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" });
+    fireEvent(editor, event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(readNoteText(editor)).toBe(link);
+    expect(getCaretRange(editor)).toEqual({ start: link.length, end: link.length });
+    expect(editor.firstElementChild!.classList.contains("md-edit")).toBe(true);
+    await act(async () => { await vi.runAllTimersAsync(); });
+    expect(putNote).toHaveBeenCalledTimes(1);
+    expect(putNote).toHaveBeenCalledWith(link);
+    keyDown(editor, "z", { ctrlKey: true });
+    expect(readNoteText(editor)).toBe(`${link}\n`);
+  });
+
+  it("handles a keydown join once and places the next insertion at the join", async () => {
+    const link = "[a](url)";
+    getNote.mockResolvedValue(`${link}\ntail`);
+    const { container } = render(<NotePane />);
+    await flushMicrotasks();
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    editor.focus();
+    setCaret(editor, link.length + 1);
+    expect(keyDown(editor, "Backspace").defaultPrevented).toBe(true);
+    const duplicate = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" });
+    fireEvent(editor, duplicate);
+    expect(duplicate.defaultPrevented).toBe(true);
+    expect(readNoteText(editor)).toBe(`${link}tail`);
+    expect(getCaretRange(editor)).toEqual({ start: link.length, end: link.length });
+    fireEvent.keyUp(editor, { key: "Backspace" });
+    keyDown(editor, " ");
+    expect(readNoteText(editor)).toBe(`${link} tail`);
+  });
+
+  it("passes modified Backspace sequences and clears their ownership", async () => {
+    getNote.mockResolvedValue("a\nb");
+    const { container } = render(<NotePane />);
+    await flushMicrotasks();
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    editor.focus();
+    const before = (inputType = "deleteContentBackward", cancelable = true) => {
+      const event = new InputEvent("beforeinput", { bubbles: true, cancelable, inputType });
+      fireEvent(editor, event);
+      return event;
+    };
+    for (const modifier of ["ctrlKey", "metaKey", "altKey", "shiftKey"]) {
+      setCaret(editor, 2);
+      expect(keyDown(editor, "Backspace", { [modifier]: true }).defaultPrevented).toBe(false);
+      expect(keyDown(editor, "Backspace", { [modifier]: true, repeat: true }).defaultPrevented).toBe(false);
+      expect(before().defaultPrevented).toBe(false);
+      expect(before("deleteWordBackward").defaultPrevented).toBe(false);
+      fireEvent.keyUp(editor, { key: "Shift" });
+      expect(before().defaultPrevented).toBe(false);
+      fireEvent.keyUp(editor, { key: "Backspace" });
+    }
+    expect(readNoteText(editor)).toBe("a\nb");
+    setCaret(editor, 2);
+    expect(before().defaultPrevented).toBe(true);
+    expect(readNoteText(editor)).toBe("ab");
+  });
+
+  it("clears modified-key ownership on blur and composition and reveals before restoring selection", async () => {
+    const link = "[a](url)";
+    getNote.mockResolvedValue(`${link}\nnext\nother`);
+    const { container } = render(<NotePane />);
+    await flushMicrotasks();
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    editor.focus();
+    setCaret(editor, link.length + 1);
+    keyDown(editor, "Backspace", { ctrlKey: true });
+    fireEvent.blur(editor);
+    editor.focus();
+    setCaret(editor, link.length + 1);
+    keyDown(editor, "Backspace", { ctrlKey: true });
+    fireEvent.compositionStart(editor);
+    fireEvent.compositionEnd(editor);
+    setCaret(editor, link.length + 1);
+    const selection = window.getSelection()!;
+    const original = selection.addRange.bind(selection);
+    const addRange = vi.spyOn(selection, "addRange").mockImplementation((range) => {
+      expect(editor.firstElementChild!.classList.contains("md-edit")).toBe(true);
+      expect(editor.lastElementChild!.classList.contains("md-edit")).toBe(false);
+      original(range);
+    });
+    try {
+      const event = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" });
+      fireEvent(editor, event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(readNoteText(editor)).toBe(`${link}next\nother`);
+      expect(getCaretRange(editor)).toEqual({ start: link.length, end: link.length });
+      expect(addRange).toHaveBeenCalled();
+    } finally { addRange.mockRestore(); }
+  });
+
+  it("does not intercept unrelated, composing, noncancelable, or selected input", async () => {
+    getNote.mockResolvedValue("a\nb");
+    const { container } = render(<NotePane />);
+    await flushMicrotasks();
+    const editor = container.querySelector<HTMLDivElement>("#note-input")!;
+    editor.focus();
+    const before = (type: string, cancelable = true, isComposing = false) => {
+      const event = new InputEvent("beforeinput", { bubbles: true, cancelable, inputType: type, isComposing });
+      fireEvent(editor, event);
+      return event;
+    };
+    setCaretRange(editor, 1, 2);
+    expect(before("deleteContentBackward").defaultPrevented).toBe(false);
+    for (const pos of [0, 1, 3]) {
+      setCaret(editor, pos);
+      expect(before("deleteContentBackward").defaultPrevented).toBe(false);
+    }
+    setCaret(editor, 2);
+    expect(before("deleteContentForward").defaultPrevented).toBe(false);
+    expect(before("deleteContentBackward", false).defaultPrevented).toBe(false);
+    expect(before("deleteContentBackward", true, true).defaultPrevented).toBe(false);
+    fireEvent.compositionStart(editor);
+    expect(before("deleteContentBackward").defaultPrevented).toBe(false);
+    fireEvent.compositionEnd(editor);
+    expect(readNoteText(editor)).toBe("a\nb");
+  });
   it("inserts Space into the current line without creating another line", async () => {
     getNote.mockResolvedValue("ab\ncd");
     const { container } = render(<NotePane ref={createRef<NotePaneHandle>()} />);

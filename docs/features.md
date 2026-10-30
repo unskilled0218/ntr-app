@@ -2,7 +2,7 @@
 
 - [Features](#features)
 
-- **Note pane** — single Markdown editor with in-place live preview, auto-save, and conflict detection when the file changes elsewhere
+- **Note pane** — single Markdown editor with in-place live preview, auto-save, and conflict detection when the file changes elsewhere; Backspace at a line boundary preserves the preceding Markdown link
 - **Todo pane** — add, complete, reopen, edit, and delete tasks; show active and completed tasks with project filtering; sort by file order, due date, created date, or project, ascending or descending
 - **[Project actions](project-renaming.md)** — pencil/trash controls in filter and create-task project selectors; rename/remove project references without deleting tasks, manage draft-only choices locally, and recover partial operations through selectors before explicit retry
 - **Local-first** — reads and writes `todo.txt` / `Note.md` directly via Tauri commands; no server required

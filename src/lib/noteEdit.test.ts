@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { cutRange, dedentRange, lineBounds } from "./noteEdit";
+import { cutRange, dedentRange, joinPreviousLine, lineBounds } from "./noteEdit";
+
+describe("joinPreviousLine", () => {
+  it.each(["[example](https://exmaple.com)", "[a](x) and [b](y) tail", "plain", ""]) (
+    "removes only the line break after %s", (prefix) => {
+      for (const suffix of ["", "next", "\nlast"]) {
+        const text = `${prefix}\n${suffix}`;
+        expect(joinPreviousLine(text, prefix.length + 1, prefix.length + 1)).toEqual({ text: prefix + suffix, caret: prefix.length });
+      }
+    },
+  );
+  it("leaves non-boundaries, invalid offsets, and selections unchanged", () => {
+    expect(joinPreviousLine("a\nb", 0, 0)).toBeNull();
+    expect(joinPreviousLine("a\nb", 1, 1)).toBeNull();
+    expect(joinPreviousLine("a\nb", 2, 3)).toBeNull();
+    expect(joinPreviousLine("a\n", 3, 3)).toBeNull();
+  });
+});
 
 describe("lineBounds", () => {
   it("finds first, middle, and last lines", () => {

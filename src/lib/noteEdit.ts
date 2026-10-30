@@ -1,3 +1,8 @@
+export function joinPreviousLine(text: string, start: number, end: number): { text: string; caret: number } | null {
+  if (start !== end || start <= 0 || start > text.length || text[start - 1] !== "\n") return null;
+  return { text: text.slice(0, start - 1) + text.slice(start), caret: start - 1 };
+}
+
 export function lineBounds(text: string, pos: number): { start: number; end: number } {
   const clamped = Math.max(0, Math.min(pos, text.length));
   const startBreak = text.lastIndexOf("\n", Math.max(0, clamped - 1));

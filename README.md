@@ -24,6 +24,8 @@ Manage projects using pencil/trash icons in project selectors. Successful rename
 
 Page zoom gestures are suppressed while ordinary scrolling remains available. See [features](docs/features.md).
 
+Backspace at a note line boundary preserves Markdown links when joining lines.
+
 ## Documentation
 
 - [Features](docs/features.md)
