@@ -14,17 +14,9 @@ npm run tauri dev
 
 Tasks and notes are stored in the Tauri app-data directory by default. Use the `[L]` button to connect to a server.
 
-If the server is unreachable, the app shows local files automatically and keeps the saved URL. Connect explicitly to retry; see [fallback and reconnect safety](docs/server-connection.md).
+If the server is unreachable, the app uses local files and keeps the saved URL. Retry with Connect; see [connection safety](docs/server-connection.md).
 
-Priority controls, sorting, and filtering are removed in `0.15.18`. Existing leading tokens stay hidden and preserved; `pri:` remains editable text. See [task text and compatibility](docs/task-text.md).
-
-Remote task and note notifications show only a read-only diff and compact review controls. Declined changes remain reviewable; pending remote notes pause autosave. See [update choices and save safety](docs/live-sync.md).
-
-Manage projects using pencil/trash icons in project selectors. Successful renames close automatically; create-task selectors stay open beneath rename. Draft-only choices stay local; unfinished operations remain recoverable. See [project actions and recovery](docs/project-renaming.md).
-
-Page zoom gestures are suppressed while ordinary scrolling remains available. See [features](docs/features.md).
-
-Backspace at a note line boundary preserves Markdown links when joining lines.
+Review remote changes before applying them; pending note updates pause autosave. See [live sync](docs/live-sync.md). For project actions, input gestures, and legacy priority data, see the links below.
 
 ## Documentation
 
