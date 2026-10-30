@@ -1,12 +1,22 @@
 # Release builds
 
-Run commands from the app repository root.
+- [Standalone builds](#standalone-builds)
+- [Publication](#publication)
+
+## Standalone builds
+
+Run commands from a fresh app checkout with a prepared desktop and/or Android toolchain:
 
 ```sh
-scripts/build-release.sh           # desktop + android
-scripts/build-release.sh android   # android only
+./scripts/build-release.sh           # desktop + universal Android APK
+./scripts/build-release.sh desktop
+./scripts/build-release.sh android
 ```
 
-Artifacts land in `release/<version>/{desktop,android}/`.
+Artifacts land in `release/<version>/{desktop,android}/`, using the canonical `package.json` version. Desktop requires AppImage, deb, and rpm. Android builds only an APK, not AAB. Missing or ambiguous required outputs fail the build. Existing target output directories or old bundle/build output directories are refused rather than reused or deleted; preserve them and use a fresh checkout.
 
-See [Android signing](android-signing.md) for installable Android builds and [Forgejo publishing](forgejo-publishing.md) to publish artifacts.
+Prepare local [Android signing files](android-signing.md) before building Android. The tracked Gradle project is used without reinitialization; Tauri generates ignored support files as part of its build. A standalone build is not proof of publication readiness or artifact provenance.
+
+## Publication
+
+The [guarded Forgejo publisher](forgejo-publishing.md) creates its own isolated checkout, installs locked npm dependencies, runs tests, rejects changes to tracked source, checks the expected APK signing certificate, and creates SHA-256 checksums. It does not reuse standalone artifacts. Completed releases are verified against their original tag-bound manifest without rebuilding. Actual publication requires separate approval.

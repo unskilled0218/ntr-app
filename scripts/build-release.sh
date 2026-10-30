@@ -1,94 +1,44 @@
 #!/usr/bin/env bash
-#
-# Build release artifacts (desktop + Android) and collect them under
-#   <repo>/release/<version>/{desktop,android}/
-#
-# Usage:
-#   scripts/build-release.sh              # build both desktop and android
-#   scripts/build-release.sh desktop      # build desktop only
-#   scripts/build-release.sh android      # build android only
-#   scripts/build-release.sh desktop android
-#
-# Version is read from src-tauri/tauri.conf.json.
-
-set -euo pipefail
-
-# --- locate repo root (this script lives in <repo>/scripts) ---------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-cd "$REPO_ROOT"
-
-# --- read version ---------------------------------------------------------
-VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
-if [ -z "$VERSION" ]; then
-  echo "error: could not read version from src-tauri/tauri.conf.json" >&2
-  exit 1
-fi
-
-OUT_DIR="$REPO_ROOT/release/$VERSION"
-
-# --- decide what to build -------------------------------------------------
-BUILD_DESKTOP=0
-BUILD_ANDROID=0
-if [ "$#" -eq 0 ]; then
-  BUILD_DESKTOP=1
-  BUILD_ANDROID=1
-else
-  for target in "$@"; do
-    case "$target" in
-      desktop) BUILD_DESKTOP=1 ;;
-      android) BUILD_ANDROID=1 ;;
-      *) echo "error: unknown target '$target' (expected: desktop, android)" >&2; exit 1 ;;
-    esac
-  done
-fi
-
-echo "==> ntr release build  (version $VERSION)"
-echo "    output: $OUT_DIR"
-
-# collect <pattern...> <dest>: copy matching files (if any) into dest
-collect() {
-  local dest="${@: -1}"
-  local patterns=("${@:1:$#-1}")
-  mkdir -p "$dest"
-  local found=0
-  for pat in "${patterns[@]}"; do
-    for f in $pat; do
-      if [ -e "$f" ]; then
-        mv -v "$f" "$dest/"
-        found=1
-      fi
-    done
-  done
-  if [ "$found" -eq 0 ]; then
-    echo "    (warning: no artifacts matched for $dest)" >&2
-  fi
+# Standalone builds require fresh output directories; the publisher uses an isolated checkout.
+set -Eeuo pipefail
+set +x
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$root"
+version=$(node -p "require('./package.json').version")
+targets=("$@")
+if [[ ${#targets[@]} == 0 ]]; then targets=(desktop android); fi
+declare -A selected=()
+for target in "${targets[@]}"; do
+  [[ "$target" == desktop || "$target" == android ]] || { echo 'Expected desktop or android' >&2; exit 2; }
+  [[ ! ${selected[$target]+yes} ]] || { echo 'Duplicate build target' >&2; exit 2; }
+  selected[$target]=1
+  [[ ! -e "release/$version/$target" ]] || { echo 'Output already exists; preserve it and use a fresh checkout' >&2; exit 1; }
+done
+collect_one() {
+  local directory=$1 pattern=$2 destination=$3
+  local files=()
+  shopt -s nullglob
+  files=("$directory"/$pattern)
+  shopt -u nullglob
+  [[ ${#files[@]} == 1 && -f ${files[0]} && ! -L ${files[0]} ]] || { echo "Missing or ambiguous required format: $pattern" >&2; exit 1; }
+  cp -- "${files[0]}" "$destination/"
 }
-
-# --- desktop --------------------------------------------------------------
-if [ "$BUILD_DESKTOP" -eq 1 ]; then
-  echo "==> building desktop bundles"
+if [[ ${selected[desktop]+yes} ]]; then
+  [[ ! -e src-tauri/target/release/bundle ]] || { echo 'Desktop bundles already exist; use a fresh checkout' >&2; exit 1; }
   npm run tauri build
-
-  BUNDLE="$REPO_ROOT/src-tauri/target/release/bundle"
-  collect \
-    "$BUNDLE/appimage/"*.AppImage \
-    "$BUNDLE/deb/"*.deb \
-    "$BUNDLE/rpm/"*.rpm \
-    "$OUT_DIR/desktop"
+  mkdir -p "release/$version/desktop"
+  for pair in 'appimage *.AppImage' 'deb *.deb' 'rpm *.rpm'; do
+    read -r directory pattern <<< "$pair"
+    collect_one "src-tauri/target/release/bundle/$directory" "$pattern" "release/$version/desktop"
+  done
 fi
-
-# --- android --------------------------------------------------------------
-if [ "$BUILD_ANDROID" -eq 1 ]; then
-  echo "==> building android (apk + aab)"
-  npm run tauri android build
-
-  ANDROID_OUT="$REPO_ROOT/src-tauri/gen/android/app/build/outputs"
-  collect \
-    "$ANDROID_OUT/apk/universal/release/"*.apk \
-    "$ANDROID_OUT/bundle/universalRelease/"*.aab \
-    "$OUT_DIR/android"
+if [[ ${selected[android]+yes} ]]; then
+  [[ ! -e src-tauri/gen/android/app/build/outputs ]] || { echo 'Android outputs already exist; use a fresh checkout' >&2; exit 1; }
+  [[ -f android-signing/release.keystore && -f android-signing/keystore.properties ]] || { echo 'Prepare android-signing files first' >&2; exit 1; }
+  # Tauri prepares only ignored support files for the already tracked Android project.
+  npm run tauri -- android build --apk --ci
+  mkdir -p "release/$version/android"
+  collect_one src-tauri/gen/android/app/build/outputs/apk/universal/release '*.apk' "release/$version/android"
+  [[ ! -e src-tauri/gen/android/app/build/outputs/bundle ]] || { echo 'Unexpected AAB output' >&2; exit 1; }
 fi
-
-echo "==> done. artifacts in $OUT_DIR"
-ls -lR "$OUT_DIR"
+echo "Build artifacts: release/$version"

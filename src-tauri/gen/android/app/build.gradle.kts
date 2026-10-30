@@ -13,15 +13,16 @@ val tauriProperties = Properties().apply {
     }
 }
 
-// Release signing. Reads keystore.properties (gitignored) from the android root.
+// Release signing. Private files live in the app's gitignored android-signing directory.
 // When absent, the release build stays unsigned so desktop-only / keyless setups still build.
 val keystoreProperties = Properties()
-val keystorePropertiesFile = rootProject.file("keystore.properties")
+val signingDirectory = rootProject.file("../../../android-signing")
+val keystorePropertiesFile = signingDirectory.resolve("keystore.properties")
 val hasKeystore = keystorePropertiesFile.exists()
 if (hasKeystore) {
     keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 } else {
-    logger.warn("keystore.properties not found: release APK/AAB will be UNSIGNED and cannot be installed on a device. Run scripts/android-keystore.sh to create one.")
+    logger.warn("android-signing/keystore.properties not found: release APK will be unsigned. See docs/android-signing.md.")
 }
 
 android {
@@ -40,7 +41,7 @@ android {
             create("release") {
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                 keyPassword = keystoreProperties.getProperty("keyPassword", keystoreProperties.getProperty("password"))
-                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storeFile = signingDirectory.resolve("release.keystore")
                 storePassword = keystoreProperties.getProperty("storePassword", keystoreProperties.getProperty("password"))
             }
         }
