@@ -22,6 +22,8 @@ Remote task and note notifications show only a read-only diff and compact review
 
 Manage projects using pencil/trash icons in project selectors. Successful renames close automatically; create-task selectors stay open beneath rename. Draft-only choices stay local; unfinished operations remain recoverable. See [project actions and recovery](docs/project-renaming.md).
 
+Page zoom gestures are suppressed while ordinary scrolling remains available. See [features](docs/features.md).
+
 ## Documentation
 
 - [Features](docs/features.md)

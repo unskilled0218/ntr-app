@@ -22,6 +22,8 @@
 
 * {
   box-sizing: border-box;
+  /* Keep panning available while disabling touch-driven page zoom at every target. */
+  touch-action: pan-x pan-y;
 }
 
 /* No focus ring anywhere: the caret (note editor) and the aria-current highlight
