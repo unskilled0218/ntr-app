@@ -52,7 +52,7 @@ function fixture() {
 }
 const writes = () => vi.mocked(invoke).mock.calls.filter(([command, args]) => command === "put_note" || command === "put_raw" || command === "put_labels"
   || (command === "server_fetch" && (args as { req: { method: string } }).req.method !== "GET"));
-async function choose(name: "Update" | "Not now") {
+async function choose(name: "Update" | "Retry update" | "Not now") {
   await act(async () => { fireEvent.click(within(document.querySelector("#remote-update") as HTMLElement).getByRole("button", { name })); await settle(); });
 }
 async function review(resource: "note" | "tasks") {
@@ -68,6 +68,25 @@ beforeEach(() => { vi.clearAllMocks(); localStorage.setItem("ntr.serverUrl", "ht
 afterEach(async () => { cleanup(); await settle(); localStorage.clear(); vi.useRealTimers(); });
 
 describe("approval across real panes", () => {
+  it("retains the diff and drafts after a note preparation failure until explicit Retry update", async () => {
+    const model = fixture(); render(<App />); await act(settle);
+    fireEvent.change(screen.getByRole("textbox", { name: "New task" }), { target: { value: "unsaved task +work" } });
+    model.data.note = "incoming note"; await model.signal("note");
+    model.readNote(() => Promise.reject(new Error("note offline")));
+    await choose("Update");
+    const dialog = screen.getByRole("dialog", { name: "Note update" });
+    expect(within(dialog).getByLabelText("Change details").textContent).toContain("incoming note");
+    expect(within(dialog).getByRole("alert").classList.contains("sr-only")).toBe(true);
+    expect(within(dialog).getByRole("alert").textContent).toContain("note offline");
+    expect(within(dialog).getByRole("button", { name: "Retry update" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Note (Markdown)" }).textContent).toBe("base");
+    expect((screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement).value).toBe("unsaved task +work");
+    expect(writes()).toHaveLength(0);
+    model.readNote(() => undefined); await choose("Retry update");
+    expect(screen.getByRole("textbox", { name: "Note (Markdown)" }).textContent).toBe("incoming note");
+    expect((screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement).value).toBe("unsaved task +work");
+    expect(writes()).toHaveLength(0);
+  });
   it.each(["note", "tasks"] as const)("replaces the %s diff on a changed preparation read and requires another choice", async (resource) => {
     const { data, signal } = fixture(); render(<App />); await act(settle);
     fireEvent.change(screen.getByRole("textbox", { name: "New task" }), { target: { value: "unsubmitted draft +work" } });
@@ -110,7 +129,9 @@ describe("approval across real panes", () => {
     failLabels(); await choose("Update");
     expect(document.querySelector("#tasks")!.textContent).toContain("first");
     expect(within(document.querySelector("#remote-update") as HTMLElement).getByRole("alert").textContent).toContain("labels offline");
-    await choose("Update");
+    expect(within(document.querySelector("#remote-update") as HTMLElement).getByRole("button", { name: "Retry update" })).toBeTruthy();
+    expect(writes()).toHaveLength(0);
+    await choose("Retry update");
     expect(document.querySelector("#tasks")!.textContent).toContain("changed task");
     expect(writes()).toHaveLength(0);
   });
