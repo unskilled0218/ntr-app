@@ -5,6 +5,28 @@ import { DIFF_WORK_BUDGET, PREVIEW_CHARACTERS, PREVIEW_ROWS, previewPage, remote
 const note = (baseline: string, snapshot: string) => remoteDiff({ resource: "note", baseline, snapshot, identity: snapshot });
 const task = (id: number, raw: string): Task => ({ id, raw, description: raw, completed: false, creation_date: null, completion_date: null, projects: [], contexts: [], tags: {} });
 describe("remote diff evidence", () => {
+  it("uses compact typed omission metadata, not an instructional sentence", () => {
+    const before = Array.from({ length: 20 }, (_, index) => `line${index}`).join("\n");
+    const document = note(before, before + "changed");
+    const marker = document.sections.find((section) => section.kind === "meta" && !section.text.startsWith("@@ EOF"));
+    expect(marker?.text).toMatch(/^@@ … \d+ … @@\n$/);
+    expect(marker?.label).toMatch(/unchanged lines omitted/);
+    expect(document.sections.map((section) => section.text).join("")).not.toContain("inspect Accepted/Incoming");
+  });
+  it("counts EOF metadata against paging budgets without losing it", () => {
+    const document = note("x".repeat(PREVIEW_CHARACTERS * 8), "short\n");
+    let cursor = START, text = "";
+    for (;;) {
+      const page = previewPage(document.sections, cursor);
+      expect(page.characters).toBeLessThanOrEqual(PREVIEW_CHARACTERS);
+      expect(page.rows).toBeLessThanOrEqual(PREVIEW_ROWS);
+      text += page.fragments.map((fragment) => fragment.text).join("");
+      if (!page.next) break;
+      cursor = page.next;
+    }
+    expect(text).toBe(document.sections.map((section) => section.text).join(""));
+    expect(text).toContain("@@ EOF − none / + LF @@");
+  });
   it("shows changed lines with stable repeated and blank context", () => {
     const diff = note("same\n\nrepeat\nold\nrepeat", "same\n\nrepeat\nnew\nrepeat");
     expect(diff.sections.filter((section) => section.kind === "removed").map((section) => section.text)).toEqual(["old\n"]);
@@ -13,15 +35,17 @@ describe("remote diff evidence", () => {
   });
   it.each([["", "new"], ["old", ""], ["", ""], ["a\n", "a"]])("describes empty/trailing-newline evidence (%j → %j)", (before, after) => {
     const diff = note(before, after);
-    expect(diff.summary).toContain(`accepted ${before.endsWith("\n") ? "yes" : "no"}; incoming ${after.endsWith("\n") ? "yes" : "no"}`);
-    expect(diff.sections.length).toBeGreaterThan(0);
+    const eof = diff.sections.find((section) => section.text.startsWith("@@ EOF"));
+    if (before.endsWith("\n") !== after.endsWith("\n")) expect(eof?.label).toContain(`accepted ${before.endsWith("\n") ? "yes" : "no"}; incoming ${after.endsWith("\n") ? "yes" : "no"}`);
+    else expect(eof).toBeUndefined();
+    expect("summary" in diff).toBe(false);
   });
   it("falls back before exceeding the LCS work budget", () => {
     const count = Math.ceil(Math.sqrt(DIFF_WORK_BUDGET));
     const before = Array.from({ length: count }, (_, index) => `old${index}`).join("\n");
     const after = Array.from({ length: count }, (_, index) => `new${index}`).join("\n");
     expect(note(before, after).sections).toEqual([{ kind: "removed", text: before }, { kind: "added", text: after }]);
-    expect(note(before, after).summary).toContain("paged accepted/incoming blocks");
+    expect(note(before, after).fallback).toBe(true);
   });
   it.each(["x".repeat(100_000), "\n".repeat(30_000)])("bounds every page, including huge single lines and blank lines", (before) => {
     const document = note(before, before + "changed");

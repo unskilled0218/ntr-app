@@ -584,6 +584,8 @@ dialog.action-modal {
 .original-project { display: flex; flex-direction: column; gap: 0.25rem; }
 .original-project > span { color: var(--muted); font-size: 0.85rem; }
 .remote-modal { width: 48rem; }
+.remote-modal .preview-navigation:first-child { margin-top: 0; }
+.remote-modal .diff-meta { color: var(--muted); }
 .remote-modal > .modal-actions { position: sticky; bottom: -1.25rem; background: var(--bg); padding: 0.75rem 0; }
 .remote-preview { max-height: 50dvh; overflow: auto; white-space: pre-wrap; font-family: monospace; }
 .diff-added { color: var(--accent); }

@@ -25,20 +25,18 @@ export default function RemoteUpdateDialog({ offer, busy, error, onUpdate, onDis
     if (!update) handled.current = offer;
     if (update) onUpdate(offer); else onDismiss(offer);
   }
-  return <dialog ref={ref} id="remote-update" className="action-modal remote-modal" aria-labelledby="remote-update-title" onCancel={(event) => {
+  return <dialog ref={ref} id="remote-update" className="action-modal remote-modal" aria-label={offer?.resource === "tasks" ? "Task update" : "Note update"} onCancel={(event) => {
     if (!ownDialogEvent(event)) return;
     event.preventDefault();
     finish(false);
   }} onClose={(event) => {
     if (dialogWasDismissed(event)) finish(false);
   }}>
-    <h2 id="remote-update-title" className="select-modal-title">{offer?.resource === "tasks" ? "Tasks" : "Note"} changed elsewhere. Update now?</h2>
-    <p>Nothing changes until you approve. Unsaved edits remain protected.</p>
     {offer && <RemoteDiffPreview offer={offer} />}
-    {error && <p className="modal-error" role="alert">{error}</p>}
+    {error && <span id="remote-update-error" className="sr-only" role="alert">{error}</span>}
     <div className="modal-actions">
       <button type="button" disabled={busy} onClick={() => finish(false)}>Not now</button>
-      <button type="button" className="primary" disabled={busy} onClick={() => finish(true)}>{busy ? "Checking…" : "Update"}</button>
+      <button type="button" className="primary" disabled={busy} aria-describedby={error ? "remote-update-error" : undefined} onClick={() => finish(true)}>{busy ? "Checking…" : error ? "Retry update" : "Update"}</button>
     </div>
   </dialog>;
 }

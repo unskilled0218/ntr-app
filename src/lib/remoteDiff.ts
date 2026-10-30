@@ -5,8 +5,8 @@ export const DIFF_WORK_BUDGET = 40_000;
 export const DIFF_INPUT_CHARACTERS = 50_000;
 export const PREVIEW_CHARACTERS = 8_000;
 export const PREVIEW_ROWS = 80;
-export interface DiffSection { kind: "added" | "removed" | "context"; text: string }
-export interface DiffDocument { sections: DiffSection[]; summary: string }
+export interface DiffSection { kind: "added" | "removed" | "context" | "meta"; text: string; label?: string }
+export interface DiffDocument { sections: DiffSection[]; fallback?: boolean }
 export interface Cursor { section: number; offset: number }
 export const START: Cursor = { section: 0, offset: 0 };
 
@@ -16,7 +16,7 @@ function noteDiff(before: string, after: string): DiffDocument {
   let bounded = before.length + after.length > DIFF_INPUT_CHARACTERS;
   if (bounded) sections = fallback();
   else {
-    const left = before.split("\n"), right = after.split("\n");
+    const left = before ? before.split("\n") : [], right = after ? after.split("\n") : [];
     let prefix = 0, suffix = 0;
     while (prefix < left.length && prefix < right.length && left[prefix] === right[prefix]) prefix++;
     while (suffix < left.length - prefix && suffix < right.length - prefix && left[left.length - 1 - suffix] === right[right.length - 1 - suffix]) suffix++;
@@ -45,13 +45,17 @@ function noteDiff(before: string, after: string): DiffDocument {
       let end = start;
       while (end < sections.length && sections[end].kind === "context") end++;
       if (end - start > 6) {
-        compact.push(...sections.slice(start, start + 3), { kind: "context", text: `… ${end - start - 6} unchanged lines omitted; inspect Accepted/Incoming for all content.\n` }, ...sections.slice(end - 3, end));
+        compact.push(...sections.slice(start, start + 3), { kind: "meta", text: `@@ … ${end - start - 6} … @@\n`, label: `${end - start - 6} unchanged lines omitted` }, ...sections.slice(end - 3, end));
       } else compact.push(...sections.slice(start, end));
       start = end;
     }
     sections = compact;
   }
-  return { sections, summary: `${bounded ? "Large change: paged accepted/incoming blocks. " : "Line changes with unchanged context. "}Trailing newline: accepted ${before.endsWith("\n") ? "yes" : "no"}; incoming ${after.endsWith("\n") ? "yes" : "no"}.` };
+  if (before.endsWith("\n") !== after.endsWith("\n")) sections.push({
+    kind: "meta", text: `@@ EOF − ${before.endsWith("\n") ? "LF" : "none"} / + ${after.endsWith("\n") ? "LF" : "none"} @@\n`,
+    label: `Trailing newline: accepted ${before.endsWith("\n") ? "yes" : "no"}; incoming ${after.endsWith("\n") ? "yes" : "no"}`,
+  });
+  return { sections, fallback: bounded };
 }
 function taskIdentity(task: Task) { return JSON.stringify([task.raw, task.completed, task.completion_date, task.creation_date]); }
 function taskText(task: Task) {
@@ -64,7 +68,7 @@ export function remoteDiff(offer: Offer): DiffDocument {
   const sections: DiffSection[] = [];
   for (const task of before) if (!next.has(task.id) || taskIdentity(task) !== taskIdentity(next.get(task.id)!)) sections.push({ kind: "removed", text: taskText(task) });
   for (const task of after) if (!old.has(task.id) || taskIdentity(task) !== taskIdentity(old.get(task.id)!)) sections.push({ kind: "added", text: taskText(task) });
-  return { sections, summary: `${sections.filter((section) => section.kind === "removed").length} accepted task versions removed; ${sections.filter((section) => section.kind === "added").length} incoming task versions added. IDs and lifecycle dates are included.` };
+  return { sections };
 }
 export function fullEvidence(offer: Offer, side: "accepted" | "incoming"): DiffSection[] {
   const snapshot = side === "accepted" ? offer.baseline : offer.snapshot;
@@ -82,7 +86,7 @@ export function previewPage(sections: DiffSection[], cursor: Cursor) {
     const limit = Math.min(entry.text.length, offset + PREVIEW_CHARACTERS - characters);
     let end = offset;
     while (end < limit && rows < PREVIEW_ROWS) { if (entry.text[end] === "\n") rows++; end++; }
-    if (end > offset) { fragments.push({ kind: entry.kind, text: entry.text.slice(offset, end) }); characters += end - offset; }
+    if (end > offset) { fragments.push({ ...entry, text: entry.text.slice(offset, end) }); characters += end - offset; }
     if (end === entry.text.length) { section++; offset = 0; }
     else { offset = end; break; }
   }
