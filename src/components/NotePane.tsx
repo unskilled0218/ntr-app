@@ -10,11 +10,11 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { captureTransport, errMsg, getNote, isTransportCurrent, putNote, canMutate, markResourceReady, type TransportContext } from "../api";
 import { NOTE_SAVE_DELAY_MS } from "../config";
-import { getCaret, getCaretRange, readNoteText, setCaretRange, setEditorText } from "../lib/caret";
+import { getCaret, getCaretRange, lineAtOffset, readNoteText, setCaretRange, setEditorText } from "../lib/caret";
 import { writeClipboard } from "../lib/clipboard";
 import { setEditLine } from "../lib/editLine";
 import { createHistory, record, reset, undo } from "../lib/history";
-import { cutRange, dedentRange } from "../lib/noteEdit";
+import { cutRange, dedentRange, joinPreviousLine } from "../lib/noteEdit";
 import { classifyNoteEvent } from "../lib/noteSync";
 import { ResourceRefresh } from "../lib/resourceRefresh";
 import NoteConflictDialog from "./NoteConflictDialog";
@@ -55,6 +55,8 @@ const NotePane = forwardRef<NotePaneHandle, Props>(({ updates, onDialogChange },
   // recovery GET must still recognize newer edits that restored the old base.
   const unreconciledSave = useRef<NoteSaveAttempt | null>(null);
   const composingNote = useRef(false); // true between compositionstart/end (IME safety)
+  const modifiedBackspace = useRef(false);
+  const handledBackspace = useRef(false);
   const history = useRef(createHistory(""));
   const mounted = useRef(false);
   const lifetime = useRef(0);
@@ -120,7 +122,11 @@ const NotePane = forwardRef<NotePaneHandle, Props>(({ updates, onDialogChange },
   // then re-tag the caret's line so its links reveal. Every render path goes through here, so the reveal
   // cannot drift out of sync with a render (re-rendering innerHTML drops the .md-edit class).
   const paint = (text: string, caret: number | null) => {
-    setEditorText(editor(), text, caret);
+    setEditorText(editor(), text, null);
+    if (caret !== null) {
+      if (document.activeElement === editor()) setEditLine(editor(), lineAtOffset(editor(), caret));
+      setCaretRange(editor(), caret, caret);
+    }
     markEditLine();
   };
 
@@ -244,7 +250,11 @@ const NotePane = forwardRef<NotePaneHandle, Props>(({ updates, onDialogChange },
     baselineRevision.current++;
     reset(history.current, text);
     paint(text, null);
-    if (selection) { setCaretRange(editor(), selection.start, selection.end); markEditLine(); }
+    if (selection) {
+      if (document.activeElement === editor()) setEditLine(editor(), lineAtOffset(editor(), selection.start));
+      setCaretRange(editor(), selection.start, selection.end);
+      markEditLine();
+    }
     setNoteStatus("", false);
   };
 
@@ -455,10 +465,36 @@ const NotePane = forwardRef<NotePaneHandle, Props>(({ updates, onDialogChange },
     const next = dedentRange(text, start, end);
     if (!next.changed) return;
     setEditorText(editor(), next.text, null);
+    if (document.activeElement === editor()) setEditLine(editor(), lineAtOffset(editor(), next.start));
     setCaretRange(editor(), next.start, next.end);
     markEditLine();
     noteEdited(next.text, next.start, "chunk");
   };
+
+  const joinAtCaret = () => {
+    const range = getCaretRange(editor());
+    if (!range) return false;
+    const next = joinPreviousLine(readNoteText(editor()), range.start, range.end);
+    if (!next) return false;
+    paint(next.text, next.caret);
+    noteEdited(next.text, next.caret, "chunk");
+    return true;
+  };
+  const beforeInput = useRef<(event: InputEvent) => void>(() => {});
+  beforeInput.current = (event) => {
+    if (event.inputType !== "deleteContentBackward" || !event.cancelable || event.isComposing || composingNote.current || modifiedBackspace.current) return;
+    if (handledBackspace.current || joinAtCaret()) event.preventDefault();
+  };
+  useEffect(() => {
+    const node = editor();
+    const listener = (event: Event) => beforeInput.current(event as InputEvent);
+    node.addEventListener("beforeinput", listener);
+    return () => {
+      node.removeEventListener("beforeinput", listener);
+      modifiedBackspace.current = false;
+      handledBackspace.current = false;
+    };
+  }, []);
 
   // Initial load + page-close beacon. Run once.
   useEffect(() => {
@@ -525,6 +561,15 @@ const NotePane = forwardRef<NotePaneHandle, Props>(({ updates, onDialogChange },
         }}
         onKeyDown={(e) => {
           if (e.nativeEvent.isComposing || composingNote.current) return;
+          if (e.key === "Backspace") {
+            modifiedBackspace.current = e.ctrlKey || e.metaKey || e.altKey || e.shiftKey;
+            handledBackspace.current = false;
+            if (!modifiedBackspace.current && e.cancelable && joinAtCaret()) {
+              handledBackspace.current = true;
+              e.preventDefault();
+            }
+            return;
+          }
           const shortcut = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
           if (shortcut && e.key.toLowerCase() === "z") {
             e.preventDefault();
@@ -556,18 +601,28 @@ const NotePane = forwardRef<NotePaneHandle, Props>(({ updates, onDialogChange },
             spliceNote("\t");
           }
         }}
+        onKeyUp={(e) => {
+          if (e.key === "Backspace") {
+            modifiedBackspace.current = false;
+            handledBackspace.current = false;
+          }
+        }}
         onPaste={(e) => {
           e.preventDefault();
           spliceNote(e.clipboardData.getData("text/plain"));
         }}
         {...links.handlers}
         onBlur={() => {
+          modifiedBackspace.current = false;
+          handledBackspace.current = false;
           pendingSelection.current = getCaretRange(editor());
           void flushNote();
           setEditLine(editor(), null); // collapse every link when focus leaves the note
         }}
         onFocus={requestNote}
         onCompositionStart={() => {
+          modifiedBackspace.current = false;
+          handledBackspace.current = false;
           composingNote.current = true;
         }}
         onCompositionEnd={() => {

@@ -21,6 +21,12 @@ export function readNoteText(root: HTMLElement): string {
 // Characters before one DOM boundary point, counting one "\n" per line boundary — the inverse of
 // the readNoteText join, so an offset survives a re-render unchanged.
 function offsetOf(root: HTMLElement, container: Node, nodeOffset: number): number {
+  if (container === root) {
+    const lines = Array.from(root.children);
+    const count = Math.min(nodeOffset, lines.length);
+    return lines.slice(0, count).reduce((sum, line) => sum + (line.textContent ?? "").length + 1, 0)
+      - (count === lines.length && count > 0 ? 1 : 0);
+  }
   let offset = 0;
   for (const line of Array.from(root.children)) {
     if (line === container || line.contains(container)) {
@@ -32,6 +38,17 @@ function offsetOf(root: HTMLElement, container: Node, nodeOffset: number): numbe
     offset += lineLen(line); // same per-line length the join implies (THE LINE INVARIANT)
   }
   return offset;
+}
+
+// Resolve the active line before placing a selection in its potentially hidden markup.
+export function lineAtOffset(root: HTMLElement, offset: number): Element | null {
+  let pos = Math.max(0, offset);
+  for (const line of Array.from(root.children)) {
+    const len = (line.textContent ?? "").length;
+    if (pos <= len) return line;
+    pos -= len + 1;
+  }
+  return root.lastElementChild;
 }
 
 export function getCaretRange(root: HTMLElement): { start: number; end: number } | null {

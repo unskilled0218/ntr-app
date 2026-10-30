@@ -54,6 +54,19 @@ describe("caret line invariant (getCaret is the inverse of setCaret)", () => {
     expect(getCaret(root)).toBe(6);
   });
 
+  it("maps editor child boundaries and empty line element boundaries", () => {
+    const root = editorWith("link\n\ntail");
+    const selection = window.getSelection()!;
+    const range = document.createRange();
+    for (const [node, offset, expected] of [[root, 0, 0], [root, 1, 5], [root, 2, 6], [root, 3, 10], [root.children[1], 0, 5]] as const) {
+      range.setStart(node, offset);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      expect(getCaret(root)).toBe(expected);
+    }
+  });
+
   it("restores a logical range across highlighted spans and lines", () => {
     const root = editorWith("**bold**\nplain");
     setCaretRange(root, 2, 12);
