@@ -20,6 +20,9 @@ class MainActivity : TauriActivity() {
   // WebView still receives the system-bar insets and the env(safe-area-inset-*) handling keeps
   // working. The inset is 0 when the keyboard is closed, so the layout is unchanged off-keyboard.
   override fun onWebViewCreate(webView: WebView) {
+    webView.settings.setSupportZoom(false)
+    webView.settings.builtInZoomControls = false
+    webView.settings.displayZoomControls = false
     val content = findViewById<View>(android.R.id.content)
     ViewCompat.setOnApplyWindowInsetsListener(content) { v, insets ->
       val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom

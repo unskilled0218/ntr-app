@@ -32,6 +32,52 @@ beforeEach(() => {
 afterEach(() => { cleanup(); localStorage.clear(); });
 
 describe("App live subscription", () => {
+  it("keeps zoom protection across view and settings changes and removes it on unmount", async () => {
+    const { getByRole, getAllByRole, unmount } = render(<StrictMode><App /></StrictMode>);
+    const zoom = () => {
+      const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, ctrlKey: true });
+      document.body.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    expect(zoom()).toBe(true);
+    await act(settle);
+    fireEvent.click(getByRole("button", { name: "Todo" }));
+    expect(zoom()).toBe(true);
+    fireEvent.click(getAllByRole("button", { name: /settings/i })[0]);
+    expect(zoom()).toBe(true);
+    fireEvent.click(getByRole("button", { name: "Close settings" }));
+    expect(zoom()).toBe(true);
+    unmount();
+    expect(zoom()).toBe(false);
+  });
+
+  it("navigates for horizontal single-touch swipes, not vertical or two-finger gestures", async () => {
+    const realStyle = window.getComputedStyle;
+    const style = vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) => {
+      if (element.classList.contains("bottom-nav")) return { display: "flex" } as CSSStyleDeclaration;
+      return realStyle(element, pseudo);
+    });
+    try {
+      const { container } = render(<App />);
+      await act(settle);
+      const panes = container.querySelector(".panes")!;
+      const main = container.querySelector("main")!;
+      fireEvent.click(container.querySelector('button[data-view="note"]')!);
+      const start = { clientX: 200, clientY: 100 };
+      fireEvent.touchStart(panes, { touches: [start] });
+      fireEvent.touchEnd(panes, { changedTouches: [{ clientX: 195, clientY: 0 }] });
+      expect(main.dataset.view).toBe("note");
+      fireEvent.touchStart(panes, { touches: [start] });
+      fireEvent.touchStart(panes, { touches: [start, { clientX: 100, clientY: 100 }] });
+      fireEvent.touchEnd(panes, { changedTouches: [{ clientX: 0, clientY: 100 }] });
+      expect(main.dataset.view).toBe("note");
+      fireEvent.touchStart(panes, { touches: [start] });
+      fireEvent.touchEnd(panes, { changedTouches: [{ clientX: 0, clientY: 100 }] });
+      expect(main.dataset.view).toBe("todo");
+    } finally {
+      style.mockRestore();
+    }
+  });
   it("refreshes both panes on connection and routes nearby changes independently", async () => {
     render(<App />);
     await act(settle);

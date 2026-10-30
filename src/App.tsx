@@ -34,8 +34,10 @@ import SettingsModal from "./components/SettingsModal";
 import ConflictDialog from "./components/ConflictDialog";
 import RemoteUpdateDialog from "./components/RemoteUpdateDialog";
 import { RemoteUpdates, type Offer } from "./lib/remoteUpdates";
+import { installZoomGestureGuard } from "./lib/zoomGestures";
 
 export default function App() {
+  useEffect(() => installZoomGestureGuard(document), []);
   const [view, setView] = useState<View>(() => {
     const startup = getStartupView();
     return startup === "last" ? getLastView() : startup;
