@@ -1,7 +1,7 @@
 // The transport shim: the ONLY file that knows about Tauri (`invoke`, `listen`) or the HTTP
-// server (`fetch`, `EventSource`). Every component calls these functions. When a server URL
-// is configured via `settings.ts`, calls go to the HTTP API; otherwise they use local Tauri
-// commands. Mirrors the helper layer of web/app.js (api()/fetchNote()/putNote()).
+// server (`fetch`, `EventSource`). Every component calls these functions. A saved server
+// URL normally selects HTTP; a connection failure selects one effective local destination
+// without discarding settings. All reads and writes share that destination and its readiness.
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -60,23 +60,123 @@ export interface TransportContext {
   readonly localGeneration: number;
   readonly url: string;
   readonly allowInvalidCert: boolean;
+  readonly configuredUrl?: string;
 }
 let transportGeneration = 0;
 let localGeneration = 0;
+let fallback = false;
+let managed = false;
+let initialized = false;
+let initializationFailed = false;
+let activatedDestination = "";
+let ready = { note: false, tasks: false };
+let connectionStatus = "";
+let reconciliationStatus = "";
+let storageError = "";
+const transportListeners = new Set<() => void>();
+const localWrites = new Set<Promise<unknown>>();
+const emitTransport = () => transportListeners.forEach((listener) => listener());
+export function subscribeTransport(listener: () => void) {
+  transportListeners.add(listener);
+  return () => { transportListeners.delete(listener); };
+}
+export function transportStatus() {
+  return [connectionStatus || (managed && !initialized ? "Loading destination" : ""), reconciliationStatus].filter(Boolean).join("; ");
+}
+export function usingLocalFallback() { return fallback; }
+export function canMutate(resource: "note" | "tasks") { return !managed || (initialized && ready[resource]); }
+export function needsInitialization() { return !initialized; }
+export function finishInitialization(context: TransportContext) {
+  if (!isTransportCurrent(context) || initializationFailed) return;
+  initialized = true;
+  emitTransport();
+}
+export function markResourceReady(resource: "note" | "tasks", context: TransportContext) {
+  if (!isTransportCurrent(context) || ready[resource]) return;
+  ready[resource] = true;
+  emitTransport();
+}
+function requireWritable(resource: "note" | "tasks", context: TransportContext) {
+  requireCurrent(context);
+  if (!canMutate(resource)) throw new Error("Destination is still loading. Choose the action again when ready.");
+}
+export function startTransportSession() {
+  managed = true;
+  fallback = false;
+  connectionStatus = "";
+  storageError = "";
+  reconciliationStatus = "";
+  return activateTransport(false, true);
+}
+export function endTransportSession() {
+  managed = false;
+  fallback = false;
+  transportGeneration++;
+}
+export function reconnectTransport() {
+  fallback = false;
+  connectionStatus = "";
+  reconciliationStatus = "";
+  return activateTransport(false, true);
+}
+function enterFallback(context: TransportContext) {
+  if (!isTransportCurrent(context) || !context.url || fallback) return;
+  fallback = true;
+  connectionStatus = "Server unavailable; using local files";
+  activateTransport();
+}
+// Register before dispatch. A generation change prevents new admissions; draining
+// these promises orders native commits, not merely their UI continuations.
+function localWrite<T>(command: string, args: Record<string, unknown>, context = captureTransport()): Promise<T> {
+  requireCurrent(context);
+  const pending = Promise.resolve().then(() => invoke<T>(command, args));
+  return trackLocalWrite(pending);
+}
+function trackLocalWrite<T>(pending: Promise<T>): Promise<T> {
+  localWrites.add(pending);
+  void pending.catch((error) => { storageError = `Local storage write failed: ${errMsg(error)}`; })
+    .finally(() => localWrites.delete(pending));
+  return pending;
+}
+async function drainLocalWrites(context: TransportContext) {
+  if (localWrites.size) {
+    connectionStatus = "Waiting for local storage";
+    emitTransport();
+    await Promise.allSettled([...localWrites]);
+  }
+  requireCurrent(context);
+  connectionStatus = [fallback ? "Server unavailable; using local files" : "", storageError].filter(Boolean).join("; ");
+  emitTransport();
+}
+async function localRead<T>(command: string, args: Record<string, unknown> | undefined, context: TransportContext): Promise<T> {
+  if (localWrites.size) await drainLocalWrites(context);
+  requireCurrent(context);
+  return args === undefined ? invoke<T>(command) : invoke<T>(command, args);
+}
 const clientSessionId = crypto.randomUUID();
 export function destination(context: TransportContext): string {
   return context.url ? `server:${context.url}` : `local:${context.localGeneration}`;
 }
 export function captureTransport(): TransportContext {
-  return Object.freeze({ generation: transportGeneration, localGeneration, url: getServerUrl(), allowInvalidCert: getAllowInvalidCert() });
+  const configuredUrl = getServerUrl();
+  return Object.freeze({ generation: transportGeneration, localGeneration, configuredUrl, url: fallback ? "" : configuredUrl, allowInvalidCert: getAllowInvalidCert() });
 }
-export function activateTransport(storageChanged = false): TransportContext {
+export function activateTransport(storageChanged = false, forceInitialization = false): TransportContext {
   transportGeneration++;
   if (storageChanged) localGeneration++;
-  return captureTransport();
+  const context = captureTransport();
+  if (forceInitialization || activatedDestination !== destination(context)) {
+    initialized = false;
+    initializationFailed = false;
+    ready = { note: false, tasks: false };
+  }
+  activatedDestination = destination(context);
+  emitTransport();
+  return context;
 }
 export function isTransportCurrent(context: TransportContext): boolean {
-  return context.generation === transportGeneration && context.url === getServerUrl()
+  return context.generation === transportGeneration && (context.configuredUrl ?? context.url) === getServerUrl()
+    && context.url === (fallback ? "" : getServerUrl())
     && context.allowInvalidCert === getAllowInvalidCert();
 }
 function requireCurrent(context: TransportContext) {
@@ -125,6 +225,9 @@ async function serverFetch(
     if (!res.ok) throw new Error(`${res.status} ${res.status_text}`.trim());
     response = res.body;
     return res.body;
+  } catch (error) {
+    if (method === "GET" && error && typeof error === "object" && "kind" in error && error.kind === "connection") enterFallback(context);
+    throw error;
   } finally { completions.forEach((complete) => complete(response)); }
 }
 
@@ -154,17 +257,17 @@ function httpPutText(path: string, text: string, context = captureTransport()): 
 
 // --- Local backup helpers (server mode only, best-effort) ---
 
-async function backupNoteLocally(text: string): Promise<void> {
+async function backupNoteLocally(text: string, context: TransportContext): Promise<void> {
   try {
-    await invoke("put_note", { text });
+    await localWrite("put_note", { text }, context);
   } catch (e) {
     console.warn("local note backup failed:", e);
   }
 }
 
-async function backupLabelsLocally(labels: Labels): Promise<void> {
+async function backupLabelsLocally(labels: Labels, context: TransportContext): Promise<void> {
   try {
-    await invoke("put_labels", { labels });
+    await localWrite("put_labels", { labels }, context);
   } catch (e) {
     console.warn("local labels backup failed:", e);
   }
@@ -175,7 +278,7 @@ async function backupTasksLocally(context = captureTransport()): Promise<void> {
     // /api/raw is the server store's own todo.txt render — the single canonical
     // "server tasks as text" source, also used by the conflict reconcile path.
     const raw = await httpText("/api/raw", context);
-    if (isTransportCurrent(context)) await invoke("put_raw", { text: raw });
+    if (isTransportCurrent(context)) await localWrite("put_raw", { text: raw }, context);
   } catch (e) {
     console.warn("local task backup failed:", e);
   }
@@ -193,15 +296,16 @@ export function listTasks(filter: TaskFilter, context = captureTransport()): Pro
     const qs = params.toString();
     return httpJson<Task[]>("/api/tasks" + (qs ? "?" + qs : ""), undefined, context);
   }
-  return invoke("list_tasks", {
+  return localRead("list_tasks", {
     completed: filter.completed ?? null,
     project: filter.project ?? null,
     context: filter.context ?? null,
-  });
+  }, context);
 }
 
 export async function createTask(text: string): Promise<Task> {
   const context = captureTransport();
+  requireWritable("tasks", context);
   if (context.url) {
     const task = await httpJson<Task>("/api/tasks", {
       method: "POST",
@@ -210,11 +314,11 @@ export async function createTask(text: string): Promise<Task> {
     if (isTransportCurrent(context)) await backupTasksLocally(context);
     return task;
   }
-  return invoke("create_task", { text });
+  return localWrite("create_task", { text }, context);
 }
 
 export async function updateTask(id: number, text: string, context = captureTransport()): Promise<Task> {
-  requireCurrent(context);
+  requireWritable("tasks", context);
   if (context.url) {
     const task = await httpJson<Task>(`/api/tasks/${id}`, {
       method: "PUT",
@@ -223,37 +327,40 @@ export async function updateTask(id: number, text: string, context = captureTran
     if (isTransportCurrent(context)) await backupTasksLocally(context);
     return task;
   }
-  return invoke("update_task", { id, text });
+  return localWrite("update_task", { id, text }, context);
 }
 
 export async function completeTask(id: number): Promise<Task> {
   const context = captureTransport();
+  requireWritable("tasks", context);
   if (context.url) {
     const task = await httpJson<Task>(`/api/tasks/${id}/complete`, { method: "POST" }, context);
     if (isTransportCurrent(context)) await backupTasksLocally(context);
     return task;
   }
-  return invoke("complete_task", { id });
+  return localWrite("complete_task", { id }, context);
 }
 
 export async function uncompleteTask(id: number): Promise<Task> {
   const context = captureTransport();
+  requireWritable("tasks", context);
   if (context.url) {
     const task = await httpJson<Task>(`/api/tasks/${id}/uncomplete`, { method: "POST" }, context);
     if (isTransportCurrent(context)) await backupTasksLocally(context);
     return task;
   }
-  return invoke("uncomplete_task", { id });
+  return localWrite("uncomplete_task", { id }, context);
 }
 
 export async function deleteTask(id: number): Promise<void> {
   const context = captureTransport();
+  requireWritable("tasks", context);
   if (context.url) {
     await serverFetch(`/api/tasks/${id}`, "DELETE", undefined, undefined, context);
     if (isTransportCurrent(context)) await backupTasksLocally(context);
     return;
   }
-  return invoke("delete_task", { id });
+  return localWrite("delete_task", { id }, context);
 }
 
 export function getNote(context = captureTransport()): Promise<string> {
@@ -261,17 +368,17 @@ export function getNote(context = captureTransport()): Promise<string> {
   if (context.url) {
     return httpText("/api/note", context);
   }
-  return invoke("get_note");
+  return localRead("get_note", undefined, context);
 }
 
 export async function putNote(text: string, context = captureTransport()): Promise<void> {
-  requireCurrent(context);
+  requireWritable("note", context);
   if (context.url) {
     await httpPutText("/api/note", text, context);
-    if (isTransportCurrent(context)) await backupNoteLocally(text);
+    if (isTransportCurrent(context)) await backupNoteLocally(text, context);
     return;
   }
-  return invoke("put_note", { text });
+  return localWrite("put_note", { text }, context);
 }
 
 export function getLabels(context = captureTransport()): Promise<Labels> {
@@ -279,17 +386,17 @@ export function getLabels(context = captureTransport()): Promise<Labels> {
   if (context.url) {
     return httpJson<Labels>("/api/labels", undefined, context);
   }
-  return invoke("get_labels");
+  return localRead("get_labels", undefined, context);
 }
 
 export async function putLabels(labels: Labels, context = captureTransport()): Promise<void> {
-  requireCurrent(context);
+  requireWritable("tasks", context);
   if (context.url) {
     await serverFetch("/api/labels", "PUT", JSON.stringify(labels), "application/json", context);
-    if (isTransportCurrent(context)) await backupLabelsLocally(labels);
+    if (isTransportCurrent(context)) await backupLabelsLocally(labels, context);
     return;
   }
-  return invoke("put_labels", { labels });
+  return localWrite("put_labels", { labels }, context);
 }
 
 interface ServerLiveEvent {
@@ -380,7 +487,7 @@ export interface Conflict {
 interface ResourceIO {
   readLocal(): Promise<string>;
   readServer(context: TransportContext): Promise<string>;
-  writeLocal(text: string): Promise<void>;
+  writeLocal(text: string, context: TransportContext): Promise<void>;
   writeServer(text: string, context: TransportContext): Promise<void>;
 }
 
@@ -388,7 +495,7 @@ const CONFLICT_IO: Record<ConflictResource, ResourceIO> = {
   note: {
     readLocal: () => invoke("get_note"),
     readServer: (context) => httpText("/api/note", context),
-    writeLocal: (text) => invoke("put_note", { text }),
+    writeLocal: (text, context) => localWrite("put_note", { text }, context),
     writeServer: (text, context) => httpPutText("/api/note", text, context),
   },
   tasks: {
@@ -396,7 +503,7 @@ const CONFLICT_IO: Record<ConflictResource, ResourceIO> = {
     // local get_raw returns — so equal content compares equal, no join/newline logic.
     readLocal: () => invoke("get_raw"),
     readServer: (context) => httpText("/api/raw", context),
-    writeLocal: (text) => invoke("put_raw", { text }),
+    writeLocal: (text, context) => localWrite("put_raw", { text }, context),
     writeServer: (text, context) => httpPutText("/api/raw", text, context),
   },
 };
@@ -407,49 +514,87 @@ const conflictContexts = new WeakMap<Conflict, TransportContext>();
 function applyChoice(c: Conflict, choice: ConflictChoice, context = conflictContexts.get(c) ?? captureTransport()): Promise<void> {
   requireCurrent(context);
   const io = CONFLICT_IO[c.resource];
-  return choice === "server" ? io.writeLocal(c.server) : io.writeServer(c.local, context);
+  return choice === "server" ? io.writeLocal(c.server, context) : io.writeServer(c.local, context);
 }
 
 // Reconcile the local todo.txt / Note.md with a server's copies. Called on app
 // open and after connecting. For each resource: identical copies are left alone;
 // a difference with an empty local copy adopts the server silently; a real
 // difference is resolved per the configured strategy ("server"/"local" auto-apply,
-// "ask" is returned for the UI to prompt). Best-effort: a failure on one resource
-// is logged and does not block the other. No-op (returns []) in local mode.
+// "ask" is returned for the UI to prompt). Discover both resources before writing;
+// stop application on failure and retain partial outcomes. Local mode only drains writes.
 export async function reconcileWithServer(context = captureTransport(), signal?: AbortSignal): Promise<Conflict[]> {
   const current = () => isTransportCurrent(context) && !signal?.aborted;
-  if (!context.url || !current()) return [];
+  if (!current()) return [];
+  await drainLocalWrites(context);
+  if (!current()) return [];
+  if (!context.url) { initialized = true; return []; }
   const strategy = getConflictStrategy();
   const conflicts: Conflict[] = [];
-  for (const resource of ["note", "tasks"] as ConflictResource[]) {
-    try {
-      if (!current()) return [];
+  const discovered: { conflict: Conflict; verdict: ReturnType<typeof classifyConflict> }[] = [];
+  // No writes until every discovery read succeeds. In particular, a successful
+  // note read must not overwrite local text before the task GET can fail.
+  try {
+    for (const resource of ["note", "tasks"] as ConflictResource[]) {
       const io = CONFLICT_IO[resource];
       const [local, server] = await Promise.all([io.readLocal(), io.readServer(context)]);
       if (!current()) return [];
-      const verdict = classifyConflict(local, server);
-      if (verdict === "in-sync") continue;
-      const conflict: Conflict = { resource, local, server };
+      discovered.push({ conflict: { resource, local, server }, verdict: classifyConflict(local, server) });
+    }
+  } catch (error) {
+    if (current()) {
+      initializationFailed = true;
+      connectionStatus = `Could not initialize server: ${errMsg(error)}`;
+      emitTransport();
+    }
+    throw error;
+  }
+  const outcomes: string[] = [];
+  for (const { conflict, verdict } of discovered) {
+    const resource = conflict.resource;
+    let choice: ConflictChoice | undefined;
+    try {
+      if (!current()) return [];
+      if (verdict === "in-sync") { outcomes.push(`${resource}: unchanged`); continue; }
       conflictContexts.set(conflict, context);
       if (verdict === "adopt-server") {
-        await applyChoice(conflict, "server", context);
+        choice = "server";
       } else if (strategy === "ask") {
         conflicts.push(conflict);
+        outcomes.push(`${resource}: awaiting choice`);
       } else {
-        await applyChoice(conflict, strategy, context); // narrowed to "server" | "local"
+        choice = strategy;
+      }
+      if (choice) {
+        await applyChoice(conflict, choice, context);
+        outcomes.push(`${resource}: applied ${choice} copy`);
       }
     } catch (e) {
       if (!current()) return [];
-      console.warn(`reconcile ${resource} failed:`, e);
+      initializationFailed = true;
+      const remaining = discovered.slice(discovered.findIndex((item) => item.conflict === conflict) + 1)
+        .map((item) => `${item.conflict.resource}: not applied`);
+      reconciliationStatus = `Reconciliation stopped; ${[...outcomes, `${resource}: outcome unknown (${choice ?? "no write"})`, ...remaining].join("; ")}. ${errMsg(e)}. Connect to recheck.`;
+      emitTransport();
+      throw e;
     }
   }
+  if (current()) initialized = !conflicts.length;
   return conflicts;
 }
 
 // Apply the user's dialog choice for one conflict. "server" overwrites the local
 // file with the server copy; "local" pushes the local copy to the server.
 export async function resolveConflict(c: Conflict, choice: ConflictChoice): Promise<void> {
-  await applyChoice(c, choice);
+  if (managed && initializationFailed) throw new Error("Connect to recheck the uncertain reconciliation before choosing again.");
+  try { await applyChoice(c, choice); }
+  catch (error) {
+    initialized = false;
+    initializationFailed = true;
+    reconciliationStatus = `${c.resource}: outcome unknown (${choice}). ${errMsg(error)}. Connect to recheck.`;
+    emitTransport();
+    throw error;
+  }
 }
 
 export function getDataDir(): Promise<string> {
@@ -467,13 +612,16 @@ export function getStorageKind(): Promise<StorageKind> {
 }
 
 export async function setDataDir(dir: string): Promise<void> {
-  await invoke("set_data_dir", { dir });
-  activateTransport(true);
+  const earlier = [...localWrites];
+  const work = trackLocalWrite(Promise.allSettled(earlier).then(() => invoke("set_data_dir", { dir })));
+  activateTransport(false, true);
+  try { await work; }
+  finally { activateTransport(true); }
 }
 
 // Turn any thrown value into a message. IPC rejections arrive as plain strings (the Rust
 // commands return Result<_, String>); JS failures arrive as Error. The one home for that
 // decision, next to the boundary that produces them.
 export function errMsg(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  return e && typeof e === "object" && "message" in e ? String(e.message) : String(e);
 }

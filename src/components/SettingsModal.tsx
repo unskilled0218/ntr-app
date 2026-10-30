@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getDataDir, getStorageKind, pickDataDir, setDataDir, type StorageKind } from "../api";
+import { getDataDir, getStorageKind, pickDataDir, setDataDir, reconnectTransport, usingLocalFallback, type StorageKind } from "../api";
 import {
   getAllowInvalidCert,
   getCompactUi,
@@ -90,6 +90,7 @@ export default function SettingsModal({ open, onClose }: Props) {
       return;
     }
     setServerUrl(url);
+    reconnectTransport();
     onClose();
   }
 
@@ -127,7 +128,7 @@ export default function SettingsModal({ open, onClose }: Props) {
       <form id="settings-form" method="dialog" onSubmit={(e) => e.preventDefault()}>
         <h2>Connection</h2>
         <p className="settings-current">
-          {current ? `Server: ${current}` : "Local (files)"}
+          {usingLocalFallback() ? `Local files (server unavailable): ${current}` : current ? `Server: ${current}` : "Local (files)"}
         </p>
         <label>
           Server URL

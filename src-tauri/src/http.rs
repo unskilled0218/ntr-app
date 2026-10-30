@@ -36,12 +36,35 @@ pub struct ServerRequest {
 /// here (`ok` is just `false`); the "throw on !ok" decision stays in api.ts, mirroring the old
 /// `httpFetch`. `status_text` carries the canonical reason so the UI rebuilds the same
 /// `"<status> <statusText>"` message it threw before.
-#[derive(serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub struct HttpResponse {
   pub status: u16,
   pub ok: bool,
   pub status_text: String,
   pub body: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct FetchError {
+  kind: &'static str,
+  message: String,
+}
+
+impl From<String> for FetchError {
+  fn from(message: String) -> Self {
+    Self { kind: "internal", message }
+  }
+}
+
+impl From<reqwest::Error> for FetchError {
+  fn from(error: reqwest::Error) -> Self {
+    let kind = if !error.is_builder() && (error.is_connect() || error.is_timeout()) {
+      "connection"
+    } else {
+      "request"
+    };
+    Self { kind, message: error.to_string() }
+  }
 }
 
 /// A reqwest client owns a connection pool and is meant to be reused, not rebuilt per call. We
@@ -67,12 +90,13 @@ fn client_for(state: &AppState, allow_invalid_cert: bool) -> Result<reqwest::Cli
 }
 
 /// Issue one request and return its outcome. Network/DNS/TLS errors (including a rejected
-/// self-signed cert) map to `Err(String)`, the only path that carries such a message to the UI.
+/// self-signed cert) carry a typed IPC error so the frontend can select local fallback
+/// without guessing from localized error messages. HTTP statuses remain responses.
 #[tauri::command]
 pub async fn server_fetch(
   state: State<'_, AppState>,
   req: ServerRequest,
-) -> Result<HttpResponse, String> {
+) -> Result<HttpResponse, FetchError> {
   let client = client_for(state.inner(), req.allow_invalid_cert)?;
   fetch_response(&client, req, Duration::from_secs(30)).await
 }
@@ -81,7 +105,7 @@ async fn fetch_response(
   client: &reqwest::Client,
   req: ServerRequest,
   read_timeout: Duration,
-) -> Result<HttpResponse, String> {
+) -> Result<HttpResponse, FetchError> {
   let method = reqwest::Method::from_bytes(req.method.as_bytes()).map_err(|e| e.to_string())?;
   let mut builder = client.request(method, &req.url);
   if let Some(origin) = req.client_id {
@@ -96,10 +120,10 @@ async fn fetch_response(
     }
     builder = builder.body(body);
   }
-  let res = builder.send().await.map_err(|e| e.to_string())?;
+  let res = builder.send().await.map_err(FetchError::from)?;
   let status = res.status();
   let status_text = status.canonical_reason().unwrap_or("").to_string();
-  let body = res.text().await.map_err(|e| e.to_string())?;
+  let body = res.text().await.map_err(FetchError::from)?;
   Ok(HttpResponse {
     status: status.as_u16(),
     ok: status.is_success(),

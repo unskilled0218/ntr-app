@@ -13,6 +13,8 @@ const settingsState = vi.hoisted(() => ({
 }));
 
 vi.mock("../api", () => ({
+  usingLocalFallback: () => false,
+  reconnectTransport: vi.fn(),
   getDataDir: vi.fn().mockResolvedValue(""),
   getStorageKind: vi.fn().mockResolvedValue("path"),
   pickDataDir: vi.fn(),

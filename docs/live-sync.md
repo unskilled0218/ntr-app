@@ -1,6 +1,7 @@
 # Live sync
 
 - [Connection recovery](#connection-recovery)
+- [Local fallback](#local-fallback)
 - [Update choices](#update-choices)
 - [Note save ownership](#note-save-ownership)
 - [Concurrent edits](#concurrent-edits)
@@ -40,9 +41,17 @@ If the server broadcast buffer overflows, it emits both existing `tasks` and `no
 
 The server sends keep-alive comments every 15 seconds. Reverse proxies must forward them promptly and avoid buffering the SSE response. Otherwise clients can repeatedly hit the inactivity deadline despite a running server. Certificate validation remains enabled unless Allow self-signed certificates is explicitly selected.
 
-First initialization and genuine destination changes retain the configured startup reconciliation strategy (`ask`, `server`, or `local`). Closing unchanged settings does not reload panes, replace the subscription, or reconcile files. UI-only settings apply independently. Certificate-policy changes for the same URL replace the transport and detect changes, but do not repeat startup reconciliation or accept a declined snapshot under any strategy. Destination identity is the server URL, or the local data-directory generation in local mode.
+First initialization and genuine destination changes retain the configured startup reconciliation strategy (`ask`, `server`, or `local`). Closing unchanged settings does not reload panes, replace the subscription, or reconcile files. UI-only settings apply independently. Certificate-policy changes for the same URL replace the transport and detect changes, but do not repeat startup reconciliation or accept a declined snapshot under any strategy. Destination identity is the effective server URL, or the local data-directory generation in deliberate local mode or fallback.
 
 Changing the destination invalidates old reads and queued side effects. Dirty note drafts stay available, but uploading an old draft to a different target requires a new explicit choice. Requests already accepted by their original destination cannot be recalled.
+
+## Local fallback
+
+Resource connection failures automatically select the local destination without clearing server settings. Both panes reload local data, switch to file watcher events, and reject stale server-ID actions. New mutations remain blocked until the destination's storage barrier, reconciliation, projection, and required choices are ready; mounted drafts remain available. HTTP response errors and SSE-only failures retain their existing retry behavior rather than triggering fallback.
+
+Native local writes are registered before dispatch. Already-admitted backups and local writes settle before fallback reads or reconnect discovery; a pending unrelated server PUT does not delay local use. A late obsolete server PUT cannot admit another backup. A never-settling native local operation displays `Waiting for local storage` and keeps initialization blocked. Pending-save ownership remains destination-specific and no request is replayed against a different store.
+
+Only explicit Connect or restart retries the server from fallback. Reconciliation discovers both resources before applying writes; later application is nontransactional and exposes partial or uncertain outcomes instead of promising rollback. A deliberate retry reads actual state again. See [server connection](server-connection.md) for overwrite strategies, empty content, draft transfer, and local-cache limits.
 
 ## Note save ownership
 
@@ -60,13 +69,15 @@ A request that never settles keeps its destination blocked; a timer does not fre
 
 Storage remains last-write-wins. This is change detection with explicit approval, not collaborative merging, persistent revision history, or transactional compare-and-swap. A write already in flight can overwrite another client's concurrent save; a validated task action can still race another write. Detection protects observed drafts and snapshots, but cannot recover overwritten server versions or detect changes while disconnected. Avoid simultaneous edits when both versions must survive.
 
-If a remote read keeps failing, the editor retains the draft and displays the error. Automatic saves remain blocked while a known incoming update cannot be classified. Restore connectivity or resolve an established conflict explicitly; restarting is not required for ordinary connection recovery.
+If a remote read keeps failing with an HTTP or data error, the editor retains the draft and displays the error. Automatic saves remain blocked while a known incoming update cannot be classified. A connection failure selects local fallback and requires an explicit destination choice before saving a transferred draft. Restarting is not required; use Connect to retry the configured server.
 
 ## Verification
 
 Run `npm test` and `npm run build` in `app/`, and `cargo test` plus `cargo clippy --all-targets` in `app/src-tauri/`. The native suite includes loopback SSE failures, cancellation, idle detection, and heartbeat tests. The regular suite does not require a running external server.
 
 Coordinator and real-pane tests cover unchanged settings under every startup strategy, same-destination transport replacement, deferred review, pending-note save guards, task draft suspension, stale IDs, reconnect recovery, epoch-invalidated GETs, uncertain writes, equal-content rescan suppression, and concurrent foreign changes during PUTs. Existing note regressions retain IME, undo, empty-draft, destination, and single-flight ownership coverage. Run focused approval checks with `npm test -- src/lib/remoteUpdates.test.ts src/remoteApproval.test.tsx src/liveSync.test.tsx`.
+
+Run focused fallback checks with `npm test -- src/transportFallback.test.ts src/localFallback.test.tsx`. These cover native commit timing through deferred IPC fakes, discovery failure under every strategy, partial application and uncertain commits, mutation readiness, saved settings, local watcher events, StrictMode, draft ownership, IME, and explicit reconnect. Native loopback tests additionally verify the serialized connection-error category, timeout, malformed URL, and HTTP-status distinctions.
 
 For the opt-in test with two independent native bridges and a real server restart, build the server, then run from `app/src-tauri/`:
 

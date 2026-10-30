@@ -15,6 +15,7 @@ import { ownDialogEvent } from "./dialogEvents";
 import { formatLocalTaskDate } from "../lib/taskDates";
 
 interface Props {
+  disabled?: boolean;
   task: Task | null;
   suspended?: boolean;
   serverLabels: { project: string[]; context: string[] };
@@ -25,7 +26,7 @@ interface Props {
   removal?: ProjectRemovalEvent;
 }
 
-export default function EditTaskModal({ task, suspended, serverLabels, onSave, onClose, rename, onProjectsChange, removal }: Props) {
+export default function EditTaskModal({ task, suspended, serverLabels, onSave, onClose, rename, onProjectsChange, removal, disabled = false }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [description, setDescription] = useState("");
   const [due, setDue] = useState("");
@@ -83,6 +84,7 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (disabled) return;
     const current = baseline.current;
     if (!task || !current || (!description.trim() && !current.contexts.length)) return;
     try {
@@ -137,7 +139,7 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
         {error && <p className="modal-error" role="alert">{error}</p>}
         <div className="modal-actions">
           <button type="button" onClick={onClose}>Cancel</button>
-          <button type="submit" className="primary">Save</button>
+          <button type="submit" className="primary" disabled={disabled}>Save</button>
         </div>
       </form>
       <LabelModal kind={modalKind} onConfirm={(_, name) => onConfirm(name)} onClose={() => setModalKind(null)} />

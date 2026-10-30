@@ -478,6 +478,7 @@ describe("transport-bound deferred work", () => {
     vi.mocked(invoke).mockImplementation((command) => command === "server_fetch" ? read.promise : Promise.resolve("draft"));
     const controller = new AbortController();
     const work = reconcileWithServer(captureTransport(), controller.signal);
+    await settle(); // discovery starts only after the local-storage barrier
     controller.abort();
     read.resolve(httpResp("remote"));
     expect(await work).toEqual([]);
@@ -512,6 +513,7 @@ describe("transport-bound deferred work", () => {
     const read = deferred<ReturnType<typeof httpResp>>();
     vi.mocked(invoke).mockImplementation((command) => command === "server_fetch" ? read.promise : Promise.resolve("A"));
     const reconcile = reconcileWithServer();
+    await settle();
     localStorage.setItem("ntr.serverUrl", "http://server-b");
     activateTransport();
     read.resolve(httpResp("remote A"));
@@ -654,19 +656,18 @@ describe("reconcileWithServer", () => {
 
   it("auto-pushes the local copy to the server when the strategy is 'local'", async () => {
     localStorage.setItem("ntr.conflictStrategy", "local");
-    // GET /api/note, then PUT /api/note (push), then GET /api/raw (in-sync).
-    mockServer([["server note"], [null, 204], [""]], { note: "local note", raw: "" });
+    // Discover both resources before the first write.
+    mockServer([["server note"], [""], [null, 204]], { note: "local note", raw: "" });
     expect(await reconcileWithServer()).toEqual([]);
-    expect(reqOf(1)).toMatchObject({ url: `${SERVER}/api/note`, method: "PUT", body: "local note" });
+    expect(reqOf(2)).toMatchObject({ url: `${SERVER}/api/note`, method: "PUT", body: "local note" });
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("put_note", expect.anything());
   });
 
-  it("isolates a per-resource failure: a failed note read still yields the task conflict", async () => {
-    // note GET 404 (rejects inside the note iteration), tasks GET ok and differs.
+  it("stops discovery without applying either resource after a failed note read", async () => {
     mockServer([[null, 404], ["server raw"]], { note: "local note", raw: "local raw" });
-    expect(await reconcileWithServer()).toEqual([
-      { resource: "tasks", local: "local raw", server: "server raw" },
-    ]);
+    await expect(reconcileWithServer()).rejects.toThrow("404 Not Found");
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("put_note", expect.anything());
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("put_raw", expect.anything());
   });
 });
 
