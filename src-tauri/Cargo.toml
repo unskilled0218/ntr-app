@@ -1,6 +1,6 @@
 [package]
 name = "ntr"
-version = "0.15.19"
+version = "0.15.20"
 description = "Local-first desktop client for todo.txt tasks and a Markdown note — local files or a my-ntr-server over HTTP."
 authors = ["musty"]
 edition = "2021"

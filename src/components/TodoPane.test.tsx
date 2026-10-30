@@ -6,9 +6,7 @@ import { activateTransport } from "../api";
 import { deferred, settle } from "../test/deferred";
 import type { Task } from "../api";
 
-// Mock the transport shim. listTasks is arg-agnostic by design: this test pins the *removal glue*
-// (which tasks get updated, and that a reload happens), not the server's own filtering — so the
-// mount refresh, mount loadLabels, and confirmRemove's listTasks({}) all see the same fixture.
+// Isolate task-pane glue here; server/coordinator boundaries use real transport fixtures elsewhere.
 vi.mock("../api", async (importOriginal) => ({
   ...await importOriginal<typeof import("../api")>(),
   listTasks: vi.fn(),
@@ -65,7 +63,15 @@ beforeEach(() => {
 afterEach(() => { cleanup(); localStorage.clear(); });
 
 describe("TodoPane removal glue", () => {
-  it("removing a project updates known tasks without a full-list reload", async () => {
+  it("removing a project validates current tasks and projects only its own responses", async () => {
+    let stored = [...TASKS];
+    vi.mocked(listTasks).mockImplementation(async () => stored);
+    vi.mocked(updateTask).mockImplementation(async (id, raw) => {
+      const previous = stored.find((task) => task.id === id)!;
+      const updated = { ...previous, raw, projects: previous.projects.filter((name) => name !== "work") };
+      stored = stored.map((task) => task.id === id ? updated : task);
+      return updated;
+    });
     render(<TodoPane compact={false} />);
 
     // Open the Project filter picker and click the "work" row's Remove button.
@@ -78,12 +84,13 @@ describe("TodoPane removal glue", () => {
 
     // Only the two "work" tasks are rewritten, with the token stripped; task 2 is untouched.
     await waitFor(() => expect(vi.mocked(updateTask)).toHaveBeenCalledTimes(2));
-    expect(vi.mocked(updateTask)).toHaveBeenCalledWith(1, "call bank @phone");
-    expect(vi.mocked(updateTask)).toHaveBeenCalledWith(3, "post");
+    expect(vi.mocked(updateTask)).toHaveBeenCalledWith(1, "call bank @phone", expect.objectContaining({ url: "" }));
+    expect(vi.mocked(updateTask)).toHaveBeenCalledWith(3, "post", expect.objectContaining({ url: "" }));
     expect(vi.mocked(updateTask).mock.calls.some(([id]) => id === 2)).toBe(false);
-    expect(vi.mocked(putLabels)).toHaveBeenCalledWith({ project: ["home"], context: ["phone"] });
+    await waitFor(() => expect(vi.mocked(putLabels)).toHaveBeenCalledWith({ project: ["home"], context: ["phone"] }, expect.objectContaining({ url: "" })));
 
-    expect(vi.mocked(listTasks).mock.calls.length).toBe(callsBefore);
+    expect(vi.mocked(listTasks).mock.calls.length).toBeGreaterThan(callsBefore);
+    expect(stored.filter((task) => task.projects.includes("work"))).toHaveLength(0);
   });
 
   it("retains visible content when an update fails", async () => {
@@ -97,7 +104,7 @@ describe("TodoPane removal glue", () => {
     fireEvent.click(dialog.getByRole("button", { name: /^remove$/i }));
 
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("network error"));
-    expect(vi.mocked(listTasks).mock.calls.length).toBe(callsBefore);
+    expect(vi.mocked(listTasks).mock.calls.length).toBeGreaterThan(callsBefore);
     expect(document.querySelector("#tasks")!.textContent).toContain("call bank");
   });
 });
@@ -211,7 +218,7 @@ describe("TodoPane remembered labels", () => {
     await openRemove("work");
     fireEvent.click(within(document.getElementById("remove-label-dialog") as HTMLElement).getByRole("button", { name: /^remove$/i }));
 
-    await waitFor(() => expect(vi.mocked(putLabels)).toHaveBeenCalledWith({ project: [], context: [] }));
+    await waitFor(() => expect(vi.mocked(putLabels)).toHaveBeenCalledWith({ project: [], context: [] }, expect.objectContaining({ url: "" })));
     await waitFor(() => expect(screen.getByRole("button", { name: /project filter/i }).textContent).toBe("All projects"));
   });
 

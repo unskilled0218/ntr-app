@@ -45,7 +45,7 @@ export class RemoteUpdates {
   constructor(private readonly read: <K extends Resource>(resource: K, context: TransportContext) => Promise<Snapshots[K]> =
     ((resource, context) => resource === "note" ? getNote(context) : listTasks({}, context)) as <K extends Resource>(resource: K, context: TransportContext) => Promise<Snapshots[K]>) {
     this.refresh = Object.fromEntries((["note", "tasks"] as const).map((resource) => [resource, new ResourceRefresh(
-      () => this.detect(resource), {
+      async () => { await this.detect(resource); }, {
         canRun: () => isTransportCurrent(this.context) && this.states[resource].accepted !== undefined && this.states[resource].writes === 0,
         onError: (error) => { this.states[resource].error = `Could not check ${resource}: ${errMsg(error)}`; this.emit(); },
         onIdle: () => this.emit(),
@@ -102,6 +102,20 @@ export class RemoteUpdates {
     this.emit();
   }
   request(resource: Resource) { if (this.active) this.refresh[resource].request(); }
+  // Explicit operation validation waits for a fresh, epoch-valid read, not a busy flag.
+  // Cancel only the runner's bookkeeping; read generations discard obsolete responses.
+  async check(resource: Resource): Promise<boolean> {
+    const state = this.states[resource];
+    if (!this.active || state.accepted === undefined || state.writes) return false;
+    this.refresh[resource].cancel();
+    try {
+      const checked = await this.detect(resource);
+      return checked === true && !state.pending && !state.error && !state.writes;
+    } catch (error) {
+      this.fail(resource, error);
+      throw error;
+    } finally { this.emit(); }
+  }
   private async detect<K extends Resource>(resource: K) {
     const state = this.states[resource] as State<K>;
     const context = this.context;
@@ -116,6 +130,7 @@ export class RemoteUpdates {
     if (!isTransportCurrent(context) || context !== this.context || read !== state.reads || epoch !== state.epoch || state.writes) return;
     state.error = "";
     this.offer(resource, snapshot);
+    return true;
   }
   offer<K extends Resource>(resource: K, snapshot: Snapshots[K]) {
     const state = this.states[resource] as State<K>;

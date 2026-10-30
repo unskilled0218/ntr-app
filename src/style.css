@@ -542,7 +542,20 @@ dialog.options-modal::backdrop {
 .picker-choice {
   flex: 1;
   text-align: left;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
+
+.picker-rename { flex-shrink: 0; }
+
+#rename-project-dialog form, #rename-project-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+#rename-project-dialog { overflow-wrap: anywhere; }
+#rename-project-dialog .modal-actions { flex-wrap: wrap; }
 
 .picker-choice[aria-current="true"] {
   border-color: var(--accent);

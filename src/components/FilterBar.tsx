@@ -9,7 +9,8 @@
 // TodoPane, so removal is still the deliberate, confirmed task-12 flow.
 
 import { DIRECTIONS, SORTS } from "../config";
-import OptionsModal from "./OptionsModal";
+import { useRef } from "react";
+import OptionsModal, { type OptionsModalHandle } from "./OptionsModal";
 import SelectField, { type FieldOption } from "./SelectField";
 import SortField from "./SortField";
 
@@ -23,6 +24,7 @@ interface Props {
   onSort: (s: string) => void;
   onDir: (d: string) => void;
   onRemove: (kind: "project", name: string) => void;
+  onRename?: (name: string) => void;
 }
 
 const SORT_OPTIONS: FieldOption[] = Object.entries(SORTS).map(([value, s]) => ({
@@ -39,7 +41,7 @@ const DIRECTION_OPTIONS: FieldOption[] = Object.entries(DIRECTIONS).map(([value,
 function labelOptions(names: string[]): FieldOption[] {
   return [
     { value: "", label: "All projects" },
-    ...[...names].sort().map((name) => ({ value: name, label: name, removable: true })),
+    ...[...names].sort().map((name) => ({ value: name, label: name, removable: true, renamable: true })),
   ];
 }
 
@@ -53,7 +55,9 @@ export default function FilterBar({
   onSort,
   onDir,
   onRemove,
+  onRename,
 }: Props) {
+  const optionsRef = useRef<OptionsModalHandle>(null);
   // The two choosers, defined once and rendered either inline (default) or inside the compact
   // Options modal — so each chooser's props and wiring live in exactly one place.
   const fields = (
@@ -66,6 +70,7 @@ export default function FilterBar({
           options={labelOptions(serverLabels.project)}
           onChange={onProject}
           onRemove={(name) => onRemove("project", name)}
+          onRename={onRename ? (name) => { optionsRef.current?.close(); onRename(name); } : undefined}
         />
       </label>
       <label>
@@ -84,7 +89,7 @@ export default function FilterBar({
 
   return (
     <div id="filters">
-      {compact ? <OptionsModal ariaLabel="Filter options">{fields}</OptionsModal> : fields}
+      {compact ? <OptionsModal ref={optionsRef} ariaLabel="Filter options">{fields}</OptionsModal> : fields}
     </div>
   );
 }

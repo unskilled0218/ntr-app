@@ -20,9 +20,10 @@ interface Props {
   options: FieldOption[];
   onChange(value: string): void;
   onRemove?(value: string): void;
+  onRename?(value: string): void;
 }
 
-export default function SelectField({ ariaLabel, value, options, onChange, onRemove }: Props) {
+export default function SelectField({ ariaLabel, value, options, onChange, onRemove, onRename }: Props) {
   const { dialogRef, open, setOpen, closePicker, onClose, onCancel } = usePickerDialog();
 
   function choose(v: string) {
@@ -58,6 +59,7 @@ export default function SelectField({ ariaLabel, value, options, onChange, onRem
               value={value}
               onChoose={choose}
               onRemove={onRemove ? remove : undefined}
+              onRename={onRename ? (value) => { closePicker(); onRename(value); } : undefined}
             />
             <div className="modal-actions">
               <button type="button" onClick={(event) => {

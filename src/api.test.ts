@@ -107,6 +107,13 @@ afterEach(() => {
 });
 
 describe("listTasks (server mode)", () => {
+  it.each(["", SERVER])("rejects an obsolete explicit task-write context before dispatch (url=%j)", async (url) => {
+    localStorage.setItem("ntr.serverUrl", url);
+    const owner = captureTransport();
+    activateTransport();
+    await expect(updateTask(1, "replacement", owner)).rejects.toThrow();
+    expect(invoke).not.toHaveBeenCalled();
+  });
   it("calls GET /api/tasks with no params, no body, and the cert flag", async () => {
     mockServer([[[TASK]]]);
     const result = await listTasks({});

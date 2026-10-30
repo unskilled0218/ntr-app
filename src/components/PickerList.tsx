@@ -7,6 +7,7 @@ export interface FieldOption {
   value: string;
   label: string;
   removable?: boolean; // show a Remove button on this row's right (needs onRemove)
+  renamable?: boolean;
 }
 
 // The label of the option whose value matches, falling back to the first option's, then "" — the
@@ -21,9 +22,10 @@ interface Props {
   value: string;
   onChoose(value: string): void;
   onRemove?(value: string): void;
+  onRename?(value: string): void;
 }
 
-export default function PickerList({ options, value, onChoose, onRemove }: Props) {
+export default function PickerList({ options, value, onChoose, onRemove, onRename }: Props) {
   return (
     <ul className="picker-list">
       {options.map((o) => (
@@ -40,6 +42,9 @@ export default function PickerList({ options, value, onChoose, onRemove }: Props
           >
             {o.label}
           </button>
+          {o.renamable && onRename && <button type="button" className="picker-rename" aria-label={`Rename ${o.label}`} onClick={(event) => {
+            event.preventDefault(); onRename(o.value);
+          }}>Rename</button>}
           {o.removable && onRemove && (
             <button
               type="button"

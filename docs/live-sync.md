@@ -20,6 +20,8 @@ While a note update is pending, the note shows “Remote update pending; automat
 
 Project filtering and sorting use the accepted unfiltered task snapshot. Own task mutations apply only their returned task or targeted deletion, not an unrelated remote list. Unsafe edit, complete, delete, and project-removal actions reopen review rather than sending stale IDs. Reviewing can suspend a task edit dialog without discarding its fields; **Resume task draft** restores it. A changed task cannot be saved through that old action: copy the draft and choose Edit against the new task identity. Actions are never replayed automatically.
 
+[Project renaming](project-renaming.md) and project removal wait for fresh task validation between writes, including slow own-write rescans. Foreign divergence stops further stale-ID writes. A paused rename can yield its modal to Review update without losing progress, but approval does not retry it. Renames finalize remembered labels separately, keep pending note approval independent, and expose partial completion and explicit retry rather than promising a multi-resource transaction. Labels-only renames have no dedicated SSE token; other clients discover them on a deliberate label read.
+
 The app supplies one random session ID in the optional `X-Ntr-Client-Id` mutation and SSE headers. Server `0.2.9` or later filters that subscriber's own events; watcher changes and other clients still notify. The header is advisory, not authentication. Older servers retain the approval boundary and equal-content echo suppression, but cannot provide precise author attribution. Differing content is never discarded as a presumed self-event.
 
 ## Connection recovery
