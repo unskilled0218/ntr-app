@@ -4,6 +4,7 @@
 - [Credentials and tools](#credentials-and-tools)
 - [Local checks](#local-checks)
 - [Publication and verification](#publication-and-verification)
+- [Progress logs](#progress-logs)
 - [Failure and recovery](#failure-and-recovery)
 - [API contract and limitations](#api-contract-and-limitations)
 
@@ -52,6 +53,14 @@ The publisher binds source, configuration/scripts/notes hashes, selected targets
 
 A complete existing release follows a separate read-only path. It verifies the original canonical manifest in the annotated tag, metadata, and all asset bytes without running tests, installing dependencies, rebuilding, or opening signing files. A completed-release check still requires the exact source and release identity on clean already-pushed `main`; it is not a historical-release recovery command.
 
+## Progress logs
+
+`scripts/release.sh` prints flushed `Release:` stage events to stderr before checks, setup, tests, builds, publication, and verification. Successful stages show elapsed seconds. Each asset upload and download verification shows its validated name and position in the inventory. Existing releases announce read-only verification without building or writing. Final verified results stay on stdout; they appear only after all integrity and stability checks pass.
+
+Dependency installation, JavaScript tests, Rust tests, and the combined build print waiting events every 15 seconds while pending, including when stderr is redirected. These events show elapsed time, not percentages or evidence that the tool is making progress. The combined build label lists selected targets; it does not claim which target is currently building. Other operations announce starts and completions but do not emit periodic waiting events. `--help` and `--validate` do not start publication progress reporting.
+
+Raw compiler, test, Git, and signing-tool output remains private even on failure. Logs never dump command arguments, environment values, credential paths, signing-file contents, HTTP headers, or response bodies. There is no raw-output flag or persistent log file. Failures identify the safe stage without replaying captured output. A timeout or Ctrl+C during a labeled setup/test/build command stops its process group; Ctrl+C exits with status 130. This does not undo remote writes or authorize retries.
+
 ## Failure and recovery
 
 Tag-only, release-only, malformed, conflicting, or incomplete states stop without building or writing. Source/configuration/notes/target changes cannot claim an existing identity. Legacy tags without the canonical payload are refused rather than rewritten. Unpublished local version tags also require manual inspection.
@@ -62,6 +71,6 @@ Any failed or lost write response can leave accepted remote changes. No assets, 
 
 The client uses Forgejo's Gitea-compatible `/api/v1/version`, `/api/v1/user`, repository, release-by-tag, release creation, asset listing, and multipart asset upload APIs. Asset records must expose positive integer IDs, unique names, sizes, and `browser_download_url`. Asset listing accepts pages of at most 50 records and ends on a short page; bounded unpaginated small inventories also work. Unknown shapes, repeated pages, ambiguous identities, and excessive inventories are refused.
 
-The attachment metadata endpoint returns JSON, not asset bytes. Verification downloads the returned same-origin browser URL under the repository's release-download route or `/attachments/<id>`. Only same-origin HTTPS GET redirects are followed; cross-origin redirects and all write redirects are refused without forwarding credentials. Deployments that use external object-storage download redirects are unsupported. Metadata is bounded to 2 MiB, tool output to 16 MiB, tags to 64 KiB, assets to 2 GiB each, and the release inventory to the required packages and checksums. Writes are never automatically retried. Temporary tool output is withheld to avoid leaking signing/API credentials.
+The attachment metadata endpoint returns JSON, not asset bytes. Verification downloads the returned same-origin browser URL under the repository's release-download route or `/attachments/<id>`. Only same-origin HTTPS GET redirects are followed; cross-origin redirects and all write redirects are refused without forwarding credentials. Deployments that use external object-storage download redirects are unsupported. Metadata is bounded to 2 MiB, accepted captured tool output to 16 MiB, tags to 64 KiB, assets to 2 GiB each, and the release inventory to the required packages and checksums. The tool-output limit is checked after completion and at waiting intervals for labeled commands, not as a strict disk quota. Writes are never automatically retried. Temporary tool output is withheld to avoid leaking signing/API credentials; only curated progress events are displayed.
 
 Local tests do not attest the deployed Forgejo version, attachment configuration, upload size limits, account permissions, or device update behavior. Review those capabilities and perform separately approved integration checks before actual publication. No live API compatibility or publication is implied by local validation.

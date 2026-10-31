@@ -8,9 +8,11 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 import urllib.error
@@ -327,6 +329,209 @@ with patch.object(publisher, "main", side_effect=missing_fingerprint), \\
         self.assert_guidance(stderr.getvalue())
       else:
         self.assertEqual(stderr.getvalue(), "")
+
+
+class ProgressTests(unittest.TestCase):
+  def test_tool_success_and_failure_keep_both_streams_private(self):
+    sentinel = "PRIVATE_TOKEN_SIGNING_PASSWORD_DO_NOT_PRINT"
+    for label in (None, "JavaScript tests"):
+      for status in (0, 7):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        script = f"import sys; print('{sentinel}'); print('{sentinel}', file=sys.stderr); sys.exit({status})"
+        with self.subTest(label=label, status=status), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+          if status:
+            with self.assertRaises(model.Refusal) as error:
+              publisher.run([sys.executable, "-c", script], ROOT, progress_label=label)
+            self.assertNotIn(sentinel, str(error.exception))
+            if label:
+              self.assertIn(label, str(error.exception))
+          else:
+            result = publisher.run([sys.executable, "-c", script], ROOT, progress_label=label)
+            self.assertEqual(result.count(sentinel), 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertNotIn(sentinel, stderr.getvalue())
+        if label:
+          self.assertIn("Starting JavaScript tests", stderr.getvalue())
+          self.assertEqual("Completed JavaScript tests" in stderr.getvalue(), status == 0)
+
+  def test_quiet_command_and_input_return_machine_readable_output(self):
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr):
+      self.assertEqual(publisher.run([sys.executable, "-c", "pass"], ROOT,
+                                    progress_label="Rust tests"), "")
+      self.assertEqual(publisher.run([sys.executable, "-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"],
+                                    ROOT, input_data=b"machine-readable\n", progress_label="Rust tests"), "machine-readable\n")
+    self.assertIn("Completed Rust tests", stderr.getvalue())
+
+  def test_waiting_logs_are_flushed_to_redirected_file_before_completion(self):
+    with tempfile.TemporaryDirectory() as temporary:
+      directory = Path(temporary)
+      ready, release = directory / "ready", directory / "release"
+      # A real command blocks until the test observes a flushed waiting event.
+      child = ("from pathlib import Path; import time; "
+               f"Path({str(ready)!r}).touch()\n"
+               f"while not Path({str(release)!r}).exists(): time.sleep(0.01)\n")
+      script = ("import sys; sys.path.insert(0, 'scripts'); import release_publish as p; "
+                "p.WAIT_INTERVAL = 0.05; "
+                f"p.run([sys.executable, '-c', {child!r}], '.', timeout=5, progress_label='JavaScript tests')")
+      log_path = directory / "stderr"
+      with log_path.open("w") as log, subprocess.Popen([sys.executable, "-B", "-c", script], cwd=ROOT,
+                                                       stdout=subprocess.PIPE, stderr=log) as process:
+        try:
+          deadline = time.monotonic() + 5
+          while time.monotonic() < deadline:
+            logs = log_path.read_text()
+            if ready.exists() and "Waiting for JavaScript tests" in logs:
+              break
+            time.sleep(0.01)
+          else:
+            self.fail("No live waiting message before deadline")
+          self.assertIsNone(process.poll())
+          self.assertIn("Starting JavaScript tests", logs)
+          self.assertNotIn("Completed JavaScript tests", logs)
+          release.touch()
+          stdout, _ = process.communicate(timeout=5)
+          self.assertEqual(process.returncode, 0, log_path.read_text())
+          self.assertEqual(stdout, b"")
+          self.assertIn("Completed JavaScript tests", log_path.read_text())
+        finally:
+          release.touch()
+          if process.poll() is None:
+            process.kill()
+            process.wait()
+
+  def test_waiting_interval_uses_monotonic_deadline(self):
+    from unittest.mock import Mock
+    process = Mock(pid=123, returncode=0)
+    process.communicate.side_effect = [subprocess.TimeoutExpired("private", 15), (None, None)]
+    # stage start, runner start, first deadline, first wait, second deadline, completion.
+    with patch.object(publisher.time, "monotonic", side_effect=[0, 0, 0, 15, 15, 16]), \
+         patch.object(publisher.subprocess, "Popen", return_value=process), \
+         contextlib.redirect_stderr(io.StringIO()) as logs:
+      publisher.run(["private"], ROOT, timeout=1200, progress_label="Rust tests")
+    self.assertEqual([call.kwargs["timeout"] for call in process.communicate.call_args_list], [15, 15])
+    self.assertIn("Waiting for Rust tests (15s elapsed)", logs.getvalue())
+
+  def test_timeout_and_interruption_stop_process_group(self):
+    real_popen = subprocess.Popen
+    for interrupt in (False, True):
+      with self.subTest(interrupt=interrupt), tempfile.TemporaryDirectory() as temporary:
+        pid_file = Path(temporary) / "child"
+        child_script = "import time; time.sleep(30)"
+        script = ("import subprocess, sys, time; from pathlib import Path; "
+                  f"child = subprocess.Popen([sys.executable, '-c', {child_script!r}]); "
+                  f"Path({str(pid_file)!r}).write_text(str(child.pid)); time.sleep(30)")
+        launched = []
+
+        def launch(*args, **kwargs):
+          process = real_popen(*args, **kwargs)
+          launched.append(process)
+          deadline = time.monotonic() + 5
+          while not pid_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+          self.assertTrue(pid_file.exists(), "Child did not become ready")
+          if interrupt:
+            process.communicate = lambda **kwargs: (_ for _ in ()).throw(KeyboardInterrupt())
+          return process
+
+        logs = io.StringIO()
+        try:
+          with patch.object(publisher.subprocess, "Popen", side_effect=launch), contextlib.redirect_stderr(logs):
+            with self.assertRaises(KeyboardInterrupt if interrupt else model.Refusal) as error:
+              publisher.run([sys.executable, "-c", script], ROOT, timeout=10 if interrupt else 0.1,
+                            progress_label="Rust tests")
+          if not interrupt:
+            self.assertIn("Rust tests", str(error.exception))
+          self.assertEqual(launched[0].returncode, -signal.SIGKILL)
+          # Grandchildren may briefly remain as zombies until the container init reaps them.
+          child_pid = int(pid_file.read_text())
+          deadline = time.monotonic() + 5
+          while time.monotonic() < deadline:
+            stat = Path(f"/proc/{child_pid}/stat")
+            if not stat.exists() or stat.read_text().split()[2] == "Z":
+              break
+            time.sleep(0.01)
+          else:
+            self.fail("Descendant still running after cleanup")
+          self.assertNotIn("Completed Rust tests", logs.getvalue())
+        finally:
+          if launched:
+            try:
+              os.killpg(launched[0].pid, signal.SIGKILL)
+            except ProcessLookupError:
+              pass
+            launched[0].wait()
+
+  def test_labeled_output_limit_and_invalid_utf8_still_refused(self):
+    for script, message in (("import sys; sys.stdout.buffer.write(b'x' * (16 * 1024**2 + 1))", "Tool output limit exceeded"),
+                            ("import sys; sys.stdout.buffer.write(b'\\xff')", "private details withheld")):
+      with self.subTest(script=script), contextlib.redirect_stderr(io.StringIO()), self.assertRaisesRegex(model.Refusal, message):
+        publisher.run([sys.executable, "-c", script], ROOT, progress_label="Rust tests")
+
+  def test_unavailable_tool_and_untrusted_label_keep_details_private(self):
+    logs = io.StringIO()
+    with contextlib.redirect_stderr(logs), self.assertRaises(model.Refusal) as error:
+      publisher.run(["/missing/PRIVATE_TOOL_PATH"], ROOT, progress_label="Rust tests")
+    self.assertIn("Rust tests", str(error.exception))
+    self.assertNotIn("PRIVATE", logs.getvalue() + str(error.exception))
+    with contextlib.redirect_stderr(logs), patch.object(publisher.subprocess, "Popen") as launch, \
+         self.assertRaises(model.Refusal) as error:
+      publisher.run(["unused"], ROOT, progress_label="PRIVATE_TOKEN_AS_LABEL")
+    launch.assert_not_called()
+    self.assertNotIn("PRIVATE", logs.getvalue() + str(error.exception))
+
+  def test_cli_failure_and_interruption_have_no_success(self):
+    for fault, expected in ((model.Refusal("Rust tests: Tool failed"), 1), (KeyboardInterrupt(), 130)):
+      stdout, stderr = io.StringIO(), io.StringIO()
+      with patch.object(publisher, "main", side_effect=fault), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        self.assertEqual(publisher.cli(), expected)
+      self.assertEqual(stdout.getvalue(), "")
+      self.assertIn("Inspect partial state without rollback or blind retries", stderr.getvalue())
+
+  def test_publication_logs_and_read_only_verification_are_ordered(self):
+    with Fixture() as f:
+      stdout, logs = io.StringIO(), io.StringIO()
+      with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(logs):
+        f.publish()
+      expected = ["Starting source validation", "Completed source validation", "Starting Forgejo preflight",
+                  "Starting remote release inspection", "Starting local tag creation", "Starting tag push",
+                  "Starting release creation", "Starting asset upload 1/2: ntr.apk",
+                  "Completed asset upload 1/2: ntr.apk", "Starting asset upload 2/2: ntr.apk.sha256",
+                  "Starting published release verification", "Starting asset verification 1/2: ntr.apk",
+                  "Starting asset verification 2/2: ntr.apk.sha256", "Completed remote stability checks",
+                  "Completed published release verification"]
+      offsets = [logs.getvalue().index(event) for event in expected]
+      self.assertEqual(offsets, sorted(offsets))
+      self.assertIn("Release verified:", stdout.getvalue())
+      before = list(f.api.writes)
+      logs = io.StringIO()
+      with contextlib.redirect_stderr(logs), contextlib.redirect_stdout(io.StringIO()), \
+           patch.object(publisher, "source", f.source), \
+           patch.object(publisher, "build", side_effect=AssertionError("Unexpected build")), \
+           patch.object(publisher, "signing_copy", side_effect=AssertionError("Unexpected signing access")):
+        publisher.publish(f.root, f.config, f.version, f.notes, ["android"], f.api)
+      self.assertIn("Starting existing-release read-only verification; no build or remote writes", logs.getvalue())
+      self.assertNotIn("Starting asset upload", logs.getvalue())
+      self.assertEqual(f.api.writes, before)
+
+  def test_failed_upload_reports_stage_without_success_or_raw_response(self):
+    with Fixture() as f:
+      f.api.fault = "upload-lost"
+      stdout, logs = io.StringIO(), io.StringIO()
+      with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(logs), self.assertRaisesRegex(model.Refusal, "asset upload 1/2"):
+        f.publish()
+      self.assertEqual(stdout.getvalue(), "")
+      self.assertNotIn("Completed asset upload 1/2", logs.getvalue())
+      self.assertNotIn("Release verified", logs.getvalue())
+    config, _, _ = model.settings(ROOT)
+    api = publisher.Forgejo(config, "PRIVATE_API_TOKEN")
+    error = urllib.error.HTTPError(api.base, 500, "PRIVATE_RESPONSE", {}, io.BytesIO(b"PRIVATE_RESPONSE"))
+    logs = io.StringIO()
+    with contextlib.redirect_stderr(logs), patch.object(api.opener, "open", side_effect=error), \
+         self.assertRaises(model.Refusal) as caught:
+      with publisher.stage("Forgejo preflight"):
+        api.preflight(config)
+    self.assertNotIn("PRIVATE", logs.getvalue() + str(caught.exception))
 
 
 class PublicationTests(unittest.TestCase):
@@ -699,7 +904,8 @@ elif tool == "npm" and "tauri" in args:
       stale = f.root / "release" / f.version / "android"
       stale.mkdir(parents=True)
       (stale / "stale.apk").write_bytes(b"stale ignored artifact")
-      with patch.dict(os.environ, self.tools(f)):
+      progress_logs = io.StringIO()
+      with patch.dict(os.environ, self.tools(f)), contextlib.redirect_stderr(progress_logs):
         with publisher.build(f.root, f.config, f.version, f.commit, ["desktop", "android"]) as (entries, paths):
           self.assertEqual(len(entries), 8)
           self.assertEqual(paths["ntr.apk"].read_bytes(), b"fresh signed test apk")
@@ -712,6 +918,34 @@ elif tool == "npm" and "tauri" in args:
       self.assertIn("npm:test", log)
       self.assertEqual((stale / "stale.apk").read_bytes(), b"stale ignored artifact")
       self.assertEqual((f.root / "android-signing/release.keystore").read_text(), "secret")
+      expected = ["Starting isolated checkout creation", "Starting dependency installation", "Starting JavaScript tests",
+                  "Starting Rust tests", "Starting private Android signing setup", "Starting build (android, desktop)",
+                  "Starting artifact validation and checksums", "Starting Android certificate verification"]
+      offsets = [progress_logs.getvalue().index(event) for event in expected]
+      self.assertEqual(offsets, sorted(offsets))
+      self.assertNotIn("Starting desktop build", progress_logs.getvalue())
+      self.assertNotIn("secret", progress_logs.getvalue())
+      self.assertNotIn(str(f.base), progress_logs.getvalue())
+
+  def test_standalone_target_markers_and_failed_build(self):
+    for missing in (False, True):
+      with self.subTest(missing=missing), Fixture() as f:
+        SigningTests().prepare(f.root)
+        env = {**os.environ, **self.tools(f)}
+        if missing:
+          env["NTR_TEST_MISSING"] = ".rpm"
+        result = subprocess.run(["bash", "scripts/build-release.sh", "desktop", "android"], cwd=f.root,
+                                env=env, capture_output=True, text=True)
+        self.assertIn("Release: Starting desktop build", result.stderr)
+        if missing:
+          self.assertNotEqual(result.returncode, 0)
+          self.assertNotIn("Completed desktop build", result.stderr)
+          self.assertNotIn("Starting Android build", result.stderr)
+        else:
+          self.assertEqual(result.returncode, 0, result.stderr)
+          events = ["Starting desktop build", "Completed desktop build", "Starting Android build", "Completed Android build"]
+          offsets = [result.stderr.index(event) for event in events]
+          self.assertEqual(offsets, sorted(offsets))
 
   def test_isolated_setup_cannot_mutate_tracked_source(self):
     with Fixture() as f:

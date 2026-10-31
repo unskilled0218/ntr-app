@@ -7,11 +7,13 @@ import http.client
 import os
 from pathlib import Path
 import re
+import signal
 import shutil
 import ssl
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -28,15 +30,83 @@ FINGERPRINT_GUIDANCE = (
 )
 
 
-def run(args, cwd, timeout=120, input_data=None):
+WAIT_INTERVAL = 15
+BUILD_LABELS = {
+  ("android",): "build (android)",
+  ("desktop",): "build (desktop)",
+  ("android", "desktop"): "build (android, desktop)",
+}
+TOOL_LABELS = {"dependency installation", "JavaScript tests", "Rust tests", *BUILD_LABELS.values()}
+
+
+def progress(message):
+  """Only pass curated labels or validated manifest names, never tool output."""
+  print(f"Release: {message}", file=sys.stderr, flush=True)
+
+
+@contextlib.contextmanager
+def stage(label):
+  progress(f"Starting {label}")
+  started = time.monotonic()
+  try:
+    yield
+  except Refusal as error:
+    raise Refusal(f"{label}: {error}") from None
+  except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException):
+    raise Refusal(f"{label}: operation failed; private details withheld") from None
+  else:
+    progress(f"Completed {label} ({int(time.monotonic() - started)}s)")
+
+
+def run(args, cwd, timeout=120, input_data=None, progress_label=None):
+  if progress_label is None:
+    return captured_run(args, cwd, timeout, input_data)
+  require(progress_label in TOOL_LABELS, "Invalid tool progress label")
+  with stage(progress_label):
+    return captured_run(args, cwd, timeout, input_data, progress_label)
+
+
+def captured_run(args, cwd, timeout, input_data, progress_label=None):
   """Keep tool output private; only return bounded captured output to callers."""
   with tempfile.TemporaryFile() as output:
     try:
-      result = subprocess.run(args, cwd=cwd, input=input_data, stdout=output,
-                              stderr=subprocess.STDOUT, timeout=timeout, check=False)
+      if progress_label is None:
+        result = subprocess.run(args, cwd=cwd, input=input_data, stdout=output,
+                                stderr=subprocess.STDOUT, timeout=timeout, check=False)
+        returncode = result.returncode
+      else:
+        started = time.monotonic()
+        process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE if input_data is not None else None,
+                                   stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+          while True:
+            remaining = timeout - (time.monotonic() - started)
+            if remaining <= 0:
+              raise subprocess.TimeoutExpired(args, timeout)
+            try:
+              process.communicate(input=input_data, timeout=min(WAIT_INTERVAL, remaining))
+              break
+            except subprocess.TimeoutExpired:
+              input_data = None
+              require(os.fstat(output.fileno()).st_size <= 16 * 1024**2, "Tool output limit exceeded")
+              elapsed = time.monotonic() - started
+              if elapsed >= timeout:
+                raise
+              progress(f"Waiting for {progress_label} ({int(elapsed)}s elapsed)")
+          returncode = process.returncode
+        except BaseException:
+          # The command owns its session; stop descendants too, even if the parent exited.
+          try:
+            os.killpg(process.pid, signal.SIGKILL)
+          except ProcessLookupError:
+            pass
+          process.wait()
+          raise
     except (OSError, subprocess.TimeoutExpired) as error:
-      raise Refusal(f"Tool unavailable or timed out: {Path(args[0]).name}") from error
-    require(result.returncode == 0, f"Tool failed: {Path(args[0]).name}; output withheld to protect credentials")
+      name = progress_label or Path(args[0]).name
+      raise Refusal(f"Tool unavailable or timed out: {name}") from error
+    name = progress_label or Path(args[0]).name
+    require(returncode == 0, f"Tool failed: {name}; output withheld to protect credentials")
     require(output.tell() <= 16 * 1024**2, "Tool output limit exceeded")
     output.seek(0)
     return output.read().decode("utf-8", errors="strict")
@@ -245,7 +315,7 @@ def release_check(api, record, tag, expected, notes):
     by_name[asset["name"]] = asset
     ids.add(asset["id"])
   require(set(by_name) == {e["name"] for e in expected["manifest"]}, "Remote inventory differs from original manifest")
-  for entry in expected["manifest"]:
+  for index, entry in enumerate(expected["manifest"], 1):
     asset = by_name[entry["name"]]
     require(type(asset.get("size")) is int and asset["size"] == entry["size"], "Remote asset size mismatch")
     # The asset API returns JSON metadata, not bytes. Download the attachment URL.
@@ -255,7 +325,8 @@ def release_check(api, record, tag, expected, notes):
     repository = urllib.parse.urlsplit(api.base).path.removeprefix("/api/v1/repos/")
     require(parsed.path.startswith(f"/{repository}/releases/download/{tag}/")
             or re.fullmatch(r"/attachments/[A-Za-z0-9-]+", parsed.path), "Unsupported attachment download route")
-    require(api.asset_digest(url, entry["size"]) == entry["sha256"], "Remote asset digest mismatch")
+    with stage(f"asset verification {index}/{len(expected['manifest'])}: {entry['name']}"):
+      require(api.asset_digest(url, entry["size"]) == entry["sha256"], "Remote asset digest mismatch")
   return sorted((a["id"], a["name"], a["size"], a["browser_download_url"]) for a in assets)
 
 
@@ -267,14 +338,16 @@ def stable_release(record):
 def verify_complete(root, api, tag, observed, record, expected, notes):
   require(observed and record is not None, "Partial release state; inspect without rollback")
   require(observed[1] == expected["source"], "Tag source differs from requested source")
-  payload = payload_read(read_tag(root, tag, observed), expected)
+  with stage("tag identity verification"):
+    payload = payload_read(read_tag(root, tag, observed), expected)
   inventory = release_check(api, record, tag, payload, notes)
-  after = api.assets(record["id"])
-  require(sorted((a["id"], a["name"], a["size"], a["browser_download_url"]) for a in after) == inventory,
-          "Asset inventory changed during verification")
-  # Download counters/timestamps may change as a result of our own GETs.
-  require(remote_tag(root, tag) == observed and stable_release(api.release(tag)) == stable_release(record),
-          "Release changed during verification")
+  with stage("remote stability checks"):
+    after = api.assets(record["id"])
+    require(sorted((a["id"], a["name"], a["size"], a["browser_download_url"]) for a in after) == inventory,
+            "Asset inventory changed during verification")
+    # Download counters/timestamps may change as a result of our own GETs.
+    require(remote_tag(root, tag) == observed and stable_release(api.release(tag)) == stable_release(record),
+            "Release changed during verification")
 
 
 def apk_check(path, fingerprint, cwd):
@@ -310,64 +383,85 @@ def build(root, config, version, commit, targets):
     require(config["android_certificate_sha256"] is not None, "Set trusted Android certificate fingerprint before building. " + FINGERPRINT_GUIDANCE)
   with tempfile.TemporaryDirectory(prefix="ntr-release-") as temporary:
     checkout = Path(temporary) / "source"
-    git(root, "clone", "--no-hardlinks", "--no-local", "--no-checkout", str(root), str(checkout))
-    git(checkout, "checkout", "--detach", commit)
-    print("Release phase: isolated tests and build", file=sys.stderr)
-    run(["npm", "ci"], checkout, 1200)
-    unchanged(checkout, commit)
-    run(["npm", "test"], checkout, 1200)
-    run(["cargo", "test", "--locked", "--lib", "--manifest-path", "src-tauri/Cargo.toml"], checkout, 1200)
-    unchanged(checkout, commit)
+    with stage("isolated checkout creation"):
+      git(root, "clone", "--no-hardlinks", "--no-local", "--no-checkout", str(root), str(checkout))
+      git(checkout, "checkout", "--detach", commit)
+    run(["npm", "ci"], checkout, 1200, progress_label="dependency installation")
+    with stage("source checks after dependency installation"):
+      unchanged(checkout, commit)
+    run(["npm", "test"], checkout, 1200, progress_label="JavaScript tests")
+    run(["cargo", "test", "--locked", "--lib", "--manifest-path", "src-tauri/Cargo.toml"], checkout, 1200,
+        progress_label="Rust tests")
+    with stage("source checks after tests"):
+      unchanged(checkout, commit)
     if "android" in targets:
-      signing_copy(root, checkout)
-    run(["bash", "scripts/build-release.sh", *targets], checkout, 7200)
-    unchanged(checkout, commit)
+      with stage("private Android signing setup"):
+        signing_copy(root, checkout)
+    run(["bash", "scripts/build-release.sh", *targets], checkout, 7200,
+        progress_label=BUILD_LABELS[tuple(sorted(targets))])
+    with stage("source checks after build"):
+      unchanged(checkout, commit)
     output = checkout / "release" / version
-    entries, paths = manifest(output, targets)
+    with stage("artifact validation and checksums"):
+      entries, paths = manifest(output, targets)
     for path in paths.values():
       if path.suffix == ".apk":
-        apk_check(path, config["android_certificate_sha256"], checkout)
+        with stage("Android certificate verification"):
+          apk_check(path, config["android_certificate_sha256"], checkout)
     yield entries, paths
 
 
 def publish(root, config, version, notes, targets, api):
-  commit = source(root, config)
-  expected = identity(root, config, version, commit, targets)
+  with stage("source validation"):
+    commit = source(root, config)
+    expected = identity(root, config, version, commit, targets)
   tag = "v" + version
-  api.preflight(config)
-  observed, record = remote_tag(root, tag), api.release(tag)
+  with stage("Forgejo preflight"):
+    api.preflight(config)
+  with stage("remote release inspection"):
+    observed, record = remote_tag(root, tag), api.release(tag)
   if observed or record is not None:
-    verify_complete(root, api, tag, observed, record, expected, notes)
-    current_config, current_version, _ = settings(root)
-    require(source(root, current_config) == commit and identity(root, current_config, current_version, commit, targets) == expected,
-            "Source/settings changed during verification")
+    with stage("existing-release read-only verification; no build or remote writes"):
+      verify_complete(root, api, tag, observed, record, expected, notes)
+    with stage("source recheck after verification"):
+      current_config, current_version, _ = settings(root)
+      require(source(root, current_config) == commit and identity(root, current_config, current_version, commit, targets) == expected,
+              "Source/settings changed during verification")
     print(f"Existing release verified: {tag}; no build or remote writes")
     return
-  require(not git(root, "tag", "--list", tag), "Unpublished local tag exists; inspect without rollback")
+  with stage("local tag inspection"):
+    require(not git(root, "tag", "--list", tag), "Unpublished local tag exists; inspect without rollback")
   with build(root, config, version, commit, targets) as (entries, paths):
-    require(source(root, config) == commit and identity(root, *settings(root)[:2], commit, targets) == expected, "Source/settings changed during build")
-    require(remote_tag(root, tag) is None and api.release(tag) is None, "Remote release appeared during build")
-    payload = {**expected, "manifest": entries}
-    payload_read(canonical(payload), expected)
-    print("Release phase: publication; failures may leave partial remote state", file=sys.stderr)
-    git(root, "-c", "tag.gpgSign=false", "tag", "-a", "--cleanup=verbatim", tag, commit, "-m", canonical(payload))
-    oid = git(root, "rev-parse", f"refs/tags/{tag}")
-    git(root, "-c", "push.followTags=false", "push", "--no-follow-tags", "origin", f"refs/tags/{tag}:refs/tags/{tag}")
-    require(remote_tag(root, tag) == (oid, commit) and api.release(tag) is None, "Tag/release changed before release creation")
-    record = api.json(api.base + "/releases", "POST", {"tag_name": tag, "target_commitish": commit,
-                      "name": tag, "body": notes, "draft": False, "prerelease": False})
-    release_metadata_check(record, tag, commit, notes)
+    with stage("source and remote rechecks before publication"):
+      require(source(root, config) == commit and identity(root, *settings(root)[:2], commit, targets) == expected, "Source/settings changed during build")
+      require(remote_tag(root, tag) is None and api.release(tag) is None, "Remote release appeared during build")
+      payload = {**expected, "manifest": entries}
+      payload_read(canonical(payload), expected)
+    progress("Publication; failures may leave partial remote state")
+    with stage("local tag creation"):
+      git(root, "-c", "tag.gpgSign=false", "tag", "-a", "--cleanup=verbatim", tag, commit, "-m", canonical(payload))
+      oid = git(root, "rev-parse", f"refs/tags/{tag}")
+    with stage("tag push"):
+      git(root, "-c", "push.followTags=false", "push", "--no-follow-tags", "origin", f"refs/tags/{tag}:refs/tags/{tag}")
+    with stage("remote recheck before release creation"):
+      require(remote_tag(root, tag) == (oid, commit) and api.release(tag) is None, "Tag/release changed before release creation")
+    with stage("release creation"):
+      record = api.json(api.base + "/releases", "POST", {"tag_name": tag, "target_commitish": commit,
+                        "name": tag, "body": notes, "draft": False, "prerelease": False})
+      release_metadata_check(record, tag, commit, notes)
     uploaded = set()
-    for name, path in sorted(paths.items()):
-      require(remote_tag(root, tag) == (oid, commit), "Tag changed before asset write")
-      require(stable_release(api.release(tag)) == stable_release(record), "Release metadata changed before asset write")
-      remote_assets = api.assets(record["id"])
-      require(len(remote_assets) == len(uploaded) and {a.get("name") for a in remote_assets} == uploaded,
-              "Asset inventory changed before upload")
-      require(file_digest(path) == next(e["sha256"] for e in entries if e["name"] == name), "Artifact changed before upload")
-      api.upload(record["id"], path)
-      uploaded.add(name)
-    verify_complete(root, api, tag, (oid, commit), api.release(tag), expected, notes)
+    for index, (name, path) in enumerate(sorted(paths.items()), 1):
+      with stage(f"asset upload {index}/{len(paths)}: {name}"):
+        require(remote_tag(root, tag) == (oid, commit), "Tag changed before asset write")
+        require(stable_release(api.release(tag)) == stable_release(record), "Release metadata changed before asset write")
+        remote_assets = api.assets(record["id"])
+        require(len(remote_assets) == len(uploaded) and {a.get("name") for a in remote_assets} == uploaded,
+                "Asset inventory changed before upload")
+        require(file_digest(path) == next(e["sha256"] for e in entries if e["name"] == name), "Artifact changed before upload")
+        api.upload(record["id"], path)
+        uploaded.add(name)
+    with stage("published release verification"):
+      verify_complete(root, api, tag, (oid, commit), api.release(tag), expected, notes)
     print(f"Release verified: {tag}")
 
 
@@ -378,22 +472,25 @@ def main():
   args = parser.parse_args()
   root = Path(__file__).resolve().parent.parent
   os.umask(0o077)
-  environment_check()
-  config, version, notes = settings(root)
-  targets = args.targets or config["targets"]
-  require(len(set(targets)) == len(targets) and all(t in config["targets"] for t in targets), "Invalid/duplicate target selection")
+  with contextlib.nullcontext() if args.validate else stage("local configuration checks"):
+    environment_check()
+    config, version, notes = settings(root)
+    targets = args.targets or config["targets"]
+    require(len(set(targets)) == len(targets) and all(t in config["targets"] for t in targets), "Invalid/duplicate target selection")
   if args.validate:
     require(not args.targets, "--validate does not accept targets")
     print("Local configuration and version mirrors valid; no credentials or network used")
     if config["android_certificate_sha256"] is None:
       print("Android publication blocked until trusted certificate fingerprint is configured. " + FINGERPRINT_GUIDANCE, file=sys.stderr)
     return
-  token_path = private_file(os.environ.get("GIT_TOKEN", config["token_file"]), outside=root)
-  require(token_path.stat().st_size <= 4096, "Token file too large")
-  token = token_path.read_text().strip()
-  require(re.fullmatch(r"[A-Za-z0-9_-]{16,4096}", token), "Invalid token file content")
-  if "GIT_USERNAME" in os.environ:
-    require(os.environ["GIT_USERNAME"] == config["username"], "GIT_USERNAME must match configured owner")
+  with stage("private credential checks"):
+    token_path = private_file(os.environ.get("GIT_TOKEN", config["token_file"]), outside=root)
+    require(token_path.stat().st_size <= 4096, "Token file too large")
+    token = token_path.read_text().strip()
+    require(re.fullmatch(r"[A-Za-z0-9_-]{16,4096}", token), "Invalid token file content")
+    if "GIT_USERNAME" in os.environ:
+      require(os.environ["GIT_USERNAME"] == config["username"], "GIT_USERNAME must match configured owner")
+  progress("Acquiring local release lock")
   lock_path = Path(git(root, "rev-parse", "--git-path", "app-release.lock"))
   if not lock_path.is_absolute():
     lock_path = root / lock_path
@@ -410,10 +507,13 @@ def cli():
   try:
     main()
     return 0
+  except KeyboardInterrupt:
+    print("Release stopped: interrupted. Inspect partial state without rollback or blind retries.", file=sys.stderr, flush=True)
+    return 130
   except (Refusal, OSError, ValueError, KeyError, TypeError, http.client.HTTPException) as error:
     # Do not echo exception text from third-party tools, URLs, or remote bodies.
     message = str(error) if isinstance(error, Refusal) else "Invalid local metadata or failed operation"
-    print(f"Release stopped: {message}. Inspect partial state without rollback or blind retries.", file=sys.stderr)
+    print(f"Release stopped: {message}. Inspect partial state without rollback or blind retries.", file=sys.stderr, flush=True)
     return 1
 
 
