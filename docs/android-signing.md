@@ -4,6 +4,7 @@
 - [Existing key migration](#existing-key-migration)
 - [First key creation](#first-key-creation)
 - [Trusted certificate](#trusted-certificate)
+- [Missing fingerprint error](#missing-fingerprint-error)
 - [Builds and backups](#builds-and-backups)
 
 ## Local storage
@@ -41,6 +42,18 @@ After independently confirming that the key is the existing trusted app identity
 ```
 
 Set `android_certificate_sha256` in `scripts/release.json` to the lowercase 64-digit SHA-256 fingerprint and commit that public value. It starts as `null` because no trusted key was present when this workflow was added. Do not infer or update the expected fingerprint automatically from whichever key happens to be supplied during publication. Every new Android release must pass `apksigner verify --verbose --print-certs` and match the configured certificate before remote writes. Intentional fingerprint changes require explicit approval and an update-compatibility decision.
+
+## Missing fingerprint error
+
+If `bash scripts/release.sh` stops with `Set trusted Android certificate fingerprint before building`, follow the printed helper command and documentation path. From the app repository root:
+
+```sh
+bash scripts/android-keystore.sh --fingerprint
+```
+
+The command needs your prepared existing signing files and `keytool`. It displays the public fingerprint only; it does not update `scripts/release.json`. Follow [trusted certificate setup](#trusted-certificate), confirm the existing trusted signing identity, then set `android_certificate_sha256` and commit/push that public configuration change before publication. Keep the keystore and passwords local and gitignored.
+
+If signing files are not prepared, use [existing key migration](#existing-key-migration) when an existing key is available. [First key creation](#first-key-creation) is only for a genuinely new signing identity, not a replacement for an unavailable existing key. Release errors and `--validate` warnings show guidance without running these setup operations or reading your keys.
 
 ## Builds and backups
 

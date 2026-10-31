@@ -20,6 +20,14 @@ from release_model import (Refusal, canonical, decode, digest, file_digest, iden
                            manifest, payload_read, private_file, require, settings)
 
 
+FINGERPRINT_GUIDANCE = (
+  "From the app repository root, run `bash scripts/android-keystore.sh --fingerprint` "
+  "for your existing trusted signing key, then set `android_certificate_sha256` in "
+  "`scripts/release.json` after confirming that identity. "
+  "See `docs/android-signing.md#trusted-certificate` for signing-file setup and trust guidance."
+)
+
+
 def run(args, cwd, timeout=120, input_data=None):
   """Keep tool output private; only return bounded captured output to callers."""
   with tempfile.TemporaryFile() as output:
@@ -270,7 +278,7 @@ def verify_complete(root, api, tag, observed, record, expected, notes):
 
 
 def apk_check(path, fingerprint, cwd):
-  require(fingerprint is not None, "Set trusted android_certificate_sha256 before Android publication")
+  require(fingerprint is not None, "Set trusted android_certificate_sha256 before Android publication. " + FINGERPRINT_GUIDANCE)
   output = run(["apksigner", "verify", "--verbose", "--print-certs", str(path)], cwd)
   signers = re.findall(r"^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]{64})$", output, re.MULTILINE)
   require([s.lower() for s in signers] == [fingerprint], "APK signing certificate mismatch")
@@ -299,7 +307,7 @@ def build(root, config, version, commit, targets):
   for tool in ("npm", "node", "cargo") + (("apksigner",) if "android" in targets else ()):
     require(shutil.which(tool), f"Install required build tool: {tool}")
   if "android" in targets:
-    require(config["android_certificate_sha256"] is not None, "Set trusted Android certificate fingerprint before building")
+    require(config["android_certificate_sha256"] is not None, "Set trusted Android certificate fingerprint before building. " + FINGERPRINT_GUIDANCE)
   with tempfile.TemporaryDirectory(prefix="ntr-release-") as temporary:
     checkout = Path(temporary) / "source"
     git(root, "clone", "--no-hardlinks", "--no-local", "--no-checkout", str(root), str(checkout))
@@ -378,7 +386,7 @@ def main():
     require(not args.targets, "--validate does not accept targets")
     print("Local configuration and version mirrors valid; no credentials or network used")
     if config["android_certificate_sha256"] is None:
-      print("Android publication blocked until trusted certificate fingerprint is configured", file=sys.stderr)
+      print("Android publication blocked until trusted certificate fingerprint is configured. " + FINGERPRINT_GUIDANCE, file=sys.stderr)
     return
   token_path = private_file(os.environ.get("GIT_TOKEN", config["token_file"]), outside=root)
   require(token_path.stat().st_size <= 4096, "Token file too large")
@@ -398,11 +406,16 @@ def main():
     publish(root, config, version, notes, sorted(targets), Forgejo(config, token))
 
 
-if __name__ == "__main__":
+def cli():
   try:
     main()
+    return 0
   except (Refusal, OSError, ValueError, KeyError, TypeError, http.client.HTTPException) as error:
     # Do not echo exception text from third-party tools, URLs, or remote bodies.
     message = str(error) if isinstance(error, Refusal) else "Invalid local metadata or failed operation"
     print(f"Release stopped: {message}. Inspect partial state without rollback or blind retries.", file=sys.stderr)
-    sys.exit(1)
+    return 1
+
+
+if __name__ == "__main__":
+  sys.exit(cli())
