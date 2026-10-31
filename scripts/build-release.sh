@@ -24,6 +24,7 @@ collect_one() {
   cp -- "${files[0]}" "$destination/"
 }
 if [[ ${selected[desktop]+yes} ]]; then
+  echo 'Release: Starting desktop build' >&2
   [[ ! -e src-tauri/target/release/bundle ]] || { echo 'Desktop bundles already exist; use a fresh checkout' >&2; exit 1; }
   npm run tauri build
   mkdir -p "release/$version/desktop"
@@ -31,8 +32,10 @@ if [[ ${selected[desktop]+yes} ]]; then
     read -r directory pattern <<< "$pair"
     collect_one "src-tauri/target/release/bundle/$directory" "$pattern" "release/$version/desktop"
   done
+  echo 'Release: Completed desktop build' >&2
 fi
 if [[ ${selected[android]+yes} ]]; then
+  echo 'Release: Starting Android build' >&2
   [[ ! -e src-tauri/gen/android/app/build/outputs ]] || { echo 'Android outputs already exist; use a fresh checkout' >&2; exit 1; }
   [[ -f android-signing/release.keystore && -f android-signing/keystore.properties ]] || { echo 'Prepare android-signing files first' >&2; exit 1; }
   # Tauri prepares only ignored support files for the already tracked Android project.
@@ -40,5 +43,6 @@ if [[ ${selected[android]+yes} ]]; then
   mkdir -p "release/$version/android"
   collect_one src-tauri/gen/android/app/build/outputs/apk/universal/release '*.apk' "release/$version/android"
   [[ ! -e src-tauri/gen/android/app/build/outputs/bundle ]] || { echo 'Unexpected AAB output' >&2; exit 1; }
+  echo 'Release: Completed Android build' >&2
 fi
 echo "Build artifacts: release/$version"

@@ -5,7 +5,7 @@
 
 A local-first task manager and Markdown notes app built with Tauri, React, and TypeScript. Runs on desktop and Android, using local files or an optional `my-ntr-server` connection.
 
-Version `0.15.29` adds direct script and documentation guidance for [missing Android signing fingerprints](docs/android-signing.md#missing-fingerprint-error). See [release notes](docs/releases/0.15.29.md); local validation does not publish anything.
+Version `0.15.30` adds [live release progress logs](docs/forgejo-publishing.md#progress-logs) while keeping raw tool output private. See [release notes](docs/releases/0.15.30.md); local validation does not publish anything.
 
 ## Quick start
 
