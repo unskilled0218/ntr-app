@@ -246,6 +246,89 @@ class LocalContractTests(unittest.TestCase):
         publisher.environment_check()
 
 
+class FingerprintGuidanceTests(unittest.TestCase):
+  def assert_guidance(self, text):
+    for expected in ("app repository root", "bash scripts/android-keystore.sh --fingerprint",
+                     "docs/android-signing.md#trusted-certificate", "android_certificate_sha256",
+                     "scripts/release.json", "trusted signing key"):
+      self.assertIn(expected, text)
+
+  @contextlib.contextmanager
+  def prohibit_setup_and_publication(self):
+    with contextlib.ExitStack() as stack:
+      forbidden = [stack.enter_context(patch.object(publisher, name, side_effect=AssertionError(f"Unexpected {name}")))
+                   for name in ("run", "signing_copy", "private_file", "Forgejo")]
+      yield
+      for operation in forbidden:
+        operation.assert_not_called()
+
+  def test_build_refusal_points_to_script_and_docs_without_running_setup(self):
+    with self.prohibit_setup_and_publication(), patch.object(publisher.shutil, "which", return_value="/unused/tool"):
+      with self.assertRaises(model.Refusal) as error:
+        with publisher.build(ROOT, {"android_certificate_sha256": None}, "unused", "unused", ["android"]):
+          self.fail("An unset fingerprint must stop before building")
+    self.assertTrue(str(error.exception).startswith("Set trusted Android certificate fingerprint before building"))
+    self.assert_guidance(str(error.exception))
+
+  def test_apk_refusal_points_to_script_and_docs_without_reading_key_or_apk(self):
+    with self.prohibit_setup_and_publication(), self.assertRaises(model.Refusal) as error:
+      publisher.apk_check(Path("nonexistent.apk"), None, ROOT)
+    self.assertTrue(str(error.exception).startswith("Set trusted android_certificate_sha256 before Android publication"))
+    self.assert_guidance(str(error.exception))
+
+  def test_cli_refusal_prints_guidance_to_stderr_and_exits_nonzero(self):
+    # Execute the real CLI error wrapper, replacing main only to avoid live preflight.
+    program = f'''
+import sys
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0, {str(ROOT / "scripts")!r})
+import release_publish as publisher
+def missing_fingerprint():
+  publisher.apk_check(Path("nonexistent.apk"), None, Path.cwd())
+with patch.object(publisher, "main", side_effect=missing_fingerprint), \\
+     patch.object(publisher, "run", side_effect=AssertionError("Unexpected tool invocation")), \\
+     patch.object(publisher, "private_file", side_effect=AssertionError("Unexpected secret access")), \\
+     patch.object(publisher, "Forgejo", side_effect=AssertionError("Unexpected network access")):
+  sys.exit(publisher.cli())
+'''
+    result = subprocess.run([sys.executable, "-B", "-c", program], cwd=ROOT, capture_output=True, text=True)
+    self.assertEqual(result.returncode, 1, result.stderr)
+    self.assertEqual(result.stdout, "")
+    self.assertIn("Release stopped: Set trusted android_certificate_sha256 before Android publication", result.stderr)
+    self.assertIn("Inspect partial state without rollback or blind retries.", result.stderr)
+    self.assert_guidance(result.stderr)
+
+  def test_validate_null_fingerprint_warns_offline_and_still_succeeds(self):
+    self.check_validation(None, warns=True)
+
+  def test_validate_configured_fingerprint_does_not_warn(self):
+    self.check_validation("a" * 64, warns=False)
+
+  def check_validation(self, fingerprint, warns):
+    with Fixture() as f:
+      path = f.root / "scripts/release.json"
+      config = json.loads(path.read_text())
+      config["android_certificate_sha256"] = fingerprint
+      path.write_text(json.dumps(config))
+      before = path.read_bytes()
+      stdout, stderr = io.StringIO(), io.StringIO()
+      with self.prohibit_setup_and_publication(), \
+           patch.object(publisher, "__file__", str(f.root / "scripts/release_publish.py")), \
+           patch.object(sys, "argv", ["release_publish.py", "--validate"]), \
+           contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        status = publisher.cli()
+      self.assertEqual(status, 0, stderr.getvalue())
+      self.assertIn("no credentials or network used", stdout.getvalue())
+      self.assertEqual(path.read_bytes(), before)
+      self.assertFalse((f.root / "android-signing").exists())
+      if warns:
+        self.assertIn("Android publication blocked until trusted certificate fingerprint is configured", stderr.getvalue())
+        self.assert_guidance(stderr.getvalue())
+      else:
+        self.assertEqual(stderr.getvalue(), "")
+
+
 class PublicationTests(unittest.TestCase):
   def test_publish_and_repeat_without_build_or_signing(self):
     with Fixture() as f:
