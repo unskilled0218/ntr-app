@@ -29,6 +29,7 @@ beforeEach(() => {
     if (command === "server_fetch") {
       const req = (args as { req: { url: string; method: string; body: string } }).req;
       const path = new URL(req.url).pathname;
+      if (path === "/api/capabilities") return { ok: false, status: 404, status_text: "Not Found", body: "" };
       attempted.push(`${req.method} ${path}`);
       if (path === failPath) throw unavailable;
       if (req.method !== "GET") {

@@ -36,6 +36,7 @@ it("detects missed changes after reconnect, retries failures, and keeps both pan
     if (command === "get_note") return "base";
     if (command === "get_raw") return "start task\n";
     if (command !== "server_fetch") return;
+    if ((args as { req: { url: string } }).req.url.endsWith("/api/capabilities")) return { ok: false, status: 404, status_text: "Not Found", body: "" };
     const { req } = args as { req: { url: string } };
     let body: string;
     const path = new URL(req.url).pathname;

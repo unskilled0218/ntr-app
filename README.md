@@ -5,7 +5,7 @@
 
 A local-first task manager and Markdown notes app built with Tauri, React, and TypeScript. Runs on desktop and Android, using local files or an optional `my-ntr-server` connection.
 
-Version `0.15.30` adds [live release progress logs](docs/forgejo-publishing.md#progress-logs) while keeping raw tool output private. See [release notes](docs/releases/0.15.30.md); local validation does not publish anything.
+Version `0.15.31` supports [server-managed Home Assistant tasks](docs/server-connection.md#home-assistant-tasks) and preserves datetime due values in the date-only editor. See [release notes](docs/releases/0.15.31.md); local validation does not publish anything.
 
 ## Quick start
 
@@ -15,6 +15,8 @@ npm run tauri dev
 ```
 
 Tasks and notes are stored in the Tauri app-data directory by default. Use the `[L]` button to connect to a server.
+
+The optional server can use [Home Assistant To-do](docs/server-connection.md#home-assistant-tasks), keeping HA credentials and private-CA trust server-side. Markdown notes remain unchanged.
 
 If the server is unreachable, the app uses local files and keeps the saved URL. Retry with Connect; see [connection safety](docs/server-connection.md).
 

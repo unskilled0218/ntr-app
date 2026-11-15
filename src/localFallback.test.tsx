@@ -43,6 +43,7 @@ beforeEach(() => {
     if (command === "get_data_dir") return "/local";
     if (command === "storage_kind") return "path";
     if (command === "server_fetch") {
+      if ((args as { req: { url: string } }).req.url.endsWith("/api/capabilities")) return { ok: false, status: 404, status_text: "Not Found", body: "" };
       if (offline) throw unavailable;
       const req = (args as { req: { url: string; method: string } }).req;
       const path = new URL(req.url).pathname;

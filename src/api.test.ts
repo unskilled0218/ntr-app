@@ -82,7 +82,8 @@ function mockServer(
   const queue = serverResponses.map(([b, s]) => httpResp(b, s));
   let i = 0;
   const mock = vi.mocked(invoke);
-  mock.mockImplementation((cmd: string) => {
+  mock.mockImplementation((cmd: string, args) => {
+    if (cmd === "server_fetch" && (args as { req: { url: string } }).req.url.endsWith("/api/capabilities")) return Promise.resolve(httpResp(null, 404));
     if (cmd === "server_fetch") return Promise.resolve(queue[i++]);
     if (cmd === "get_note") return Promise.resolve(local.note ?? "");
     if (cmd === "get_raw") return Promise.resolve(local.raw ?? "");
@@ -93,7 +94,7 @@ function mockServer(
 
 // The `req` of the nth `server_fetch` invoke call.
 function reqOf(call: number): { url: string; method: string; body: string | null; contentType: string | null; allowInvalidCert: boolean; clientId: string | null } {
-  const calls = vi.mocked(invoke).mock.calls.filter((c) => c[0] === "server_fetch");
+  const calls = vi.mocked(invoke).mock.calls.filter((c) => c[0] === "server_fetch" && !(c[1] as { req: { url: string } }).req.url.endsWith("/api/capabilities"));
   return (calls[call][1] as { req: ReturnType<typeof reqOf> }).req;
 }
 
@@ -483,7 +484,7 @@ describe("transport-bound deferred work", () => {
     read.resolve(httpResp("remote"));
     expect(await work).toEqual([]);
     expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "server_fetch")).toHaveLength(1);
-    expect(reqOf(0).method).toBe("GET");
+    expect((vi.mocked(invoke).mock.calls.find(([command]) => command === "server_fetch")![1] as { req: { method: string } }).req.method).toBe("GET");
   });
 
   it("does not back up an old note save after a target switch", async () => {
@@ -519,7 +520,7 @@ describe("transport-bound deferred work", () => {
     read.resolve(httpResp("remote A"));
     expect(await reconcile).toEqual([]);
     expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "server_fetch")).toHaveLength(1);
-    expect(reqOf(0).method).toBe("GET");
+    expect((vi.mocked(invoke).mock.calls.find(([command]) => command === "server_fetch")![1] as { req: { method: string } }).req.method).toBe("GET");
   });
 
   it("rejects a stale startup conflict choice instead of targeting current settings", async () => {

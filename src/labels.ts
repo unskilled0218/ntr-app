@@ -3,7 +3,7 @@
 // regress subtly). Depends only on config and pure date helpers — never on the transport shim (api.ts).
 
 import { KINDS, type Kind } from "./config";
-import { isTaskDate, type TaskDateMetadata } from "./lib/taskDates";
+import { isTaskDate, isDueDatetime, type TaskDateMetadata } from "./lib/taskDates";
 
 export function unionLabels(remembered: string[], derived: string[]): string[] {
   return [...new Set([...remembered, ...derived])];
@@ -138,7 +138,7 @@ export function listDescription(description: string, projects: string[], context
   const dateTokens = description.split(/\s+/).filter((token) => {
     const entry = tagEntry(token);
     return entry !== null && (entry[0] === "due" || entry[0] === "updated") &&
-      displayedDates[entry[0]] !== undefined && isTaskDate(entry[1]);
+      displayedDates[entry[0]] !== undefined && (isTaskDate(entry[1]) || (entry[0] === "due" && isDueDatetime(entry[1])));
   });
   return stripTokens(description, [...projects.map((p) => `+${p}`), ...contexts.map((c) => `@${c}`), ...dateTokens]);
 }

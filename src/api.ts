@@ -197,6 +197,32 @@ interface HttpResponse {
   body: string;
 }
 
+class HttpStatusError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
+
+interface ServerCapabilities { task_backend: "file" | "homeassistant"; raw_task_replace: boolean }
+let capabilitySession: { generation: number; url: string; allowInvalidCert: boolean; promise: Promise<ServerCapabilities> } | undefined;
+async function serverCapabilities(context: TransportContext): Promise<ServerCapabilities> {
+  requireCurrent(context);
+  if (capabilitySession?.generation === context.generation && capabilitySession.url === context.url && capabilitySession.allowInvalidCert === context.allowInvalidCert) return capabilitySession.promise;
+  const promise = (async () => {
+    let value: unknown;
+    try { value = await httpJson<unknown>("/api/capabilities", undefined, context); }
+    catch (error) {
+      if (error instanceof HttpStatusError && error.status === 404) return { task_backend: "file", raw_task_replace: true } as const;
+      throw error;
+    }
+    requireCurrent(context);
+    if (!value || typeof value !== "object" || !("task_backend" in value) || !("raw_task_replace" in value)
+      || !["file", "homeassistant"].includes(String(value.task_backend)) || typeof value.raw_task_replace !== "boolean"
+      || value.raw_task_replace !== (value.task_backend === "file")) throw new Error("Invalid server capabilities; no reconciliation writes were made.");
+    return value as ServerCapabilities;
+  })();
+  capabilitySession = { generation: context.generation, url: context.url, allowInvalidCert: context.allowInvalidCert, promise };
+  return promise;
+}
+
 // The single server-mode request primitive. Throws on a non-2xx status to preserve the old
 // httpFetch contract — callers and tests rely on the thrown "<status> <statusText>" message.
 async function serverFetch(
@@ -222,7 +248,11 @@ async function serverFetch(
         clientId: method === "GET" ? null : clientSessionId,
       },
     });
-    if (!res.ok) throw new Error(`${res.status} ${res.status_text}`.trim());
+    if (!res.ok) {
+      const status = `${res.status} ${res.status_text}`.trim();
+      const uncertainTaskWrite = method !== "GET" && resource === "tasks" && (res.status === 409 || res.status === 504);
+      throw new HttpStatusError(res.status, uncertainTaskWrite ? `${status}. Task write outcome is uncertain; reconnect to read actual state before retrying.` : status);
+    }
     response = res.body;
     return res.body;
   } catch (error) {
@@ -252,7 +282,10 @@ function httpText(path: string, context = captureTransport()): Promise<string> {
 }
 
 function httpPutText(path: string, text: string, context = captureTransport()): Promise<void> {
-  return serverFetch(path, "PUT", text, "text/plain", context).then(() => {});
+  return (async () => {
+    if (path === "/api/raw" && !(await serverCapabilities(context)).raw_task_replace) throw new Error("HA tasks cannot be replaced from a local task file.");
+    await serverFetch(path, "PUT", text, "text/plain", context);
+  })();
 }
 
 // --- Local backup helpers (server mode only, best-effort) ---
@@ -532,9 +565,12 @@ export async function reconcileWithServer(context = captureTransport(), signal?:
   const strategy = getConflictStrategy();
   const conflicts: Conflict[] = [];
   const discovered: { conflict: Conflict; verdict: ReturnType<typeof classifyConflict> }[] = [];
+  let haTasks = false;
   // No writes until every discovery read succeeds. In particular, a successful
   // note read must not overwrite local text before the task GET can fail.
   try {
+    haTasks = (await serverCapabilities(context)).task_backend === "homeassistant";
+    if (!current()) return [];
     for (const resource of ["note", "tasks"] as ConflictResource[]) {
       const io = CONFLICT_IO[resource];
       const [local, server] = await Promise.all([io.readLocal(), io.readServer(context)]);
@@ -542,6 +578,7 @@ export async function reconcileWithServer(context = captureTransport(), signal?:
       discovered.push({ conflict: { resource, local, server }, verdict: classifyConflict(local, server) });
     }
   } catch (error) {
+    if (!current() && !(error && typeof error === "object" && "kind" in error && error.kind === "connection")) return [];
     if (current()) {
       initializationFailed = true;
       connectionStatus = `Could not initialize server: ${errMsg(error)}`;
@@ -557,7 +594,9 @@ export async function reconcileWithServer(context = captureTransport(), signal?:
       if (!current()) return [];
       if (verdict === "in-sync") { outcomes.push(`${resource}: unchanged`); continue; }
       conflictContexts.set(conflict, context);
-      if (verdict === "adopt-server") {
+      if (resource === "tasks" && haTasks) {
+        choice = "server";
+      } else if (verdict === "adopt-server") {
         choice = "server";
       } else if (strategy === "ask") {
         conflicts.push(conflict);

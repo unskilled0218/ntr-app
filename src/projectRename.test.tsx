@@ -59,6 +59,7 @@ function fixture(server = true) {
     if (command === "update_task") { const { id, text } = args as { id: number; text: string }; return write(id, text); }
     if (command === "create_task") { const updated = task(9, (args as { text: string }).text); data.tasks.push(updated); return updated; }
     if (command !== "server_fetch") return;
+    if ((args as { req: { url: string } }).req.url.endsWith("/api/capabilities")) return { ok: false, status: 404, status_text: "Not Found", body: "" };
     const { req } = args as { req: { url: string; method: string; body: string } };
     const path = new URL(req.url).pathname;
     let body = "";

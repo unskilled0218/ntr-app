@@ -12,7 +12,7 @@ import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
 import { useBackdropClose } from "./useBackdropClose";
 import { ownDialogEvent } from "./dialogEvents";
-import { formatLocalTaskDate } from "../lib/taskDates";
+import { formatLocalTaskDate, dueDateInput, editedDue, isDueDatetime } from "../lib/taskDates";
 
 interface Props {
   disabled?: boolean;
@@ -30,6 +30,7 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [description, setDescription] = useState("");
   const [due, setDue] = useState("");
+  const [dueTouched, setDueTouched] = useState(false);
   const [project, setProject] = useState("");
   const [staged, setStaged] = useState<string[]>([]);
   const [modalKind, setModalKind] = useState<"project" | null>(null);
@@ -45,7 +46,8 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
     if (task) {
       baseline.current = task;
       setDescription(bareDescription(task.description, task.projects, task.contexts, task.tags));
-      setDue(task.tags.due ?? "");
+      setDue(dueDateInput(task.tags.due ?? ""));
+      setDueTouched(false);
       setProject(task.projects[0] ?? "");
       setStaged([]);
       setModalKind(null);
@@ -88,7 +90,7 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
     const current = baseline.current;
     if (!task || !current || (!description.trim() && !current.contexts.length)) return;
     try {
-      const text = composeEditedTask(current, { description, project, due }, formatLocalTaskDate(new Date()));
+      const text = composeEditedTask(current, { description, project, due: editedDue(current.tags.due ?? "", due, dueTouched) }, formatLocalTaskDate(new Date()));
       if (!text.trim()) return;
       await onSave(task.id, text);
     } catch (err) {
@@ -122,7 +124,9 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
         <div className="add-fields">
           <label>
             Due
-            <input type="date" aria-label="Due date" value={due} onChange={(e) => setDue(e.currentTarget.value)} />
+            <input type="date" aria-label="Due date" value={due} onChange={(e) => { setDue(e.currentTarget.value); setDueTouched(true); }} />
+            {isDueDatetime(task?.tags.due) && (!dueTouched || due) && <small>Time and fixed offset {task.tags.due.slice(11)} stay unchanged when changing the date.</small>}
+            {(due || (!dueTouched && task?.tags.due)) && <button type="button" onClick={() => { setDue(""); setDueTouched(true); }}>Clear due</button>}
           </label>
           <label>
             Project

@@ -15,9 +15,28 @@ export function formatLocalTaskDate(date: Date): string {
   return value;
 }
 
+// Due datetimes retain their supplied fixed offset; never convert through the device zone.
+export function isDueDatetime(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) return false;
+  if (!isTaskDate(value.slice(0, 10))) return false;
+  const time = value.slice(11, 19).split(":").map(Number);
+  const offset = value.match(/[+-](\d{2}):(\d{2})$/);
+  return time[0] < 24 && time[1] < 60 && time[2] < 60 && (!offset || (Number(offset[1]) < 24 && Number(offset[2]) < 60));
+}
+
+export function dueDateInput(value: string): string {
+  return isDueDatetime(value) ? value.slice(0, 10) : isTaskDate(value) ? value : "";
+}
+
+export function editedDue(original: string, date: string, touched: boolean): string {
+  if (!touched) return original;
+  if (!date) return "";
+  return isDueDatetime(original) ? date + original.slice(10) : date;
+}
+
 export function displayedTaskDates(tags: Record<string, string>): TaskDateMetadata {
   const dates: TaskDateMetadata = {};
-  if (isTaskDate(tags.due)) dates.due = tags.due;
+  if (isTaskDate(tags.due) || isDueDatetime(tags.due)) dates.due = tags.due;
   if (isTaskDate(tags.updated)) dates.updated = tags.updated;
   return dates;
 }

@@ -3,6 +3,7 @@
 - [Task text and compatibility](#task-text-and-compatibility)
 - [Legacy data](#legacy-data)
 - [Editing safely](#editing-safely)
+- [Home Assistant task mapping](#home-assistant-task-mapping)
 - [Backend versions](#backend-versions)
 
 ## Legacy data
@@ -20,6 +21,14 @@ The format cannot distinguish a newly typed leading `(A)`–`(Z)` token from leg
 This guard also applies when an existing visible description starts with `(A)` after lifecycle dates, such as `2026-06-01 (A) call`; unchanged form submissions are rejected too. The stored line remains untouched. Move the visible token later before saving. This is distinct from an existing hidden prefix recovered from raw text, which an unchanged edit preserves automatically.
 
 The edit serializer recovers only the hidden leading token from `raw`, never from an older response's `priority` field. Parsed DTO dates and description remain authoritative. Before saving, it checks that raw text is nonempty and single-line, has the same completion state, parses to the same lifecycle dates, and has the same description. Missing or inconsistent raw data fails visibly without writing; reload or upgrade the server rather than guessing. A completed task with a creation date but no completion date cannot be safely reconstructed and also fails.
+
+## Home Assistant task mapping
+
+HA-backed servers map item UID to a stable numeric ID, retain project/context/custom tokens in summaries, and expose native due as `due:` tokens. HA descriptions remain untouched and are not ntr's standalone Markdown notes. A server sidecar owns ntr-only lifecycle dates and legacy prefixes.
+
+Completed HA tasks without a known completion date expose both lifecycle dates as null, remaining editable under the existing raw-text contract. Private creation history returns on reopen. Restart, polling outages, and observed external transitions conservatively invalidate completion claims. This is not a full audit log; see [server mapping limits](../../server/docs/home-assistant.md#task-mapping).
+
+Due datetimes retain the full offset-bearing token on unrelated local/file or HA saves. The date-only editor shows the supplied date and explains the time/fixed offset retained on a date change. It does not convert through device timezone or apply named-timezone/DST rules. `Clear due` or clearing the input removes the entire due value; cancel writes nothing. HA may normalize submitted offsets while preserving the instant. `updated:` and lifecycle dates stay date-only.
 
 ## Backend versions
 

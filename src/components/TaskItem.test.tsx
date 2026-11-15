@@ -12,6 +12,12 @@ const task: Task = {
 };
 
 describe("TaskItem", () => {
+  it("displays datetime due with its offset once, without hiding malformed date tokens", () => {
+    const due = "2026-11-16T23:30:00-05:00";
+    const { container } = render(<TaskItem task={{ ...task, description: `call due:${due} updated:bad`, tags: { due, updated: "bad" } }} onToggle={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />);
+    expect(container.querySelector(".meta")!.textContent).toContain(`due:${due}`);
+    expect(container.querySelector(".text")!.textContent).toBe("call updated:bad");
+  });
   it("hides project/context tokens from description while retaining project metadata and ordinary @ text", () => {
     const { container } = render(<TaskItem task={task} onToggle={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />);
     expect(container.querySelector(".text")!.textContent).toBe("call mail@phone https://site/@phone");

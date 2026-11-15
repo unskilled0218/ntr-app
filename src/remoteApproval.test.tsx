@@ -28,6 +28,7 @@ function fixture() {
     if (command === "get_data_dir") return "/data";
     if (command === "storage_kind") return "path";
     if (command !== "server_fetch") return;
+    if ((args as { req: { url: string } }).req.url.endsWith("/api/capabilities")) return { ok: false, status: 404, status_text: "Not Found", body: "" };
     const { req } = args as { req: { url: string; method: string; body: string } };
     const path = new URL(req.url).pathname;
     if (path === "/api/labels" && labelsFail) { labelsFail = false; throw new Error("labels offline"); }

@@ -17,6 +17,21 @@ beforeEach(() => { localStorage.setItem("ntr.serverUrl", "http://shared"); activ
 afterEach(() => { instances.splice(0).forEach((updates) => updates.cancel()); localStorage.clear(); vi.useRealTimers(); });
 
 describe("remote approval ownership", () => {
+  it("offers external HA item B after an unfiltered rescan during own item A write", async () => {
+    const { updates, content } = setup();
+    const a = { id: 1, raw: "A", completed: false, creation_date: null, completion_date: null } as Task;
+    const b = { ...a, id: 2, raw: "B" };
+    content.tasks = [a, b]; updates.register("tasks", content.tasks); await settle();
+    const finish = updates.begin("tasks");
+    const own = { ...a, raw: "A own" };
+    content.tasks = [own, { ...b, raw: "B external" }];
+    updates.request("tasks");
+    finish([own, b]);
+    await settle();
+    expect(updates.accepted("tasks")![1].raw).toBe("B");
+    expect(updates.state("tasks").pending?.snapshot[1].raw).toBe("B external");
+    expect(updates.state("tasks").phase).toBe("offered");
+  });
   it("captures immutable accepted and incoming task evidence rather than transport references", async () => {
     const { updates, content } = setup();
     const original = { id: 1, raw: "old", projects: ["work"], contexts: [], tags: {} } as unknown as Task;

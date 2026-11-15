@@ -32,6 +32,47 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
+describe("HA datetime due editing", () => {
+  const withDue = (due: string) => ({ ...TASK, tags: { due }, description: `call bank +work @phone due:${due}`, raw: `(A) 2026-06-01 call bank +work @phone due:${due}` });
+
+  it.each(["2026-06-30T00:15:00+14:00", "2026-06-30T23:45:00-11:00", "2026-06-30T10:20:30.123Z"])("shows the supplied date and preserves untouched time/offset %s", async (due) => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<EditTaskModal task={withDue(due)} serverLabels={SERVER_LABELS} onSave={onSave} onClose={vi.fn()} />);
+    expect((screen.getByLabelText("Due date") as HTMLInputElement).value).toBe("2026-06-30");
+    expect(screen.getByText(/Time and fixed offset/).textContent).toContain(due.slice(11));
+    fireEvent.change(screen.getByLabelText("Task description"), { target: { value: "new summary" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(7, expect.stringContaining(`due:${due}`)));
+  });
+
+  it.each(["change", "clear button", "clear input", "return date"])("handles explicit due intent: %s", async (action) => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const due = "2026-06-30T23:45:00-11:00";
+    render(<EditTaskModal task={withDue(due)} serverLabels={SERVER_LABELS} onSave={onSave} onClose={vi.fn()} />);
+    if (action === "clear button") fireEvent.click(screen.getByRole("button", { name: "Clear due" }));
+    else fireEvent.change(screen.getByLabelText("Due date"), { target: { value: action === "clear input" ? "" : "2026-07-01" } });
+    if (action === "return date") fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2026-06-30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    const text = onSave.mock.calls[0][1];
+    if (action.startsWith("clear")) expect(text).not.toContain("due:");
+    else expect(text).toContain(`due:${action === "return date" ? due : "2026-07-01T23:45:00-11:00"}`);
+  });
+
+  it("resets due intent on task switch and cancel does not save", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    const props = { serverLabels: SERVER_LABELS, onSave, onClose };
+    const { rerender } = render(<EditTaskModal task={withDue("2026-06-30T01:00:00+09:00")} {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Clear due" }));
+    rerender(<EditTaskModal task={{ ...withDue("2026-07-02T22:00:00-05:00"), id: 8 }} {...props} />);
+    expect((screen.getByLabelText("Due date") as HTMLInputElement).value).toBe("2026-07-02");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+});
+
 describe("EditTaskModal", () => {
   it.each(["(A) call", "(A)"])("rejects submitted %s but retains hidden legacy data and form state", (value) => {
     const onSave = vi.fn();
