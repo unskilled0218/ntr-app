@@ -3,6 +3,7 @@
 // shared SelectField; removal is a store-level filter action (see task 12), so no onRemove here.
 
 import { ADD_VALUE, EMPTY_LABEL, KINDS, type Kind } from "../config";
+import { HaListPicker, useHaProjects } from "./HaProjects";
 import SelectField, { type FieldOption } from "./SelectField";
 import { recoveryEntries, relatedRecovery, type ProjectActionRequest, type ProjectManagement, type ProjectSelectorSession } from "../lib/projectActions";
 
@@ -20,6 +21,8 @@ interface Props {
 }
 
 export default function LabelSelect({ kind, value, serverLabels, staged, onChange, onAdd, management, onProjectAction, onRecover, revision }: Props) {
+  const ha = useHaProjects();
+  if (ha && kind === "project") return <HaListPicker value={value} onChange={onChange} />;
   const names = [...new Set([...serverLabels, ...staged])].sort();
   const label = KINDS[kind].singular;
 

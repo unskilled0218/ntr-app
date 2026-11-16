@@ -14,13 +14,14 @@ import RenameProjectDialog from "./RenameProjectDialog";
 import RemoveLabelDialog from "./RemoveLabelDialog";
 import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
+import { useHaProjects } from "./HaProjects";
 import OptionsModal, { type OptionsModalHandle } from "./OptionsModal";
 
 interface Props {
   disabled?: boolean;
   serverLabels: { project: string[]; context: string[] };
   // Returns true on success (so the form resets) or false on error (kept for correction).
-  onAdd: (text: string) => Promise<boolean>;
+  onAdd: (text: string, listId?: string) => Promise<boolean>;
   compact: boolean; // when true, the fields collapse behind one "Options" button on the add row
   rename?: ProjectRenameEvent;
   onProjectsChange?: (names: string[]) => void;
@@ -29,6 +30,7 @@ interface Props {
 }
 
 export default function AddForm({ serverLabels, onAdd, compact, rename, onProjectsChange, removal, management, disabled = false }: Props) {
+  const ha = useHaProjects();
   const [description, setDescription] = useState("");
   const [error, setError] = useState("");
   const [due, setDue] = useState("");
@@ -133,12 +135,12 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onProjec
     setError("");
     let text: string;
     try {
-      text = composeText({ description, project, contexts: [], due });
+      text = composeText({ description, project:ha ? "" : project, contexts: [], due });
     } catch (err) {
       setError(errMsg(err));
       return;
     }
-    const ok = await onAdd(text);
+    const ok = await (ha ? onAdd(text, project) : onAdd(text));
     if (ok) {
       setDescription("");
       setDue("");

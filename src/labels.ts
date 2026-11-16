@@ -34,6 +34,7 @@ export function composeText(f: ComposeFields): string {
 
 // Only the metadata needed for editing: no transport dependency or duplicate form state.
 interface EditableTask {
+  list_id?: string;
   completed: boolean;
   raw: string;
   completion_date: string | null;
@@ -86,7 +87,7 @@ export function composeEditedTask(task: EditableTask, fields: Omit<ComposeFields
   if (!descriptionTokens.length && !task.contexts.length) return "";
 
   const submittedKeys = new Set(descriptionTokens.map(tagEntry).filter((entry) => entry !== null).map(([key]) => key));
-  const projects = fields.project === (task.projects[0] ?? "")
+  const projects = task.list_id ? [] : fields.project === (task.projects[0] ?? "")
     ? task.projects
     : fields.project ? [fields.project] : [];
   const labels = new Set([...projects.map((p) => `+${p}`), ...task.contexts.map((c) => `@${c}`)]);

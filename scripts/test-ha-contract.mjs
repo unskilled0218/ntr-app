@@ -56,8 +56,8 @@ try {
     await Promise.race([once(ready, "line"), once(server, "exit").then(() => { throw new Error("ntr exited before readiness"); })]);
     ready.close();
   }
-  const request = async (path, method = "GET", text) => {
-    const response = await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: text === undefined ? undefined : JSON.stringify({ text }) });
+   const request = async (path, method = "GET", text, routing = {}) => {
+    const response = await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: method === "GET" ? undefined : JSON.stringify({ text, ...routing }) });
     assert.ok(response.ok, `${method} ${path}: ${await response.clone().text()}`);
     return response.status === 204 ? null : response.json();
   };
@@ -93,7 +93,45 @@ try {
   const denied = await fetch(base + "/api/raw", { method: "PUT", body: "never upload" });
   assert.equal(denied.status, 400);
   assert.equal(await readFile(join(dir, "old-tasks.txt"), "utf8"), "do not migrate\n");
-  console.log("HA contract: actual client edit serializer, external completion, creation restoration, datetime, description, restart IDs, and raw-write guard passed");
+  await control({lists:{"todo.other":[]}, names:{"todo.other":"Shared tasks"}});
+  const catalog = await request("/api/lists");
+  assert.equal(catalog.lists.length, 2);
+  const beforeMove = await request(`/api/tasks/${created.id}`);
+  const movedText = composeEditedTask(beforeMove, {description:bareDescription(beforeMove.description, [], beforeMove.contexts, beforeMove.tags), project:"todo.other", due:beforeMove.tags.due}, "2026-11-16");
+  assert.ok(movedText.includes("+work"), "legacy summary project text remains lossless");
+  assert.ok(!movedText.includes("+todo.other"), "routing must not be encoded as summary tokens");
+  const moved = await request(`/api/tasks/${created.id}`, "PUT", movedText, {list_id:"todo.other", confirm_move:true, expected_source:"todo.fixture", expected_raw:beforeMove.raw});
+  assert.equal(moved.id, created.id); assert.equal(moved.list_id, "todo.other");
+  assert.equal((await control()).items.length, 0);
+  assert.equal((await control()).lists["todo.other"][0].description, "**HA description**\nretained");
+  const routed = await request("/api/tasks", "POST", "second list task", {list_id:"todo.other"});
+  assert.equal(routed.list_id, "todo.other");
+  const defaultTask = await request("/api/tasks", "POST", "default task", {list_id:""});
+  assert.equal(defaultTask.list_id, "todo.fixture");
+  server.kill(); await once(server, "exit"); await start();
+  assert.equal((await request(`/api/tasks/${moved.id}`)).list_id, "todo.other");
+  // Exercise public list mutation routes as well as their server-only WSS transport.
+  server.kill(); await once(server, "exit"); env.HA_MANAGE_LISTS = "true"; await start();
+  const addedCatalog = await request("/api/lists", "POST", undefined, {name:"Temporary list", confirmed:true});
+  const temporary = addedCatalog.lists.find((list) => list.name === "Temporary list");
+  assert.ok(temporary?.can_delete);
+  await request(`/api/lists/${temporary.id}`, "PUT", undefined, {name:"Renamed temporary", expected_name:"Temporary list", confirmed:true});
+  const deletedCatalog = await request(`/api/lists/${temporary.id}`, "DELETE", undefined, {expected_name:"Renamed temporary", confirmed:true});
+  assert.ok(!deletedCatalog.lists.some((list) => list.id === temporary.id));
+  await control({mode:"move_fail_delete"});
+  const source = await request(`/api/tasks/${defaultTask.id}`);
+  const failedMove = await fetch(base + `/api/tasks/${source.id}`, {method:"PUT", headers:{"content-type":"application/json"}, body:JSON.stringify({text:source.raw, list_id:"todo.other", confirm_move:true, expected_source:source.list_id, expected_raw:source.raw})});
+  assert.equal(failedMove.status, 409);
+  await control({mode:""});
+  const pending = (await request("/api/lists")).pending_move;
+  assert.ok(pending.operation_id > 1);
+  const staleRecovery = await fetch(base + "/api/list-move/recovery", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({action:"abandon", confirmed:true, operation_id:pending.operation_id - 1})});
+  assert.equal(staleRecovery.status, 409);
+  assert.equal((await request("/api/lists")).pending_move.operation_id, pending.operation_id);
+  const recovered = await request("/api/list-move/recovery", "POST", undefined, {action:"abandon", confirmed:true, operation_id:pending.operation_id});
+  assert.equal(recovered.pending_move, null);
+  assert.equal((await request(`/api/tasks/${source.id}`)).list_id, "todo.fixture");
+  console.log("HA contract: real serializer, lifecycle/native fields, multiple lists, confirmed moves/recovery, admin list routes, default routing, restart IDs, and raw-write guard passed");
 } finally {
   for (const child of [server, fake]) {
     if (child && child.exitCode === null && child.signalCode === null) { child.kill(); await once(child, "exit"); }

@@ -152,6 +152,9 @@ export default function App() {
     const changed = (kind: string) => {
       if (context.url) {
         if (kind === CHANGE_TASKS || kind === CHANGE_NOTE) updates.request(kind);
+        // Empty-list/name changes have no task-array diff. Refresh routing metadata
+        // separately without accepting changed task content or disturbing drafts.
+        if (kind === CHANGE_TASKS) todoRef.current?.onCatalogChanged?.();
       } else if (initializedDestination.current !== destinationKey) return;
       else if (kind === CHANGE_TASKS) todoRef.current?.onTasksChanged();
       else if (kind === CHANGE_NOTE) noteRef.current?.onNoteChange();

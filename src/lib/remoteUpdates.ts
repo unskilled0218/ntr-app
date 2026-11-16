@@ -29,7 +29,7 @@ interface State<K extends Resource> {
 function identity<K extends Resource>(resource: K, snapshot: Snapshots[K]): string {
   if (resource === "note") return snapshot as string;
   // IDs are part of identity: replacing raw text can assign different IDs.
-  return JSON.stringify((snapshot as Task[]).map((task) => [task.id, task.raw, task.completed, task.completion_date, task.creation_date]).sort((a, b) => Number(a[0]) - Number(b[0])));
+  return JSON.stringify((snapshot as Task[]).map((task) => [task.id, task.raw, task.completed, task.completion_date, task.creation_date, task.list_id ?? null]).sort((a, b) => Number(a[0]) - Number(b[0])));
 }
 function initial<K extends Resource>(): State<K> {
   return { phase: "idle", epoch: 0, reads: 0, application: 0, writes: 0, error: "" };

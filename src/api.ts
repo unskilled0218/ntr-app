@@ -11,6 +11,7 @@ import { classifyConflict } from "./lib/conflict";
 // Task shape — exactly the backend's TaskDto (src-tauri/src/dto.rs), itself the server's shape.
 export interface Task {
   id: number;
+  list_id?: string;
   completed: boolean;
   completion_date: string | null;
   creation_date: string | null;
@@ -19,6 +20,27 @@ export interface Task {
   contexts: string[];
   tags: Record<string, string>;
   raw: string;
+}
+
+export interface HaList { id: string; name: string; is_default: boolean; can_rename: boolean; can_delete: boolean }
+export interface HaCatalog { lists: HaList[]; can_create: boolean; pending_move: { operation_id: number; task_id: number; source_list: string; target_list: string; copy_identified: boolean } | null }
+export interface TaskRouting { list_id?: string; confirm_move?: boolean; expected_source?: string; expected_raw?: string }
+
+export async function getHaCatalog(context = captureTransport()): Promise<HaCatalog | null> {
+  if (!context.url || (await serverCapabilities(context)).task_backend !== "homeassistant") return null;
+  const catalog = await httpJson<HaCatalog>("/api/lists", undefined, context);
+  requireCurrent(context);
+  if (!Array.isArray(catalog.lists) || !catalog.lists.some((list) => list.is_default) || catalog.lists.some((list) => typeof list.id !== "string" || typeof list.name !== "string")) throw new Error("Invalid HA list catalog; routing blocked");
+  return catalog;
+}
+
+export async function manageHaList(action: "create" | "rename" | "delete", id: string, name: string, expectedName: string, context = captureTransport()): Promise<HaCatalog> {
+  requireWritable("tasks", context);
+  return httpJson<HaCatalog>(`/api/lists${action === "create" ? "" : `/${encodeURIComponent(id)}`}`, { method: action === "create" ? "POST" : action === "rename" ? "PUT" : "DELETE", body: JSON.stringify({name, confirmed:true, expected_name:expectedName}) }, context);
+}
+export async function recoverHaMove(action: "abandon" | "reconcile", operationId: number, context = captureTransport()): Promise<HaCatalog> {
+  requireWritable("tasks", context);
+  return httpJson<HaCatalog>("/api/list-move/recovery", {method:"POST", body:JSON.stringify({action, operation_id:operationId, confirmed:true})}, context);
 }
 
 // Filters for listing tasks — the server's query params, now command arguments.
@@ -251,7 +273,11 @@ async function serverFetch(
     if (!res.ok) {
       const status = `${res.status} ${res.status_text}`.trim();
       const uncertainTaskWrite = method !== "GET" && resource === "tasks" && (res.status === 409 || res.status === 504);
-      throw new HttpStatusError(res.status, uncertainTaskWrite ? `${status}. Task write outcome is uncertain; reconnect to read actual state before retrying.` : status);
+      let detail = "";
+      if (path.startsWith("/api/lists") || path === "/api/list-move/recovery") {
+        try { const error = JSON.parse(res.body).error; if (typeof error === "string") detail = `. ${error.slice(0, 1000)}`; } catch { /* Retain status for non-JSON proxy errors. */ }
+      }
+      throw new HttpStatusError(res.status, uncertainTaskWrite ? `${status}. Task write outcome is uncertain; reconnect to read actual state before retrying.` : status + detail);
     }
     response = res.body;
     return res.body;
@@ -336,13 +362,14 @@ export function listTasks(filter: TaskFilter, context = captureTransport()): Pro
   }, context);
 }
 
-export async function createTask(text: string): Promise<Task> {
+export async function createTask(text: string, routing?: TaskRouting): Promise<Task> {
   const context = captureTransport();
   requireWritable("tasks", context);
+  if (!context.url && routing) throw new Error("HA list routing is unavailable for local files");
   if (context.url) {
     const task = await httpJson<Task>("/api/tasks", {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...routing }),
     }, context);
     if (isTransportCurrent(context)) await backupTasksLocally(context);
     return task;
@@ -350,12 +377,13 @@ export async function createTask(text: string): Promise<Task> {
   return localWrite("create_task", { text }, context);
 }
 
-export async function updateTask(id: number, text: string, context = captureTransport()): Promise<Task> {
+export async function updateTask(id: number, text: string, context = captureTransport(), routing?: TaskRouting): Promise<Task> {
   requireWritable("tasks", context);
+  if (!context.url && routing) throw new Error("HA list routing is unavailable for local files");
   if (context.url) {
     const task = await httpJson<Task>(`/api/tasks/${id}`, {
       method: "PUT",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...routing }),
     }, context);
     if (isTransportCurrent(context)) await backupTasksLocally(context);
     return task;

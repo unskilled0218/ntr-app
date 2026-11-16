@@ -57,9 +57,9 @@ function noteDiff(before: string, after: string): DiffDocument {
   });
   return { sections, fallback: bounded };
 }
-function taskIdentity(task: Task) { return JSON.stringify([task.raw, task.completed, task.completion_date, task.creation_date]); }
+function taskIdentity(task: Task) { return JSON.stringify([task.raw, task.completed, task.completion_date, task.creation_date, task.list_id ?? null]); }
 function taskText(task: Task) {
-  return `Task #${task.id} (${task.completed ? "completed" : "active"}; created ${task.creation_date ?? "none"}; completed ${task.completion_date ?? "none"})\n${task.raw}\n`;
+  return `Task #${task.id} (${task.completed ? "completed" : "active"}; created ${task.creation_date ?? "none"}; completed ${task.completion_date ?? "none"}${task.list_id ? `; list ${task.list_id}` : ""})\n${task.raw}\n`;
 }
 export function remoteDiff(offer: Offer): DiffDocument {
   if (offer.resource === "note") return noteDiff(offer.baseline as string, offer.snapshot as string);

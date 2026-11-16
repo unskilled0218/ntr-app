@@ -4,6 +4,7 @@
 import type { Task } from "../api";
 import { listDescription } from "../labels";
 import { displayedTaskDates, type TaskDateMetadata } from "../lib/taskDates";
+import { haListLabel, useHaProjects } from "./HaProjects";
 
 function renderMeta(task: Task, dates: TaskDateMetadata): string {
   const bits = task.projects.map((p) => `+${p}`);
@@ -22,15 +23,17 @@ interface Props {
 }
 
 export default function TaskItem({ task, onToggle, onEdit, onDelete }: Props) {
+  const ha = useHaProjects();
+  const list = ha?.catalog.lists.find((list) => list.id === task.list_id);
   const dates = displayedTaskDates(task.tags);
-  const meta = renderMeta(task, dates);
+  const meta = renderMeta(list && ha ? {...task, projects:[haListLabel(list, ha.catalog.lists)]} : task, dates);
   return (
     <li className={"task" + (task.completed ? " completed" : "")}>
       <input type="checkbox" checked={task.completed} onChange={() => onToggle(task)} />
       <div className="body">
         <span className="text">
           {/* Hide date tokens only when their effective value is displayed below. */}
-          {listDescription(task.description, task.projects, task.contexts, dates) || "Task without description"}
+           {listDescription(task.description, task.list_id ? [] : task.projects, task.contexts, dates) || "Task without description"}
         </span>
         {meta && <span className="meta">{meta}</span>}
       </div>

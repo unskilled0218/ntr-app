@@ -4,7 +4,8 @@
 // opens the dialog; null closes it. Uses the same native-<dialog> pattern as LabelModal.
 
 import { useEffect, useRef, useState } from "react";
-import { captureTransport, destination, errMsg, type Task } from "../api";
+import { captureTransport, destination, errMsg, type Task, type TaskRouting } from "../api";
+import { ConfirmationDialog, useHaProjects } from "./HaProjects";
 import { bareDescription, composeEditedTask, removeProjectText, renameProjectNames, renameProjectText } from "../labels";
 import type { ProjectRenameEvent } from "../lib/projectRename";
 import type { ProjectRemovalEvent } from "../lib/projectRemoval";
@@ -19,7 +20,7 @@ interface Props {
   task: Task | null;
   suspended?: boolean;
   serverLabels: { project: string[]; context: string[] };
-  onSave(id: number, text: string): Promise<void>;
+  onSave(id: number, text: string, routing?: TaskRouting): Promise<void>;
   onClose(): void;
   rename?: ProjectRenameEvent;
   onProjectsChange?: (names: string[]) => void;
@@ -27,6 +28,9 @@ interface Props {
 }
 
 export default function EditTaskModal({ task, suspended, serverLabels, onSave, onClose, rename, onProjectsChange, removal, disabled = false }: Props) {
+  const ha = useHaProjects();
+  const [move, setMove] = useState<{text: string; routing: TaskRouting; signature: string} | null>(null);
+  const [saving, setSaving] = useState(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [description, setDescription] = useState("");
   const [due, setDue] = useState("");
@@ -45,10 +49,11 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
     if (!el) return;
     if (task) {
       baseline.current = task;
-      setDescription(bareDescription(task.description, task.projects, task.contexts, task.tags));
+      setDescription(bareDescription(task.description, task.list_id ? [] : task.projects, task.contexts, task.tags));
       setDue(dueDateInput(task.tags.due ?? ""));
       setDueTouched(false);
-      setProject(task.projects[0] ?? "");
+      setProject(task.list_id ?? task.projects[0] ?? "");
+      setMove(null);
       setStaged([]);
       setModalKind(null);
       setError("");
@@ -92,10 +97,25 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
     try {
       const text = composeEditedTask(current, { description, project, due: editedDue(current.tags.due ?? "", due, dueTouched) }, formatLocalTaskDate(new Date()));
       if (!text.trim()) return;
-      await onSave(task.id, text);
+      if (task.list_id && ha) {
+        const target = project || ha.catalog.lists.find((list) => list.is_default)?.id;
+        if (!target) throw new Error("HA default list unavailable");
+        const routing = {list_id:target, expected_source:task.list_id, expected_raw:current.raw};
+        if (target !== task.list_id) { setError(""); setMove({text, routing:{...routing, confirm_move:true}, signature:JSON.stringify(ha.catalog)}); return; }
+        await onSave(task.id, text, routing);
+      } else await onSave(task.id, text);
     } catch (err) {
       setError(errMsg(err));
     }
+  }
+
+  async function confirmMove() {
+    if (!move || !task || !ha || saving || disabled) return;
+    if (move.signature !== JSON.stringify(ha.catalog)) { setError("List catalog changed. Cancel and confirm the move again."); return; }
+    setSaving(true); setError("");
+    try { await onSave(task.id, move.text, move.routing); setMove(null); }
+    catch (error) { setError(`${errMsg(error)} Review both lists and the pending-move notice before retrying.`); }
+    finally { setSaving(false); }
   }
 
   function onCancel(e: React.SyntheticEvent<HTMLDialogElement>) {
@@ -109,7 +129,7 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
   useBackdropClose(dialogRef, onClose);
 
   return (
-    <dialog id="edit-task-modal" ref={dialogRef} onCancel={onCancel} onClose={ownDialogEvent}>
+    <><dialog id="edit-task-modal" ref={dialogRef} onCancel={onCancel} onClose={ownDialogEvent}>
       <form id="edit-task-form" autoComplete="off" onSubmit={submit}>
         <h2>Edit task</h2>
         <label>
@@ -148,5 +168,8 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
       </form>
       <LabelModal kind={modalKind} onConfirm={(_, name) => onConfirm(name)} onClose={() => setModalKind(null)} />
     </dialog>
+    {move && <ConfirmationDialog title="Move task to another HA list" busy={saving} error={error} onCancel={() => setMove(null)} onConfirm={() => {void confirmMove();}} confirmLabel="Move task">
+      <p>Move from {ha?.catalog.lists.find((list) => list.id === task?.list_id)?.name ?? task?.list_id} to {ha?.catalog.lists.find((list) => list.id === move.routing.list_id)?.name ?? move.routing.list_id}? ntr copies and verifies the task before deleting its source. Stop other HA writers during the move. A failure can leave both copies and require recovery.</p>
+    </ConfirmationDialog>}</>
   );
 }

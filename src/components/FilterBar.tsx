@@ -13,6 +13,7 @@ import { useRef } from "react";
 import OptionsModal, { type OptionsModalHandle } from "./OptionsModal";
 import SelectField, { type FieldOption } from "./SelectField";
 import SortField from "./SortField";
+import { HaListPicker, useHaProjects } from "./HaProjects";
 import { recoveryEntries, relatedRecovery, type ProjectManagement } from "../lib/projectActions";
 
 interface Props {
@@ -62,6 +63,7 @@ export default function FilterBar({
   onRename,
   management,
 }: Props) {
+  const ha = useHaProjects();
   const optionsRef = useRef<OptionsModalHandle>(null);
   // The two choosers, defined once and rendered either inline (default) or inside the compact
   // Options modal — so each chooser's props and wiring live in exactly one place.
@@ -69,7 +71,7 @@ export default function FilterBar({
     <>
       <label>
         Project
-        <SelectField
+        {ha ? <HaListPicker value={project} onChange={onProject} filter /> : <SelectField
           ariaLabel="Project filter"
           value={project}
           options={labelOptions(serverLabels.project).map((option) => ({ ...option, removable: !disabled && option.removable, renamable: !disabled && option.renamable, description: management ? relatedRecovery(option.value, management)?.summary : undefined }))}
@@ -85,7 +87,7 @@ export default function FilterBar({
           } : undefined}
           recoveries={recoveryEntries(serverLabels.project, management)}
           onRecover={(id) => { optionsRef.current?.close(); management?.onRecover(id, "filter"); }}
-        />
+        />}
       </label>
       <label>
         Sort

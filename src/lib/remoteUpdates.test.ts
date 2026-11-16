@@ -17,6 +17,15 @@ beforeEach(() => { localStorage.setItem("ntr.serverUrl", "http://shared"); activ
 afterEach(() => { instances.splice(0).forEach((updates) => updates.cancel()); localStorage.clear(); vi.useRealTimers(); });
 
 describe("remote approval ownership", () => {
+  it("offers an HA list-only task change even when numeric identity and raw text stay identical", async () => {
+    const {updates, content} = setup();
+    const task = {id:1, raw:"same text", description:"same text", completed:false, creation_date:null, completion_date:null, list_id:"todo.source", projects:["todo.source"], contexts:[], tags:{}} as Task;
+    content.tasks = [task]; updates.register("tasks", content.tasks); await settle();
+    content.tasks = [{...task, list_id:"todo.target", projects:["todo.target"]}];
+    await updates.review("tasks");
+    expect(updates.state("tasks").pending?.snapshot[0].list_id).toBe("todo.target");
+    expect(updates.accepted("tasks")![0].list_id).toBe("todo.source");
+  });
   it("offers external HA item B after an unfiltered rescan during own item A write", async () => {
     const { updates, content } = setup();
     const a = { id: 1, raw: "A", completed: false, creation_date: null, completion_date: null } as Task;

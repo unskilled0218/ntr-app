@@ -10,6 +10,8 @@
 
 ## Rename a project
 
+The token-rewrite workflows below apply to local/file-backed tasks. For HA, projects are native lists: rename changes HA's entity display name, and removal deletes only a confirmed empty Local To-do list with server authorization. No task tokens are rewritten. The default list is protected. See [HA list management and moves](server-connection.md#home-assistant-tasks).
+
 Open Project filter or the create-task Project selector. In compact mode, open Filter options or Task options first. Choose the pencil icon, enter a name, and confirm Rename. Names follow the project-name rules and are case-sensitive. Existing target projects are rejected, not merged; an unchanged name causes no writes. Cancel, Escape, and backdrop dismissal before submission change nothing. Icon buttons have project-specific accessible names and tooltips.
 
 Successful completion closes rename automatically; failures and partial results remain recoverable. A rename opened from create-task returns to its still-open picker after cancellation, success, or explicit stop-retry. Task options remain underneath in compact mode. Focus returns to the related row after updated choices commit. Removal, Add project, and filter-origin actions close before their replacement opens.
