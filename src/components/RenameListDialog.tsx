@@ -42,7 +42,7 @@ export default function RenameListDialog({ source, operation, onConfirm, onClose
   function review() {
     finish(onReview);
   }
-  return <dialog id={id} className="action-modal rename-modal" ref={ref} aria-labelledby={`${id}-title`} onCancel={(event) => {
+  return <dialog id={id} className="app-modal action-modal rename-modal" ref={ref} aria-labelledby={`${id}-title`} onCancel={(event) => {
     if (!ownDialogEvent(event)) return;
     event.preventDefault(); close();
   }} onClose={(event) => {

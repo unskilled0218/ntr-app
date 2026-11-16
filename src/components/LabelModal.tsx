@@ -50,7 +50,7 @@ export default function LabelModal({ kind, onConfirm, onClose }: Props) {
   }
 
   return (
-    <dialog id="label-modal" ref={dialogRef} onCancel={ownDialogEvent} onClose={(event) => {
+    <dialog className="app-modal" id="label-modal" ref={dialogRef} onCancel={ownDialogEvent} onClose={(event) => {
       if (dialogWasDismissed(event) && kind) onClose();
     }}>
       <form id="label-form" autoComplete="off" onSubmit={submit}>

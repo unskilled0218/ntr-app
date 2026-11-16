@@ -25,7 +25,7 @@ export default function RemoteUpdateDialog({ offer, busy, error, onUpdate, onDis
     if (!update) handled.current = offer;
     if (update) onUpdate(offer); else onDismiss(offer);
   }
-  return <dialog ref={ref} id="remote-update" className="action-modal remote-modal" aria-label={offer?.resource === "tasks" ? "Task update" : "Note update"} onCancel={(event) => {
+  return <dialog ref={ref} id="remote-update" className="app-modal action-modal remote-modal" aria-label={offer?.resource === "tasks" ? "Task update" : "Note update"} onCancel={(event) => {
     if (!ownDialogEvent(event)) return;
     event.preventDefault();
     finish(false);

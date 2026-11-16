@@ -124,7 +124,7 @@ export default function SettingsModal({ open, onClose }: Props) {
   }
 
   return (
-    <dialog id="settings-modal" ref={dialogRef} onCancel={onCancel} onClose={ownDialogEvent}>
+    <dialog className="app-modal" id="settings-modal" ref={dialogRef} onCancel={onCancel} onClose={ownDialogEvent}>
       <form id="settings-form" method="dialog" onSubmit={(e) => e.preventDefault()}>
         <h2>Connection</h2>
         <p className="settings-current">

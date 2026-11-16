@@ -32,7 +32,7 @@ export default function NoteConflictDialog({ open, mine, theirs, onKeepMine, onU
   useBackdropClose(dialogRef);
 
   return (
-    <dialog id="note-conflict" ref={dialogRef} aria-labelledby="note-conflict-title" onCancel={ownDialogEvent} onClose={(event) => {
+    <dialog className="app-modal" id="note-conflict" ref={dialogRef} aria-labelledby="note-conflict-title" onCancel={ownDialogEvent} onClose={(event) => {
       if (dialogWasDismissed(event) && open) onClose();
     }}>
       <h2 id="note-conflict-title">Note changed on another device</h2>

@@ -35,7 +35,7 @@ export default function SortField({ sort, dir, sortOptions, dirOptions, onSort, 
         {summary}
       </button>
       {/* Contents only while open, so a closed dialog leaves no stray focusable buttons in the DOM. */}
-      <dialog className="select-modal" aria-label="Sort" ref={dialogRef} onClose={onClose} onCancel={onCancel}>
+      <dialog className="app-modal select-modal" aria-label="Sort" ref={dialogRef} onClose={onClose} onCancel={onCancel}>
         {open && (
           <>
             <h2 className="select-modal-title">Sort</h2>

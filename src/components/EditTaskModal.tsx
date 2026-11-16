@@ -129,7 +129,7 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
   useBackdropClose(dialogRef, onClose);
 
   return (
-    <><dialog id="edit-task-modal" ref={dialogRef} onCancel={onCancel} onClose={ownDialogEvent}>
+    <><dialog className="app-modal" id="edit-task-modal" ref={dialogRef} onCancel={onCancel} onClose={ownDialogEvent}>
       <form id="edit-task-form" autoComplete="off" onSubmit={submit}>
         <h2>Edit task</h2>
         <label>

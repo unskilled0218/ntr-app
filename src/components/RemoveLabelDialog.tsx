@@ -49,7 +49,7 @@ export default function RemoveLabelDialog({ target, onConfirm, onCancel, operati
   const token = target ? KINDS[target.kind].prefix + target.name : "";
 
   return (
-    <dialog id={id} ref={dialogRef} aria-label="Remove label" onCancel={(event) => {
+    <dialog className="app-modal" id={id} ref={dialogRef} aria-label="Remove label" onCancel={(event) => {
       if (!ownDialogEvent(event)) return;
       event.preventDefault(); close();
     }} onClose={(event) => {

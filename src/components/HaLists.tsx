@@ -16,7 +16,7 @@ export function ConfirmationDialog({ title, children, onCancel, onConfirm, busy 
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { ref.current?.showModal(); }, []);
   useBackdropClose(ref, () => { if (!busy) onCancel(); });
-  return <dialog aria-label={title} ref={ref} onClose={ownDialogEvent} onCancel={(event) => { if (!ownDialogEvent(event)) return; event.preventDefault(); if (!busy) onCancel(); }}>
+  return <dialog className="app-modal" aria-label={title} ref={ref} onClose={ownDialogEvent} onCancel={(event) => { if (!ownDialogEvent(event)) return; event.preventDefault(); if (!busy) onCancel(); }}>
     <form onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); if (!busy) onConfirm(); }}>
       <h2>{title}</h2>{children}
       {error && <p role="alert">{error}</p>}

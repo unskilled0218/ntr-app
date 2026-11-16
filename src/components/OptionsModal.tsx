@@ -30,7 +30,7 @@ const OptionsModal = forwardRef<OptionsModalHandle, Props>(({ ariaLabel, childre
         Options
       </button>
       {/* Contents only while open, so a closed dialog leaves no stray focusable triggers in the DOM. */}
-      <dialog className="options-modal" aria-label={ariaLabel} ref={dialogRef} onClose={onClose} onCancel={onCancel}>
+      <dialog className="app-modal options-modal" aria-label={ariaLabel} ref={dialogRef} onClose={onClose} onCancel={onCancel}>
         {open && (
           <>
             <h2 className="select-modal-title">{ariaLabel}</h2>

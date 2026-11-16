@@ -29,7 +29,7 @@ export default function OpenLinkDialog({ url, onConfirm, onCancel }: Props) {
   useBackdropClose(dialogRef);
 
   return (
-    <dialog id="open-link-dialog" ref={dialogRef} aria-label="Open link" onCancel={ownDialogEvent} onClose={(event) => {
+    <dialog className="app-modal" id="open-link-dialog" ref={dialogRef} aria-label="Open link" onCancel={ownDialogEvent} onClose={(event) => {
       if (dialogWasDismissed(event) && open) onCancel();
     }}>
       <h2>Open link?</h2>

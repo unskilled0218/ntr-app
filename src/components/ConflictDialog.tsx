@@ -43,7 +43,7 @@ export default function ConflictDialog({ conflict, onChoose, onDismiss }: Props)
   const label = conflict?.resource === "tasks" ? "Tasks" : "Note";
 
   return (
-    <dialog id="conflict-dialog" ref={dialogRef} aria-labelledby="conflict-title" onCancel={ownDialogEvent} onClose={(event) => {
+    <dialog className="app-modal" id="conflict-dialog" ref={dialogRef} aria-labelledby="conflict-title" onCancel={ownDialogEvent} onClose={(event) => {
       if (dialogWasDismissed(event)) finish();
     }}>
       <h2 id="conflict-title">{label} out of sync with the server</h2>

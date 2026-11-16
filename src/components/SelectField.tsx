@@ -83,7 +83,7 @@ export default function SelectField({ ariaLabel, value, options, onChange, onRem
       </button>
       {/* Render the contents only while open: a closed dialog leaves no stray focusable buttons in
           the DOM (each field would otherwise contribute an always-present "Cancel"). */}
-      <dialog className="select-modal" aria-label={ariaLabel} ref={dialogRef} onClose={onClose} onCancel={onCancel}>
+      <dialog className="app-modal select-modal" aria-label={ariaLabel} ref={dialogRef} onClose={onClose} onCancel={onCancel}>
         {open && (
           <>
             <h2 className="select-modal-title">{ariaLabel}</h2>
