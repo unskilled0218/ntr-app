@@ -10,14 +10,15 @@ import { settle } from "./test/deferred";
 import { setEditorText } from "./lib/caret";
 import { setCompactUi } from "./settings";
 import { deferDialogCloseEvents } from "./test/dialog";
+import { labelsFromWire } from "./lib/listWire";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 const task = (id: number, raw: string): Task => ({ id, raw, description: raw, completed: false, completion_date: null, creation_date: null,
-  projects: raw.split(/\s+/).filter((token) => token.startsWith("+")).map((token) => token.slice(1)), contexts: [], tags: {} });
+  lists: raw.split(/\s+/).filter((token) => token.startsWith("+")).map((token) => token.slice(1)), contexts: [], tags: {} });
 function fixture(server = true) {
   localStorage.setItem("ntr.serverUrl", server ? "http://one" : ""); activateTransport();
-  const makeData = () => ({ tasks: [task(1, "first +work"), task(2, "second +work")], labels: { project: ["work", "other"], context: ["phone"] } as Labels, note: "base" });
+  const makeData = () => ({ tasks: [task(1, "first +work"), task(2, "second +work")], labels: { list: ["work", "other"], context: ["phone"] } as Labels, note: "base" });
   const data = makeData(), other = makeData();
   const writes: { url: string; kind: string; id?: number; text?: string }[] = [];
   let event!: (event: { payload: { connectionId: string; kind: string } }) => void;
@@ -33,6 +34,7 @@ function fixture(server = true) {
     afterWrite?.(id); return updated;
   }
   async function writeLabels(store: typeof data, labels: Labels, url: string) {
+    labels = labelsFromWire(labels);
     writes.push({ url, kind: "labels" });
     if (failLabel === "reject") { failLabel = undefined; throw new Error("labels offline"); }
     store.labels = labels;
@@ -77,7 +79,7 @@ function fixture(server = true) {
 type Origin = "add" | "filter";
 const currentPicker = () => document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
 async function picker(origin: Origin = "add") {
-  const label = origin === "add" ? "Project" : "Project filter";
+  const label = origin === "add" ? "List" : "List filter";
   const existing = currentPicker();
   if (existing?.getAttribute("aria-label") === label) return existing;
   if (existing) { fireEvent.click(within(existing).getByRole("button", { name: "Cancel" })); await act(settle); }
@@ -93,7 +95,7 @@ async function action(kind: "Rename" | "Remove", name = "work", origin: Origin =
   const renameOpen = dialog("rename").open || dialog("rename", true).open;
   expect(opened.open).toBe(origin === "add" && renameOpen);
 }
-const dialog = (kind: "rename" | "remove", draft = false) => document.querySelector(draft ? `#draft-${kind}-project-dialog` : kind === "rename" ? "#rename-project-dialog" : "#remove-label-dialog") as HTMLDialogElement;
+const dialog = (kind: "rename" | "remove", draft = false) => document.querySelector(draft ? `#draft-${kind}-list-dialog` : kind === "rename" ? "#rename-list-dialog" : "#remove-label-dialog") as HTMLDialogElement;
 async function clickDialog(kind: "rename" | "remove", name: string, draft = false) {
   await act(async () => { fireEvent.click(within(dialog(kind, draft)).getByRole("button", { name })); await settle(); });
 }
@@ -103,7 +105,7 @@ async function rename(to: string, draft = false) {
 }
 async function stage(name: string) {
   const opened = await picker();
-  fireEvent.click(within(opened).getByRole("button", { name: "+ Add project..." })); await act(settle);
+  fireEvent.click(within(opened).getByRole("button", { name: "+ Add list..." })); await act(settle);
   const modal = document.querySelector("#label-modal[open]") as HTMLElement;
   fireEvent.change(within(modal).getByRole("textbox"), { target: { value: name } });
   await act(async () => { fireEvent.submit(within(modal).getByRole("button", { name: "Add" }).closest("form")!); await settle(); });
@@ -111,7 +113,7 @@ async function stage(name: string) {
 beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers(); });
 afterEach(async () => { cleanup(); await settle(); localStorage.clear(); vi.useRealTimers(); });
 
-describe("project selector actions", () => {
+describe("list selector actions", () => {
   it.each([false, true].flatMap((compact) => ["Cancel", "Escape", "backdrop", "same-name"].map((method) => ({ compact, method }))))(
     "dismisses only rename and keeps its original selector usable ($method, compact=$compact)", async ({ compact, method }) => {
       const model = fixture(false); render(<TodoPane compact={compact} />); await act(settle);
@@ -131,7 +133,7 @@ describe("project selector actions", () => {
       expect(model.writes).toEqual([]);
       expect((screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement).value).toBe("unsaved +work");
       fireEvent.click(within(opened).getByRole("button", { name: "other" })); await act(settle);
-      expect(screen.getByRole("button", { name: "Project" }).textContent).toBe("other");
+      expect(screen.getByRole("button", { name: "List" }).textContent).toBe("other");
     },
   );
   it.each([false, true])("restores the committed target row after mapping a staged old source (compact=%s)", async (compact) => {
@@ -141,7 +143,7 @@ describe("project selector actions", () => {
     expect(within(opened).queryByRole("button", { name: "Rename work" })).toBeNull();
     const target = within(opened).getByRole("button", { name: "Rename team" });
     expect(document.activeElement).toBe(target); expect(target.isConnected).toBe(true);
-    expect(model.data.tasks.every((found) => found.projects.includes("team"))).toBe(true);
+    expect(model.data.tasks.every((found) => found.lists.includes("team"))).toBe(true);
   });
   it.each([false, true])("restores a staged-only target after its state commit (compact=%s)", async (compact) => {
     const model = fixture(false); render(<TodoPane compact={compact} />); await act(settle); await stage("scratch");
@@ -207,20 +209,20 @@ describe("project selector actions", () => {
     expect(document.activeElement).toBe(within(opened).getByRole("button", { name: "Rename team" }));
     expect(screen.queryByText("Review rename progress")).toBeNull();
   });
-  it.each([false, true])("removes a global project without deleting tasks or losing unrelated fields (server=%s)", async (server) => {
+  it.each([false, true])("removes a global list without deleting tasks or losing unrelated fields (server=%s)", async (server) => {
     const model = fixture(server); render(server ? <App /> : <TodoPane compact={false} />); await act(settle);
     fireEvent.change(screen.getByRole("textbox", { name: "New task" }), { target: { value: "draft +work +other" } });
     fireEvent.change(screen.getAllByLabelText("Due date")[0], { target: { value: "2026-11-01" } });
     await action("Remove"); await clickDialog("remove", "Remove");
     expect(dialog("remove").textContent).toContain("Removal completed");
     expect(model.data.tasks.map((found) => found.raw)).toEqual(["first", "second"]);
-    expect(model.data.labels).toEqual({ project: ["other"], context: ["phone"] });
+    expect(model.data.labels).toEqual({ list: ["other"], context: ["phone"] });
     await clickDialog("remove", "Close");
     expect((screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement).value).toBe("draft +other");
     expect((screen.getAllByLabelText("Due date")[0] as HTMLInputElement).value).toBe("2026-11-01");
     expect(model.writes.filter((write) => write.kind === "create")).toHaveLength(0);
   });
-  it.each(["Cancel", "Escape", "backdrop"])("cancels global project actions without draft or store changes (%s)", async (how) => {
+  it.each(["Cancel", "Escape", "backdrop"])("cancels global list actions without draft or store changes (%s)", async (how) => {
     const model = fixture(); render(<App />); await act(settle);
     fireEvent.change(screen.getByRole("textbox", { name: "New task" }), { target: { value: "retained" } });
     await action("Remove");
@@ -239,24 +241,24 @@ describe("project selector actions", () => {
     await action("Remove", "draftNew"); await clickDialog("remove", "Remove", true);
     expect(model.writes).toEqual([]);
     expect((screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement).value).toBe("draft +workshop");
-    expect(screen.getByRole("button", { name: "Project" }).textContent).toBe("None");
+    expect(screen.getByRole("button", { name: "List" }).textContent).toBe("None");
   });
   it("rejects staged collisions and cancels staged prompts without losing state", async () => {
     const model = fixture(false); render(<TodoPane compact={false} />); await act(settle); await stage("draftOnly");
     await action("Rename", "draftOnly"); await rename("other", true);
     expect(within(dialog("rename", true)).getByRole("alert").textContent).toContain("already exists");
     await clickDialog("rename", "Cancel", true);
-    expect(screen.getByRole("button", { name: "Project" }).textContent).toBe("draftOnly"); expect(model.writes).toEqual([]);
+    expect(screen.getByRole("button", { name: "List" }).textContent).toBe("draftOnly"); expect(model.writes).toEqual([]);
   });
   it("does not redirect an unrelated staged rename into a retained operation's reserved target", async () => {
     const model = fixture(); render(<App />); await act(settle);
     await action("Rename"); model.failTask(2); await rename("team"); await clickDialog("rename", "Close");
     await stage("scratch"); const before = model.writes.length;
     await action("Rename", "scratch"); await rename("team", true);
-    expect(within(dialog("rename", true)).getByRole("alert").textContent).toContain("unfinished project operation");
+    expect(within(dialog("rename", true)).getByRole("alert").textContent).toContain("unfinished list operation");
     expect(model.writes).toHaveLength(before); expect(dialog("rename").open).toBe(false);
     await clickDialog("rename", "Cancel", true);
-    expect(screen.getByRole("button", { name: "Project" }).textContent).toBe("scratch");
+    expect(screen.getByRole("button", { name: "List" }).textContent).toBe("scratch");
   });
   it("keeps compact staged-only rename above its parent modals without a store write", async () => {
     const model = fixture(false); render(<TodoPane compact />); await act(settle); await stage("scratch");
@@ -319,7 +321,7 @@ describe("project selector actions", () => {
     const model = fixture(); render(<App />); await act(settle);
     await action("Rename"); model.failLabel("committed"); await rename("team"); await clickDialog("rename", "Close");
     fireEvent.click(within(currentPicker()).getByRole("button", { name: "Cancel" })); await act(settle);
-    model.data.tasks = []; model.data.labels.project = ["other"]; await model.signal("tasks");
+    model.data.tasks = []; model.data.labels.list = ["other"]; await model.signal("tasks");
     await act(async () => { fireEvent.click(within(document.querySelector("#remote-update") as HTMLElement).getByRole("button", { name: "Update" })); await settle(); });
     const before = model.writes.length, opened = await picker("filter");
     expect(within(opened).queryByRole("button", { name: "work" })).toBeNull();
@@ -363,9 +365,9 @@ describe("project selector actions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Resume task draft" }));
     expect((screen.getByRole("textbox", { name: "Task description" }) as HTMLInputElement).value).toBe("edited");
     await act(async () => { fireEvent.submit(document.querySelector("#edit-task-form")!); await settle(); });
-    expect(model.data.tasks[0].raw).toContain("edited due:2026-11-01"); expect(model.data.tasks[0].projects).not.toContain("work");
+    expect(model.data.tasks[0].raw).toContain("edited due:2026-11-01"); expect(model.data.tasks[0].lists).not.toContain("work");
   });
-  it("preserves old-destination progress while operating on the same bare project name elsewhere", async () => {
+  it("preserves old-destination progress while operating on the same bare list name elsewhere", async () => {
     const model = fixture(); const ref = createRef<TodoPaneHandle>(); render(<TodoPane compact={false} ref={ref} />); await act(settle);
     await action("Rename"); model.failTask(2); await rename("team"); await clickDialog("rename", "Close");
     localStorage.setItem("ntr.serverUrl", "http://two"); activateTransport(); act(() => ref.current!.onTasksChanged()); await act(settle);

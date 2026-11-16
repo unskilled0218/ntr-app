@@ -132,6 +132,17 @@ describe("clearLegacyTodoPreferences", () => {
 });
 
 describe("getSort / setSort", () => {
+  it.each(["asc", "desc"] as const)("retains legacy list sorting and %s direction without rewriting storage", (direction) => {
+    localStorage.setItem("ntr.sort", "projects");
+    setDirection(direction);
+    expect(getSort()).toBe("lists");
+    expect(getDirection()).toBe(direction);
+    expect(localStorage.getItem("ntr.sort")).toBe("projects");
+    setSort("lists");
+    expect(getSort()).toBe("lists");
+    expect(localStorage.getItem("ntr.sort")).toBe("lists");
+  });
+
   it("defaults to 'file' when nothing is stored", () => {
     expect(getSort()).toBe("file");
   });

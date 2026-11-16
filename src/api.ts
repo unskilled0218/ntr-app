@@ -7,8 +7,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getAllowInvalidCert, getConflictStrategy, getServerUrl } from "./settings";
 import { classifyConflict } from "./lib/conflict";
+import { labelsFromWire, labelsToWire, taskFromWire, type LabelsWire, type TaskWire } from "./lib/listWire";
 
-// Task shape — exactly the backend's TaskDto (src-tauri/src/dto.rs), itself the server's shape.
+// Domain/native task shape; HTTP legacy field names are isolated in listWire.
 export interface Task {
   id: number;
   list_id?: string;
@@ -16,7 +17,7 @@ export interface Task {
   completion_date: string | null;
   creation_date: string | null;
   description: string;
-  projects: string[];
+  lists: string[];
   contexts: string[];
   tags: Record<string, string>;
   raw: string;
@@ -43,15 +44,15 @@ export async function recoverHaMove(action: "abandon" | "reconcile", operationId
   return httpJson<HaCatalog>("/api/list-move/recovery", {method:"POST", body:JSON.stringify({action, operation_id:operationId, confirmed:true})}, context);
 }
 
-// Filters for listing tasks — the server's query params, now command arguments.
+// Domain/native filters; HTTP keeps its legacy list-filter spelling at dispatch.
 export interface TaskFilter {
   completed?: boolean | null;
-  project?: string | null;
+  list?: string | null;
   context?: string | null;
 }
 
 export interface Labels {
-  project: string[];
+  list: string[];
   context: string[];
 }
 
@@ -326,7 +327,7 @@ async function backupNoteLocally(text: string, context: TransportContext): Promi
 
 async function backupLabelsLocally(labels: Labels, context: TransportContext): Promise<void> {
   try {
-    await localWrite("put_labels", { labels }, context);
+    await localWrite("put_labels", { labels: labelsToWire(labels) }, context);
   } catch (e) {
     console.warn("local labels backup failed:", e);
   }
@@ -350,14 +351,14 @@ export function listTasks(filter: TaskFilter, context = captureTransport()): Pro
   if (context.url) {
     const params = new URLSearchParams();
     if (filter.completed != null) params.set("completed", String(filter.completed));
-    if (filter.project != null) params.set("project", filter.project);
+    if (filter.list != null) params.set("project", filter.list);
     if (filter.context != null) params.set("context", filter.context);
     const qs = params.toString();
-    return httpJson<Task[]>("/api/tasks" + (qs ? "?" + qs : ""), undefined, context);
+    return httpJson<TaskWire[]>("/api/tasks" + (qs ? "?" + qs : ""), undefined, context).then((tasks) => tasks.map(taskFromWire));
   }
   return localRead("list_tasks", {
     completed: filter.completed ?? null,
-    project: filter.project ?? null,
+    list: filter.list ?? null,
     context: filter.context ?? null,
   }, context);
 }
@@ -367,12 +368,12 @@ export async function createTask(text: string, routing?: TaskRouting): Promise<T
   requireWritable("tasks", context);
   if (!context.url && routing) throw new Error("HA list routing is unavailable for local files");
   if (context.url) {
-    const task = await httpJson<Task>("/api/tasks", {
+    const task = await httpJson<TaskWire>("/api/tasks", {
       method: "POST",
       body: JSON.stringify({ text, ...routing }),
     }, context);
     if (isTransportCurrent(context)) await backupTasksLocally(context);
-    return task;
+    return taskFromWire(task);
   }
   return localWrite("create_task", { text }, context);
 }
@@ -381,12 +382,12 @@ export async function updateTask(id: number, text: string, context = captureTran
   requireWritable("tasks", context);
   if (!context.url && routing) throw new Error("HA list routing is unavailable for local files");
   if (context.url) {
-    const task = await httpJson<Task>(`/api/tasks/${id}`, {
+    const task = await httpJson<TaskWire>(`/api/tasks/${id}`, {
       method: "PUT",
       body: JSON.stringify({ text, ...routing }),
     }, context);
     if (isTransportCurrent(context)) await backupTasksLocally(context);
-    return task;
+    return taskFromWire(task);
   }
   return localWrite("update_task", { id, text }, context);
 }
@@ -395,9 +396,9 @@ export async function completeTask(id: number): Promise<Task> {
   const context = captureTransport();
   requireWritable("tasks", context);
   if (context.url) {
-    const task = await httpJson<Task>(`/api/tasks/${id}/complete`, { method: "POST" }, context);
+    const task = await httpJson<TaskWire>(`/api/tasks/${id}/complete`, { method: "POST" }, context);
     if (isTransportCurrent(context)) await backupTasksLocally(context);
-    return task;
+    return taskFromWire(task);
   }
   return localWrite("complete_task", { id }, context);
 }
@@ -406,9 +407,9 @@ export async function uncompleteTask(id: number): Promise<Task> {
   const context = captureTransport();
   requireWritable("tasks", context);
   if (context.url) {
-    const task = await httpJson<Task>(`/api/tasks/${id}/uncomplete`, { method: "POST" }, context);
+    const task = await httpJson<TaskWire>(`/api/tasks/${id}/uncomplete`, { method: "POST" }, context);
     if (isTransportCurrent(context)) await backupTasksLocally(context);
-    return task;
+    return taskFromWire(task);
   }
   return localWrite("uncomplete_task", { id }, context);
 }
@@ -445,19 +446,19 @@ export async function putNote(text: string, context = captureTransport()): Promi
 export function getLabels(context = captureTransport()): Promise<Labels> {
   requireCurrent(context);
   if (context.url) {
-    return httpJson<Labels>("/api/labels", undefined, context);
+    return httpJson<LabelsWire>("/api/labels", undefined, context).then(labelsFromWire);
   }
-  return localRead("get_labels", undefined, context);
+  return localRead<LabelsWire>("get_labels", undefined, context).then(labelsFromWire);
 }
 
 export async function putLabels(labels: Labels, context = captureTransport()): Promise<void> {
   requireWritable("tasks", context);
   if (context.url) {
-    await serverFetch("/api/labels", "PUT", JSON.stringify(labels), "application/json", context);
+    await serverFetch("/api/labels", "PUT", JSON.stringify(labelsToWire(labels)), "application/json", context);
     if (isTransportCurrent(context)) await backupLabelsLocally(labels, context);
     return;
   }
-  return localWrite("put_labels", { labels }, context);
+  return localWrite("put_labels", { labels: labelsToWire(labels) }, context);
 }
 
 interface ServerLiveEvent {

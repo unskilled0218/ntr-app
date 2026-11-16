@@ -10,7 +10,7 @@
 import PickerList, { optionLabel, type FieldOption } from "./PickerList";
 import { usePickerDialog } from "./usePickerDialog";
 import { useEffect, useRef, useState } from "react";
-import type { ProjectAction, ProjectSelectorSession } from "../lib/projectActions";
+import type { ListAction, ListSelectorSession } from "../lib/listActions";
 
 // Re-exported so the many existing `import { FieldOption } from "./SelectField"` callers are
 // untouched; the type's home is now PickerList (it describes a picker row).
@@ -21,12 +21,12 @@ interface Props {
   value: string;
   options: FieldOption[];
   onChange(value: string): void;
-  onRemove?(value: string, session?: ProjectSelectorSession): void;
-  onRename?(value: string, session?: ProjectSelectorSession): void;
+  onRemove?(value: string, session?: ListSelectorSession): void;
+  onRename?(value: string, session?: ListSelectorSession): void;
   retainActions?: boolean;
   revision?: number;
-  recoveries?: { id: number; label: string; kind: ProjectAction }[];
-  onRecover?(id: number, session?: ProjectSelectorSession): void;
+  recoveries?: { id: number; label: string; kind: ListAction }[];
+  onRecover?(id: number, session?: ListSelectorSession): void;
 }
 
 export default function SelectField({ ariaLabel, value, options, onChange, onRemove, onRename, recoveries, onRecover, retainActions, revision = 0 }: Props) {
@@ -44,7 +44,7 @@ export default function SelectField({ ariaLabel, value, options, onChange, onRem
       ?? buttons.find((button) => button.textContent === "Cancel");
     target?.focus(); setFocus(null);
   }, [focus, open, revision, options]);
-  function session(): ProjectSelectorSession | undefined {
+  function session(): ListSelectorSession | undefined {
     if (!retainActions) { closePicker(); return; }
     const id = generation.current;
     return {
@@ -63,7 +63,7 @@ export default function SelectField({ ariaLabel, value, options, onChange, onRem
     onChange(v);
   }
 
-  function dispatch<T extends string | number>(callback: ((value: T, origin?: ProjectSelectorSession) => void) | undefined, value: T) {
+  function dispatch<T extends string | number>(callback: ((value: T, origin?: ListSelectorSession) => void) | undefined, value: T) {
     // Close first so a confirm dialog the parent opens from onRemove is not stacked under us.
     // Retained sessions instead let the owner choose after resolving any recovery record.
     const origin = session();

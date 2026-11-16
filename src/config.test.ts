@@ -9,7 +9,7 @@ function task(over: Partial<Task>): Task {
     completion_date: null,
     creation_date: null,
     description: "",
-    projects: [],
+    lists: [],
     contexts: [],
     tags: {},
     raw: "",
@@ -49,11 +49,11 @@ describe("sortTasks", () => {
     expect(sortTasks([a, b, c], "due").map((t) => t.id)).toEqual([3, 1, 2]);
   });
 
-  it("projects sort keys off the alphabetically-first project, missing-project tasks last", () => {
-    const a = task({ id: 1, projects: ["work"] });
-    const b = task({ id: 2, projects: [] });
-    const c = task({ id: 3, projects: ["zeta", "alpha"] }); // keys off "alpha"
-    expect(sortTasks([a, b, c], "projects").map((t) => t.id)).toEqual([3, 1, 2]);
+  it("lists sort keys off the alphabetically-first list, missing-list tasks last", () => {
+    const a = task({ id: 1, lists: ["work"] });
+    const b = task({ id: 2, lists: [] });
+    const c = task({ id: 3, lists: ["zeta", "alpha"] }); // keys off "alpha"
+    expect(sortTasks([a, b, c], "lists").map((t) => t.id)).toEqual([3, 1, 2]);
   });
 
   it("created sort orders dates with missing dates last", () => {
@@ -89,7 +89,7 @@ describe("sortTasks", () => {
     expect(tasks.map((t) => t.id)).toEqual(before);
   });
 
-  it("offers exactly the file/due/created/projects sorts", () => {
-    expect(Object.keys(SORTS)).toEqual(["file", "due", "created", "projects"]);
+  it("offers exactly the file/due/created/lists sorts", () => {
+    expect(Object.keys(SORTS)).toEqual(["file", "due", "created", "lists"]);
   });
 });

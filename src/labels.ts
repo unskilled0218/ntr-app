@@ -12,7 +12,7 @@ export function unionLabels(remembered: string[], derived: string[]): string[] {
 // Fields the add form contributes to a todo.txt line.
 export interface ComposeFields {
   description: string;
-  project: string;
+  list: string;
   contexts: string[];
   due: string;
 }
@@ -23,7 +23,7 @@ export function composeText(f: ComposeFields): string {
   validateDescription(f.description);
   const desc = f.description.trim();
   if (desc) parts.push(desc);
-  if (f.project) parts.push(`+${f.project}`);
+  if (f.list) parts.push(`+${f.list}`);
   const descriptionTokens = new Set(desc.split(/\s+/));
   for (const context of new Set(f.contexts)) {
     if (!descriptionTokens.has(`@${context}`)) parts.push(`@${context}`);
@@ -41,7 +41,7 @@ interface EditableTask {
   creation_date: string | null;
   description: string;
   contexts: string[];
-  projects: string[];
+  lists: string[];
   tags: Record<string, string>;
 }
 
@@ -87,10 +87,10 @@ export function composeEditedTask(task: EditableTask, fields: Omit<ComposeFields
   if (!descriptionTokens.length && !task.contexts.length) return "";
 
   const submittedKeys = new Set(descriptionTokens.map(tagEntry).filter((entry) => entry !== null).map(([key]) => key));
-  const projects = task.list_id ? [] : fields.project === (task.projects[0] ?? "")
-    ? task.projects
-    : fields.project ? [fields.project] : [];
-  const labels = new Set([...projects.map((p) => `+${p}`), ...task.contexts.map((c) => `@${c}`)]);
+  const lists = task.list_id ? [] : fields.list === (task.lists[0] ?? "")
+    ? task.lists
+    : fields.list ? [fields.list] : [];
+  const labels = new Set([...lists.map((p) => `+${p}`), ...task.contexts.map((c) => `@${c}`)]);
   const seenLabels = new Set<string>();
   const body = descriptionTokens.filter((token) => {
     if (!labels.has(token)) return true;
@@ -135,26 +135,26 @@ export function hideContexts(description: string, contexts: string[]): string {
   return stripTokens(description, contexts.map((context) => `@${context}`));
 }
 
-export function listDescription(description: string, projects: string[], contexts: string[], displayedDates: TaskDateMetadata): string {
+export function listDescription(description: string, lists: string[], contexts: string[], displayedDates: TaskDateMetadata): string {
   const dateTokens = description.split(/\s+/).filter((token) => {
     const entry = tagEntry(token);
     return entry !== null && (entry[0] === "due" || entry[0] === "updated") &&
       displayedDates[entry[0]] !== undefined && (isTaskDate(entry[1]) || (entry[0] === "due" && isDueDatetime(entry[1])));
   });
-  return stripTokens(description, [...projects.map((p) => `+${p}`), ...contexts.map((c) => `@${c}`), ...dateTokens]);
+  return stripTokens(description, [...lists.map((p) => `+${p}`), ...contexts.map((c) => `@${c}`), ...dateTokens]);
 }
 
-// Strip the structured tokens already parsed into projects/contexts/tags from the raw
+// Strip the structured tokens already parsed into lists/contexts/tags from the raw
 // description text, leaving only the human-readable task text. Strips exact tokens so
 // URLs and other +/@/: characters outside parsed fields are left intact.
 export function bareDescription(
   description: string,
-  projects: string[],
+  lists: string[],
   contexts: string[],
   tags: Record<string, string>,
 ): string {
   return stripTokens(description, [
-    ...projects.map((p) => `+${p}`),
+    ...lists.map((p) => `+${p}`),
     ...contexts.map((c) => `@${c}`),
     ...Object.entries(tags).filter(([k]) => k !== "pri").map(([k, v]) => `${k}:${v}`),
   ]);
@@ -166,35 +166,35 @@ export function bareDescription(
 export function parseLabelInput(raw: string): { name: string } | { error: string } {
   const name = raw.trim().replace(/^[+@]+/, "");
   if (!name) return { error: "Name is required." };
-  if (/\s/.test(name)) return { error: "No spaces allowed in a project." };
-  if (/[+@:]/.test(name)) return { error: "A project cannot contain + @ or :" };
+  if (/\s/.test(name)) return { error: "No spaces allowed in a list." };
+  if (/[+@:]/.test(name)) return { error: "A list cannot contain + @ or :" };
   return { name };
 }
 
-// Preserve separators and all non-project tokens, including hidden lifecycle metadata.
-export function renameProjectText(raw: string, from: string, to: string): string {
+// Preserve separators and all non-list tokens, including hidden lifecycle metadata.
+export function renameListText(raw: string, from: string, to: string): string {
   return raw.replace(/\S+/g, (token) => token === `+${from}` ? `+${to}` : token);
 }
 
-export function renameProjectNames(names: string[], from: string, to: string): string[] {
+export function renameListNames(names: string[], from: string, to: string): string[] {
   return [...new Set(names.map((name) => name === from ? to : name))];
 }
 
-export function removeProjectText(raw: string, name: string): string {
+export function removeListText(raw: string, name: string): string {
   if (!raw.split(/\s+/).includes(`+${name}`)) return raw;
   return raw.replace(/\S+\s*/g, (part) => part.trimEnd() === `+${name}` ? "" : part).trimEnd();
 }
 
-export function equalLabels(a: { project: string[]; context: string[] }, b: { project: string[]; context: string[] }): boolean {
-  return (["project", "context"] as const).every((kind) => {
+export function equalLabels(a: { list: string[]; context: string[] }, b: { list: string[]; context: string[] }): boolean {
+  return (["list", "context"] as const).every((kind) => {
     const left = new Set(a[kind]), right = new Set(b[kind]);
     return left.size === right.size && [...left].every((name) => right.has(name));
   });
 }
 
-export function planProjectRename(tasks: Tagged[], from: string, to: string) {
-  return tasks.filter((task) => task.projects.includes(from)).map((task) => ({
-    id: task.id, expected: task.raw, text: renameProjectText(task.raw, from, to),
+export function planListRename(tasks: Tagged[], from: string, to: string) {
+  return tasks.filter((task) => task.lists.includes(from)).map((task) => ({
+    id: task.id, expected: task.raw, text: renameListText(task.raw, from, to),
   }));
 }
 
@@ -216,17 +216,17 @@ export function removeLabel(raw: string, kind: Kind, name: string): string {
 // The fields planLabelRemoval reads — a structural subset of api.Task, declared here so this pure
 // module needs no dependency on the transport shim (an Interface Segregation fit: it asks for
 // exactly the four fields it uses).
-type Tagged = { id: number; projects: string[]; contexts: string[]; raw: string };
+type Tagged = { id: number; lists: string[]; contexts: string[]; raw: string };
 
 // The pure removal decision: for every task that actually carries `name` (by its parsed
-// projects/contexts, not a raw substring), the id and the rewritten line with the token stripped.
+// lists/contexts, not a raw substring), the id and the rewritten line with the token stripped.
 // api.Task is structurally assignable to Tagged, so callers pass their Task[] unchanged.
 export function planLabelRemoval(
   tasks: Tagged[],
   kind: Kind,
   name: string,
 ): { id: number; text: string }[] {
-  const field = kind === "project" ? "projects" : "contexts";
+  const field = kind === "list" ? "lists" : "contexts";
   return tasks
     .filter((t) => t[field].includes(name))
     .map((t) => ({ id: t.id, text: removeLabel(t.raw, kind, name) }));

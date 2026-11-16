@@ -25,7 +25,7 @@ import {
   type Labels,
 } from "../api";
 import EditTaskModal from "./EditTaskModal";
-import HaProjects from "./HaProjects";
+import HaLists from "./HaLists";
 import { sortTasks, type Direction } from "../config";
 import {
   clearLegacyTodoPreferences,
@@ -34,20 +34,20 @@ import {
   getDirection,
   setDirection as persistDir,
 } from "../settings";
-import { parseLabelInput, removeProjectText, renameProjectText, unionLabels } from "../labels";
+import { parseLabelInput, removeListText, renameListText, unionLabels } from "../labels";
 import AddForm from "./AddForm";
 import FilterBar from "./FilterBar";
 import RemoveLabelDialog from "./RemoveLabelDialog";
 import TaskItem from "./TaskItem";
 import { ResourceRefresh } from "../lib/resourceRefresh";
 import type { ApplicationToken, RemoteUpdates } from "../lib/remoteUpdates";
-import RenameProjectDialog from "./RenameProjectDialog";
-import { ProjectRename, ProjectReviewRequired, projectRenameIO, type ProjectRenameEvent } from "../lib/projectRename";
+import RenameListDialog from "./RenameListDialog";
+import { ListRename, ListReviewRequired, listRenameIO, type ListRenameEvent } from "../lib/listRename";
 import type { TransportContext } from "../api";
-import { ProjectRemoval, type ProjectRemovalEvent } from "../lib/projectRemoval";
-import type { ProjectActionRequest, ProjectManagement, ProjectOrigin, ProjectRecovery, ProjectSelectorSession } from "../lib/projectActions";
+import { ListRemoval, type ListRemovalEvent } from "../lib/listRemoval";
+import type { ListActionRequest, ListManagement, ListOrigin, ListRecovery, ListSelectorSession } from "../lib/listActions";
 
-type ProjectRecord = { id: number; kind: "rename"; operation: ProjectRename } | { id: number; kind: "remove"; operation: ProjectRemoval };
+type ListRecord = { id: number; kind: "rename"; operation: ListRename } | { id: number; kind: "remove"; operation: ListRemoval };
 
 export interface TodoPaneHandle {
   onTasksChanged: () => void;
@@ -66,7 +66,7 @@ interface Props {
 const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialogChange, disabled = false }, ref) => {
   // Sort / direction are seeded from the local cache (lazy useState initializer runs once
   // on mount) and written back in their change handlers below, so the view options survive relaunch.
-  const [project, setProject] = useState("");
+  const [list, setList] = useState("");
   const [sort, setSort] = useState(getSort);
   const [dir, setDir] = useState<Direction>(getDirection);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -75,7 +75,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
   const addOwner = useRef(captureTransport());
   const projectTasks = (found: Task[]) => { taskProjection.current = found; setTasks(found); };
   const remote = () => captureTransport().url ? updates : undefined;
-  const [serverLabels, setServerLabels] = useState<Labels>({ project: [], context: [] });
+  const [serverLabels, setServerLabels] = useState<Labels>({ list: [], context: [] });
   const [haCatalog, setHaCatalog] = useState<HaCatalog | null>(null);
   const [catalogBlocked, setCatalogBlocked] = useState(false);
   const catalogOwner = useRef(captureTransport());
@@ -85,25 +85,25 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
   const editOwner = useRef(captureTransport());
   const editExpected = useRef<Task | null>(null);
   const [editSuspended, setEditSuspended] = useState(false);
-  const [removing, setRemoving] = useState<{ kind: "project"; name: string } | null>(null);
+  const [removing, setRemoving] = useState<{ kind: "list"; name: string } | null>(null);
   const [renameSource, setRenameSource] = useState<string | null>(null);
-  const [renameOperation, setRenameOperation] = useState<ProjectRename | null>(null);
-  const [removeOperation, setRemoveOperation] = useState<ProjectRemoval | null>(null);
-  const records = useRef(new Map<string, ProjectRecord>());
-  const displayedRecord = useRef<ProjectRecord | null>(null);
+  const [renameOperation, setRenameOperation] = useState<ListRename | null>(null);
+  const [removeOperation, setRemoveOperation] = useState<ListRemoval | null>(null);
+  const records = useRef(new Map<string, ListRecord>());
+  const displayedRecord = useRef<ListRecord | null>(null);
   const promptContext = useRef(captureTransport());
-  const promptOrigin = useRef<ProjectOrigin>("filter");
-  const promptSession = useRef<ProjectSelectorSession | undefined>(undefined);
-  const [projectNotice, setProjectNotice] = useState("");
-  const [renameEvent, setRenameEvent] = useState<ProjectRenameEvent>();
-  const [removalEvent, setRemovalEvent] = useState<ProjectRemovalEvent>();
+  const promptOrigin = useRef<ListOrigin>("filter");
+  const promptSession = useRef<ListSelectorSession | undefined>(undefined);
+  const [listNotice, setListNotice] = useState("");
+  const [renameEvent, setRenameEvent] = useState<ListRenameEvent>();
+  const [removalEvent, setRemovalEvent] = useState<ListRemovalEvent>();
   const renameSequence = useRef(0);
   const [, redraw] = useState(0);
   const bulkOwner = useRef<TransportContext | null>(null);
   const queuedRefresh = useRef(false);
-  const draftProjects = useRef({ add: [] as string[], edit: [] as string[] });
-  const addProjects = useCallback((names: string[]) => { draftProjects.current.add = names; }, []);
-  const editProjects = useCallback((names: string[]) => { draftProjects.current.edit = names; }, []);
+  const draftLists = useRef({ add: [] as string[], edit: [] as string[] });
+  const addLists = useCallback((names: string[]) => { draftLists.current.add = names; }, []);
+  const editLists = useCallback((names: string[]) => { draftLists.current.edit = names; }, []);
   useEffect(() => { onDialogChange?.(haDialog || (!!editTask && !editSuspended) || !!removing || renameSource !== null); }, [haDialog, editTask, editSuspended, removing, renameSource, onDialogChange]);
   const mounted = useRef(false);
   const tasksRequest = useRef(0);
@@ -123,7 +123,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
     };
   }, []);
 
-  // Initial/local reads fetch all active and completed tasks. Project filtering and sorting
+  // Initial/local reads fetch all active and completed tasks. List filtering and sorting
   // derive from this accepted projection at render; subsequent server reads only detect changes.
   const refresh = useCallback(async () => {
     const context = captureTransport();
@@ -155,7 +155,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
 
   // Merge task-derived labels into the remembered backend resource. A task mutation can grow this
   // set, but only explicit label removal shrinks it.
-  // Stable (no project deps): a vanished filter is dropped via the functional setState
+  // Stable (no list deps): a vanished filter is dropped via the functional setState
   // updater, which reads the latest value without closing over it — so this is created once and
   // is a correct dependency for the effect and the imperative handle below.
   const loadLabels = useCallback(async (persist = false) => {
@@ -189,21 +189,21 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
     if (!current()) return true;
     readErrors.current.labels = labelError;
     setError(readErrors.current.tasks || labelError);
-    const projects = new Set<string>();
+    const lists = new Set<string>();
     const contexts = new Set<string>();
     for (const t of all) {
-      for (const p of t.projects) projects.add(p);
+      for (const p of t.lists) lists.add(p);
       for (const c of t.contexts) contexts.add(c);
     }
     const merged: Labels = {
-      project: catalog ? catalog.lists.map((list) => list.id) : unionLabels(remembered.project, [...projects]),
+      list: catalog ? catalog.lists.map((list) => list.id) : unionLabels(remembered.list, [...lists]),
       context: unionLabels(remembered.context, [...contexts]),
     };
     setServerLabels(merged);
     if (!labelsFailed && isTransportCurrent(projectionOwner.current) && !readErrors.current.tasks) markResourceReady("tasks", context);
-    setProject((p) => (p && !merged.project.includes(p) ? "" : p));
+    setList((p) => (p && !merged.list.includes(p) ? "" : p));
     if (
-      !catalog && (persist || !context.url) && !labelsFailed && (merged.project.length !== remembered.project.length ||
+      !catalog && (persist || !context.url) && !labelsFailed && (merged.list.length !== remembered.list.length ||
       merged.context.length !== remembered.context.length)
     ) {
       await putLabels(merged, context).catch(() => {});
@@ -224,7 +224,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
       recovery.current!.cancel();
       recoveryContext.current = captureTransport();
       readErrors.current = { tasks: "", labels: "" };
-      knownLabels.current = { project: [], context: [] };
+      knownLabels.current = { list: [], context: [] };
     }
     recovery.current!.request();
   }
@@ -258,7 +258,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
           return updates.commit(token, (snapshot) => {
             projectTasks(snapshot);
             setServerLabels({
-              project: unionLabels(labels.project, snapshot.flatMap((task) => task.projects)),
+              list: unionLabels(labels.list, snapshot.flatMap((task) => task.lists)),
               context: unionLabels(labels.context, snapshot.flatMap((task) => task.contexts)),
             });
             setError("");
@@ -276,7 +276,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
   function safeAction() {
     if (catalogBlocked || !isTransportCurrent(catalogOwner.current)) { setError("Refresh the list catalog before making changes."); return false; }
     if (!canMutate("tasks") || !isTransportCurrent(projectionOwner.current)) { setError("Destination is still loading. Choose the action again when ready."); return false; }
-    if (bulkOwner.current) { setError("Wait for the project operation to stop before changing tasks."); return false; }
+    if (bulkOwner.current) { setError("Wait for the list operation to stop before changing tasks."); return false; }
     if (!remote() || (remote()!.accepted("tasks") !== undefined && !remote()!.blocked("tasks"))) return true;
     setEditSuspended(true);
     setRemoving(null);
@@ -294,7 +294,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
         ? known.map((t) => t.id === task.id ? task : t) : [...known, task]) : known.filter((t) => t.id !== removeId);
       settle?.(next);
       projectTasks(next);
-      if (!persistLabels) setServerLabels((labels) => ({ project: unionLabels(labels.project, next.flatMap((found) => found.projects)), context: unionLabels(labels.context, next.flatMap((found) => found.contexts)) }));
+      if (!persistLabels) setServerLabels((labels) => ({ list: unionLabels(labels.list, next.flatMap((found) => found.lists)), context: unionLabels(labels.context, next.flatMap((found) => found.contexts)) }));
       if (persistLabels) await loadLabels(true);
       return task;
     } catch (error) { settle?.(); throw error; }
@@ -309,7 +309,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
         addOwner.current = captureTransport();
         throw new Error("The destination changed. Submit again to add this draft to the current destination.");
       }
-      if (bulkOwner.current) throw new Error("Wait for the project operation to stop before adding tasks.");
+      if (bulkOwner.current) throw new Error("Wait for the list operation to stop before adding tasks.");
       guardDraft(text);
       await mutate(() => listId === undefined ? createTask(text) : createTask(text, {list_id:listId}));
       return isTransportCurrent(owner);
@@ -345,26 +345,26 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
     setEditTask(task);
   }
 
-  // Remove a project from the whole store: strip its token from every task that carries
+  // Remove a list from the whole store: strip its token from every task that carries
   // it. Use the full accepted list (not the filtered view) so removal spans completed tasks too;
   // update each affected task sequentially (the file-backed, one-writer model), retaining each
   // successful response. loadLabels drops the unused name and clears a filter that selected it.
   async function confirmRemove() {
     if (!removing || bulkOwner.current) return;
     const owner = captureTransport();
-    if (!isTransportCurrent(promptContext.current)) { setProjectNotice("The connection changed. Close and reopen the selector before confirming."); return; }
+    if (!isTransportCurrent(promptContext.current)) { setListNotice("The connection changed. Close and reopen the selector before confirming."); return; }
     let record = displayedRecord.current;
     if (!record) record = createRecord("remove", removing.name, "", owner);
     if (record.kind !== "remove" || record.operation.targetDestination !== destination(owner)) return;
-    setProjectNotice("");
+    setListNotice("");
     setRemoveOperation(record.operation);
     startBulk(owner);
     try { await record.operation.run(owner); }
     finally { finishBulk(owner); }
   }
 
-  function ensureProjectContext(owner: TransportContext) {
-    if (!mounted.current || !isTransportCurrent(owner)) throw new Error("The connection changed. No further project writes were issued.");
+  function ensureListContext(owner: TransportContext) {
+    if (!mounted.current || !isTransportCurrent(owner)) throw new Error("The connection changed. No further list writes were issued.");
   }
   function startBulk(owner: TransportContext) {
     bulkOwner.current = owner;
@@ -374,16 +374,16 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
     if (bulkOwner.current === owner) bulkOwner.current = null;
     if (mounted.current && queuedRefresh.current) { queuedRefresh.current = false; requestTasks(); }
   }
-  async function validateProjectTasks(owner: TransportContext): Promise<Task[]> {
-    ensureProjectContext(owner);
+  async function validateListTasks(owner: TransportContext): Promise<Task[]> {
+    ensureListContext(owner);
     if (owner.url && updates) {
       const checked = await updates.check("tasks");
-      ensureProjectContext(owner);
-      if (!checked) throw new ProjectReviewRequired();
+      ensureListContext(owner);
+      if (!checked) throw new ListReviewRequired();
       return updates.accepted("tasks")!;
     }
     const found = await listTasks({}, owner);
-    ensureProjectContext(owner);
+    ensureListContext(owner);
     const equal = found.length === taskProjection.current.length && found.every((task) => taskProjection.current.some((known) => known.id === task.id && known.raw === task.raw));
     if (!equal) {
       queuedRefresh.current = true;
@@ -394,9 +394,9 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
   function guardDraft(text: string) {
     const operation = records.current.get(destination(captureTransport()))?.operation;
     if (operation?.started && operation.phase !== "completed" && operation.targetDestination === destination(captureTransport())
-      && text.split(/\s+/).includes(`+${operation.from}`)) throw new Error("This draft refers to an unfinished project operation. Finish it or explicitly stop retry before saving it.");
+      && text.split(/\s+/).includes(`+${operation.from}`)) throw new Error("This draft refers to an unfinished list operation. Finish it or explicitly stop retry before saving it.");
   }
-  function openRecord(record: ProjectRecord, origin: ProjectOrigin, session?: ProjectSelectorSession) {
+  function openRecord(record: ListRecord, origin: ListOrigin, session?: ListSelectorSession) {
     promptSession.current = record.kind === "rename" ? session : undefined;
     if (record.kind !== "rename") session?.close();
     displayedRecord.current = record;
@@ -404,88 +404,88 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
     if (record.kind === "rename") {
       setRemoving(null); setRemoveOperation(null); setRenameOperation(record.operation); setRenameSource(record.operation.from);
     } else {
-      setRenameSource(null); setRenameOperation(null); setRemoveOperation(record.operation); setRemoving({ kind: "project", name: record.operation.from });
+      setRenameSource(null); setRenameOperation(null); setRemoveOperation(record.operation); setRemoving({ kind: "list", name: record.operation.from });
     }
   }
-  function recoverProject(id: number, origin: ProjectOrigin, session?: ProjectSelectorSession) {
-    if (bulkOwner.current) { session?.close(); setError("Wait for the current project attempt to settle."); return; }
+  function recoverList(id: number, origin: ListOrigin, session?: ListSelectorSession) {
+    if (bulkOwner.current) { session?.close(); setError("Wait for the current list attempt to settle."); return; }
     const record = [...records.current.values()].find((found) => found.id === id);
-    if (record) { setProjectNotice(""); openRecord(record, origin, session); }
+    if (record) { setListNotice(""); openRecord(record, origin, session); }
   }
-  function projectAction(request: ProjectActionRequest): boolean {
+  function listAction(request: ListActionRequest): boolean {
     function reject(message: string) { request.session?.close(); setError(message); return true; }
     if (!canMutate("tasks") || !isTransportCurrent(projectionOwner.current)) return reject("Destination is still loading. Reopen the selector when ready.");
     if (request.destination !== destination(captureTransport())) return reject("The destination changed. Reopen the selector.");
-    if (bulkOwner.current) return reject("Wait for the current project attempt to settle.");
+    if (bulkOwner.current) return reject("Wait for the current list attempt to settle.");
     const existing = records.current.get(request.destination);
     const pending = existing && existing.operation.started && existing.operation.phase !== "completed" ? existing : undefined;
     if (pending) {
       const related = pending.operation.from === request.name || (pending.kind === "rename" && pending.operation.to === request.name);
       if (related || request.scope === "known" || request.recoveryId !== undefined) {
-        setProjectNotice(related && pending.kind === request.action ? "" : "Finish or explicitly stop this pending operation before starting another project action.");
+        setListNotice(related && pending.kind === request.action ? "" : "Finish or explicitly stop this pending operation before starting another list action.");
         openRecord(pending, request.origin, request.session); return true;
       }
     }
     if (request.recoveryId !== undefined) return reject("That operation result changed. Reopen the selector.");
     if (request.scope === "staged") return false;
-    if (!knownLabels.current.project.includes(request.name)) return reject("That project changed. Reopen the selector for a new confirmation.");
+    if (!knownLabels.current.list.includes(request.name)) return reject("That list changed. Reopen the selector for a new confirmation.");
     displayedRecord.current = null;
     promptSession.current = request.action === "rename" ? request.session : undefined;
     if (request.action !== "rename") request.session?.close();
     promptContext.current = captureTransport(); promptOrigin.current = request.origin;
-    setProjectNotice(""); setRenameOperation(null); setRemoveOperation(null);
+    setListNotice(""); setRenameOperation(null); setRemoveOperation(null);
     if (request.action === "rename") { setRemoving(null); setRenameSource(request.name); }
-    else { setRenameSource(null); setRemoving({ kind: "project", name: request.name }); }
+    else { setRenameSource(null); setRemoving({ kind: "list", name: request.name }); }
     return true;
   }
-  function createRecord(kind: "rename" | "remove", from: string, to: string, owner: TransportContext): ProjectRecord {
-    let record: ProjectRecord;
+  function createRecord(kind: "rename" | "remove", from: string, to: string, owner: TransportContext): ListRecord {
+    let record: ListRecord;
     const ports = {
-      ...projectRenameIO, validate: validateProjectTasks,
+      ...listRenameIO, validate: validateListTasks,
       write: async (id: number, text: string, context: TransportContext) => {
         const task = await mutate(() => updateTask(id, text, context), undefined, context, false);
         if (!task) throw new Error("The task write returned no task. Revalidate before retrying.");
         return task;
       },
-      staged: () => [...draftProjects.current.add, ...draftProjects.current.edit],
+      staged: () => [...draftLists.current.add, ...draftLists.current.edit],
       current: () => mounted.current && records.current.get(record.operation.targetDestination) === record,
       changed: () => { if (mounted.current) redraw((n) => n + 1); },
-      completed: (labels: Labels) => completeProject(record, labels),
+      completed: (labels: Labels) => completeList(record, labels),
     };
-    record = kind === "rename" ? { id: ++renameSequence.current, kind, operation: new ProjectRename(from, to, owner, ports) }
-      : { id: ++renameSequence.current, kind, operation: new ProjectRemoval(from, owner, ports) };
+    record = kind === "rename" ? { id: ++renameSequence.current, kind, operation: new ListRename(from, to, owner, ports) }
+      : { id: ++renameSequence.current, kind, operation: new ListRemoval(from, owner, ports) };
     records.current.set(destination(owner), record); displayedRecord.current = record;
     return record;
   }
-  function completeProject(record: ProjectRecord, labels: Labels) {
-    ensureProjectContext(captureTransport());
+  function completeList(record: ListRecord, labels: Labels) {
+    ensureListContext(captureTransport());
     const operation = record.operation;
     if (destination(captureTransport()) !== operation.targetDestination) return;
     const known = remote()?.accepted("tasks") ?? taskProjection.current;
-    setServerLabels({ project: unionLabels(labels.project, known.flatMap((task) => task.projects)), context: unionLabels(labels.context, known.flatMap((task) => task.contexts)) });
-    const transform = (text: string) => record.kind === "rename" ? renameProjectText(text, operation.from, record.operation.to) : removeProjectText(text, operation.from);
+    setServerLabels({ list: unionLabels(labels.list, known.flatMap((task) => task.lists)), context: unionLabels(labels.context, known.flatMap((task) => task.contexts)) });
+    const transform = (text: string) => record.kind === "rename" ? renameListText(text, operation.from, record.operation.to) : removeListText(text, operation.from);
     const updated = operation.done.get(editExpected.current?.id ?? -1);
     if (updated && editExpected.current && destination(editOwner.current) === operation.targetDestination && transform(editExpected.current.raw) === updated.raw) editExpected.current = updated;
     const event = { id: ++renameSequence.current, destination: operation.targetDestination, from: operation.from, tasks: [...operation.done.values()] };
     if (record.kind === "rename") {
-      setProject((selected) => selected === operation.from ? record.operation.to : selected);
+      setList((selected) => selected === operation.from ? record.operation.to : selected);
       setRenameEvent({ ...event, to: record.operation.to });
     } else {
-      setProject((selected) => selected === operation.from ? "" : selected);
+      setList((selected) => selected === operation.from ? "" : selected);
       setRemovalEvent(event);
     }
-    setProjectNotice(""); setError("");
+    setListNotice(""); setError("");
   }
   async function confirmRename(name: string) {
     if (renameSource === null || bulkOwner.current) return;
     const parsed = parseLabelInput(name);
     if ("error" in parsed) return;
     const owner = captureTransport();
-    if (!isTransportCurrent(promptContext.current)) { setProjectNotice("The connection changed. Close and reopen the selector before confirming."); return; }
+    if (!isTransportCurrent(promptContext.current)) { setListNotice("The connection changed. Close and reopen the selector before confirming."); return; }
     let record = displayedRecord.current;
     if (!record || !record.operation.started) record = createRecord("rename", renameSource, parsed.name, owner);
     if (record.kind !== "rename" || record.operation.targetDestination !== destination(owner)) return;
-    setProjectNotice("");
+    setListNotice("");
     setRenameOperation(record.operation);
     startBulk(owner);
     try { await record.operation.run(owner); }
@@ -504,8 +504,8 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
       promptSession.current = undefined;
       return;
     }
-    const selector = promptOrigin.current === "add" ? (compact ? '#add-form button[aria-label="Task options"]' : '#add-form button[aria-label="Project"]')
-      : (compact ? 'button[aria-label="Filter options"]' : 'button[aria-label="Project filter"]');
+    const selector = promptOrigin.current === "add" ? (compact ? '#add-form button[aria-label="Task options"]' : '#add-form button[aria-label="List"]')
+      : (compact ? 'button[aria-label="Filter options"]' : 'button[aria-label="List filter"]');
     document.querySelector<HTMLButtonElement>(selector)?.focus();
   }
   function reviewRename() {
@@ -519,7 +519,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
     const record = displayedRecord.current;
     if (record) records.current.delete(record.operation.targetDestination);
     closeRename(); displayedRecord.current = null; setRenameOperation(null); setRemoveOperation(null);
-    setError("Project retry stopped. Partial task and label changes remain; no changes were rolled back.");
+    setError("List retry stopped. Partial task and label changes remain; no changes were rolled back.");
   }
 
   async function onEditSave(id: number, text: string, routing?: TaskRouting) {
@@ -538,27 +538,27 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
     setEditTask(null);
   }
 
-  const sorted = sortTasks(tasks.filter((task) => !project || task.projects.includes(project)), sort, dir);
-  const pending: ProjectRecovery[] = [...records.current.values()].filter((record) => record.operation.started && record.operation.phase !== "completed").map((record) => ({
+  const sorted = sortTasks(tasks.filter((task) => !list || task.lists.includes(list)), sort, dir);
+  const pending: ListRecovery[] = [...records.current.values()].filter((record) => record.operation.started && record.operation.phase !== "completed").map((record) => ({
     id: record.id, kind: record.kind, from: record.operation.from, to: record.kind === "rename" ? record.operation.to : undefined,
     destination: record.operation.targetDestination, summary: `Unfinished ${record.kind === "rename" ? "rename" : "removal"}: ${record.operation.done.size} tasks updated. Open its action to finish or stop retry.`,
   }));
-  const management: ProjectManagement = { destination: destination(captureTransport()), pending, onAction: projectAction, onRecover: recoverProject };
+  const management: ListManagement = { destination: destination(captureTransport()), pending, onAction: listAction, onRecover: recoverList };
 
   return (
-    <HaProjects catalog={haCatalog} setCatalog={setHaCatalog} disabled={disabled || catalogBlocked || !isTransportCurrent(catalogOwner.current)} beforeMutation={safeAction} onChanged={requestTasks} onDialogChange={setHaDialog}>
+    <HaLists catalog={haCatalog} setCatalog={setHaCatalog} disabled={disabled || catalogBlocked || !isTransportCurrent(catalogOwner.current)} beforeMutation={safeAction} onChanged={requestTasks} onDialogChange={setHaDialog}>
     <section className="pane todo-pane" id="todo-view">
       <div className={compact ? "todo-header todo-header--compact" : "todo-header"}>
         <h1>todo</h1>
 
         <FilterBar
           disabled={disabled}
-          project={project}
+          list={list}
           sort={sort}
           dir={dir}
           compact={compact}
           serverLabels={serverLabels}
-          onProject={setProject}
+          onList={setList}
           onSort={(s) => { setSort(s); persistSort(s); }}
           onDir={(d) => { const next = d as Direction; setDir(next); persistDir(next); }}
           onRemove={(kind, name) => setRemoving({ kind, name })}
@@ -582,7 +582,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
         </fieldset>
       </div>
 
-      <AddForm serverLabels={serverLabels} onAdd={onAdd} compact={compact} rename={renameEvent} removal={removalEvent} onProjectsChange={addProjects} management={management} disabled={disabled || catalogBlocked} />
+      <AddForm serverLabels={serverLabels} onAdd={onAdd} compact={compact} rename={renameEvent} removal={removalEvent} onListsChange={addLists} management={management} disabled={disabled || catalogBlocked} />
       {editTask && editSuspended && <button type="button" onClick={() => setEditSuspended(false)}>Resume task draft</button>}
 
       <EditTaskModal
@@ -594,16 +594,16 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
         onClose={() => setEditTask(null)}
         rename={renameEvent}
         removal={removalEvent}
-        onProjectsChange={editProjects}
+        onListsChange={editLists}
       />
 
-      <RemoveLabelDialog target={removing} operation={removeOperation} error={projectNotice} onConfirm={() => { void confirmRemove(); }} onCancel={closeRename}
+      <RemoveLabelDialog target={removing} operation={removeOperation} error={listNotice} onConfirm={() => { void confirmRemove(); }} onCancel={closeRename}
         onReview={reviewRename} onAbandon={abandonRename} readOnly={disabled || (!!removeOperation && removeOperation.targetDestination !== management.destination)} />
-      <RenameProjectDialog source={renameSource} operation={renameOperation}
-        onConfirm={(name) => { void confirmRename(name); }} onClose={closeRename} onReview={reviewRename} onAbandon={abandonRename} error={projectNotice}
+      <RenameListDialog source={renameSource} operation={renameOperation}
+        onConfirm={(name) => { void confirmRename(name); }} onClose={closeRename} onReview={reviewRename} onAbandon={abandonRename} error={listNotice}
         readOnly={disabled || (!!renameOperation && renameOperation.targetDestination !== management.destination)} />
     </section>
-    </HaProjects>
+    </HaLists>
   );
 });
 

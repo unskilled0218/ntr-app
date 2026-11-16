@@ -1,12 +1,12 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { parseLabelInput } from "../labels";
-import type { ProjectRename } from "../lib/projectRename";
+import type { ListRename } from "../lib/listRename";
 import { dialogWasDismissed, ownDialogEvent } from "./dialogEvents";
 import { useBackdropClose } from "./useBackdropClose";
 
 interface Props {
   source: string | null;
-  operation: ProjectRename | null;
+  operation: ListRename | null;
   onConfirm(name: string): void;
   onClose(): void;
   onReview(): void;
@@ -16,7 +16,7 @@ interface Props {
   readOnly?: boolean;
   error?: string;
 }
-export default function RenameProjectDialog({ source, operation, onConfirm, onClose, onReview, onAbandon, id = "rename-project-dialog", scope, readOnly, error: externalError }: Props) {
+export default function RenameListDialog({ source, operation, onConfirm, onClose, onReview, onAbandon, id = "rename-list-dialog", scope, readOnly, error: externalError }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
@@ -55,14 +55,14 @@ export default function RenameProjectDialog({ source, operation, onConfirm, onCl
       if ("error" in parsed) { setError(parsed.error); return; }
       setError(""); onConfirm(parsed.name);
     }}>
-      <h2 id={`${id}-title`} className="select-modal-title">Rename project</h2>
-      <div className="original-project" role="group" aria-label="Original"><span>Original</span><strong>{source}</strong></div>
+      <h2 id={`${id}-title`} className="select-modal-title">Rename list</h2>
+      <div className="original-list" role="group" aria-label="Original"><span>Original</span><strong>{source}</strong></div>
       {scope === "draft" && <p>Changes this draft only.</p>}
       {readOnly && <p role="status">This result belongs to {operation?.targetDestination}. Return to that destination to retry, or explicitly stop retry without rolling back changes.</p>}
-      <label>New project name<input ref={input} aria-label="New project name" value={name} disabled={busy || operation?.started} onChange={(event) => setName(event.currentTarget.value)} /></label>
+      <label>New list name<input ref={input} aria-label="New list name" value={name} disabled={busy || operation?.started} onChange={(event) => setName(event.currentTarget.value)} /></label>
       {(busy || !!operation?.done.size) && <p role="status">{busy ? "Working… Please wait; issued writes cannot be canceled." : `${operation?.done.size} tasks renamed. Completed writes are not rolled back.`}</p>}
       {(error || externalError || operation?.error) && <p className="modal-error" role="alert">{error || externalError || operation?.error}</p>}
-      {operation?.started && !busy && operation.phase !== "completed" && <p>Stopping retry keeps all completed changes and releases draft restrictions. It does not merge projects or undo the partial rename.</p>}
+      {operation?.started && !busy && operation.phase !== "completed" && <p>Stopping retry keeps all completed changes and releases draft restrictions. It does not merge lists or undo the partial rename.</p>}
       <div className="modal-actions">
         <button type="button" disabled={busy} onClick={close}>{operation?.started ? "Close" : "Cancel"}</button>
         {operation?.phase === "paused-for-review" && !readOnly && <button type="button" onClick={review}>Review update</button>}

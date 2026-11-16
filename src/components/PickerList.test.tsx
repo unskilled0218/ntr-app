@@ -5,7 +5,7 @@ import PickerList, { optionLabel, type FieldOption } from "./PickerList";
 // The selectable-row contract that both SelectField and SortField now depend on.
 
 const OPTIONS: FieldOption[] = [
-  { value: "", label: "All projects" },
+  { value: "", label: "All lists" },
   { value: "work", label: "work", removable: true },
   { value: "home", label: "home", removable: true },
 ];
@@ -14,7 +14,7 @@ beforeEach(() => { vi.clearAllMocks(); });
 afterEach(() => { cleanup(); });
 
 describe("PickerList", () => {
-  it("uses keyboard-native icon buttons without submitting a form or choosing a project", () => {
+  it("uses keyboard-native icon buttons without submitting a form or choosing a list", () => {
     const onChoose = vi.fn(), onRename = vi.fn(), onRemove = vi.fn(), onSubmit = vi.fn();
     render(<form onSubmit={onSubmit}><PickerList options={[{ value: "work", label: "work", renamable: true, removable: true, description: "Unfinished rename" }]}
       value="" onChoose={onChoose} onRename={onRename} onRemove={onRemove} /></form>);
@@ -31,7 +31,7 @@ describe("PickerList", () => {
   });
   it("renders one choice button per option", () => {
     render(<PickerList options={OPTIONS} value="" onChoose={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "All projects" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "All lists" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "work" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "home" })).toBeTruthy();
   });
@@ -52,8 +52,8 @@ describe("PickerList", () => {
   it("shows Remove only on removable rows and only when onRemove is passed", () => {
     const onRemove = vi.fn();
     render(<PickerList options={OPTIONS} value="" onChoose={vi.fn()} onRemove={onRemove} />);
-    // "All projects" is not removable; the label rows are.
-    expect(screen.queryByRole("button", { name: /remove all projects/i })).toBeNull();
+    // "All lists" is not removable; the label rows are.
+    expect(screen.queryByRole("button", { name: /remove all lists/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /remove work/i }));
     expect(onRemove).toHaveBeenCalledWith("work");
   });
@@ -70,7 +70,7 @@ describe("optionLabel", () => {
   });
 
   it("falls back to the first option's label when the value matches none", () => {
-    expect(optionLabel(OPTIONS, "missing")).toBe("All projects");
+    expect(optionLabel(OPTIONS, "missing")).toBe("All lists");
   });
 
   it("returns an empty string when there are no options", () => {

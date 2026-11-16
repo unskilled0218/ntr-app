@@ -21,8 +21,8 @@ function ControlledModal({ family, onDismiss, onConfirm }: { family: Family; onD
   return <>
     <button type="button" onClick={() => setOpen(true)}>Reopen</button>
     <button type="button" onClick={() => setOpen(false)}>Owner closes</button>
-    {family === "label" && <LabelModal kind={open ? "project" : null} onClose={dismiss} onConfirm={confirm} />}
-    {family === "removal" && <RemoveLabelDialog target={open ? { kind: "project", name: "work" } : null} onCancel={dismiss} onConfirm={confirm} />}
+    {family === "label" && <LabelModal kind={open ? "list" : null} onClose={dismiss} onConfirm={confirm} />}
+    {family === "removal" && <RemoveLabelDialog target={open ? { kind: "list", name: "work" } : null} onCancel={dismiss} onConfirm={confirm} />}
     {family === "note conflict" && <NoteConflictDialog open={open} mine="unsaved work" theirs="incoming work" onClose={dismiss} onKeepMine={confirm} onUseTheirs={confirm} />}
     {family === "link" && <OpenLinkDialog url={open ? "https://example.com" : null} onCancel={dismiss} onConfirm={confirm} />}
   </>;
@@ -111,16 +111,16 @@ describe("externally controlled modal lifecycle", () => {
     const onConfirm = vi.fn();
     try {
       function Owner() {
-        const [target, setTarget] = useState<{ kind: "project"; name: string } | null>(null);
+        const [target, setTarget] = useState<{ kind: "list"; name: string } | null>(null);
         return <>
-          <FilterBar compact project="work" sort="file" dir="asc" serverLabels={{ project: ["work"], context: [] }}
-            onProject={vi.fn()} onSort={vi.fn()} onDir={vi.fn()} onRemove={(kind, name) => setTarget({ kind, name })} />
+          <FilterBar compact list="work" sort="file" dir="asc" serverLabels={{ list: ["work"], context: [] }}
+            onList={vi.fn()} onSort={vi.fn()} onDir={vi.fn()} onRemove={(kind, name) => setTarget({ kind, name })} />
           <RemoveLabelDialog target={target} onConfirm={onConfirm} onCancel={() => setTarget(null)} />
         </>;
       }
       render(<Owner />);
       fireEvent.click(screen.getByRole("button", { name: "Filter options" }));
-      fireEvent.click(screen.getByRole("button", { name: "Project filter" }));
+      fireEvent.click(screen.getByRole("button", { name: "List filter" }));
       const picker = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
       fireEvent.click(within(picker).getByRole("button", { name: "Remove work" }));
       const prompt = document.getElementById("remove-label-dialog") as HTMLDialogElement;
@@ -135,8 +135,8 @@ describe("externally controlled modal lifecycle", () => {
       expect(prompt.open).toBe(false);
       expect(options.open).toBe(true);
       expect(onConfirm).not.toHaveBeenCalled();
-      expect(screen.getByRole("button", { name: "Project filter" }).textContent).toBe("work");
-      fireEvent.click(screen.getByRole("button", { name: "Project filter" }));
+      expect(screen.getByRole("button", { name: "List filter" }).textContent).toBe("work");
+      fireEvent.click(screen.getByRole("button", { name: "List filter" }));
       expect(picker.open).toBe(true);
     } finally {
       deferred.restore();

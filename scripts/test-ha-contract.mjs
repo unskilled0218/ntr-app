@@ -20,9 +20,10 @@ try {
   execFileSync("cargo", ["build", "--locked"], { cwd: serverRoot, stdio: "inherit" });
   await build({ configFile: false, root, logLevel: "error", build: {
     outDir: join(dir, "client"), emptyOutDir: false,
-    lib: { entry: join(root, "src/labels.ts"), formats: ["es"], fileName: () => "labels.mjs" },
+    lib: { entry: { labels: join(root, "src/labels.ts"), listWire: join(root, "src/lib/listWire.ts") }, formats: ["es"], fileName: (_format, name) => `${name}.mjs` },
   } });
   const { composeEditedTask, bareDescription } = await import(pathToFileURL(join(dir, "client/labels.mjs")));
+  const { taskFromWire } = await import(pathToFileURL(join(dir, "client/listWire.mjs")));
   fake = spawn("python3", [join(serverRoot, "tests/fixtures/fake_ha.py"), dir], { stdio: ["ignore", "pipe", "inherit"] });
   const lines = createInterface({ input: fake.stdout });
   const [port] = await Promise.race([
@@ -59,7 +60,9 @@ try {
    const request = async (path, method = "GET", text, routing = {}) => {
     const response = await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: method === "GET" ? undefined : JSON.stringify({ text, ...routing }) });
     assert.ok(response.ok, `${method} ${path}: ${await response.clone().text()}`);
-    return response.status === 204 ? null : response.json();
+     if (response.status === 204) return null;
+     const value = await response.json();
+     return /^\/api\/tasks(?:\/|$)/.test(path) ? (Array.isArray(value) ? value.map(taskFromWire) : taskFromWire(value)) : value;
   };
   await start();
   const created = await request("/api/tasks", "POST", "2026-11-01 task +work due:2026-11-16T23:00:00-05:00");
@@ -71,13 +74,13 @@ try {
   assert.equal(unknown.completed, true);
   assert.equal(unknown.creation_date, null);
   assert.equal(unknown.completion_date, null);
-  const description = bareDescription(unknown.description, unknown.projects, unknown.contexts, unknown.tags);
-  const text = composeEditedTask(unknown, { description: description + " edited", project: "work", due: unknown.tags.due }, "2026-11-15");
+   const description = bareDescription(unknown.description, unknown.lists, unknown.contexts, unknown.tags);
+   const text = composeEditedTask(unknown, { description: description + " edited", list: "work", due: unknown.tags.due }, "2026-11-15");
   const edited = await request(`/api/tasks/${created.id}`, "PUT", text);
   assert.equal(edited.completed, true);
   assert.equal(edited.tags.due, unknown.tags.due);
-  // HA projects native due last rather than persisting a byte-identical todo.txt line.
-  composeEditedTask(edited, { description: "validate readback", project: "work", due: edited.tags.due }, "2026-11-15");
+   // HA projects native due last rather than persisting a byte-identical todo.txt line.
+   composeEditedTask(edited, { description: "validate readback", list: "work", due: edited.tags.due }, "2026-11-15");
   assert.equal((await control()).items[0].description, "**HA description**\nretained");
   assert.equal((await request(`/api/tasks/${created.id}/uncomplete`, "POST")).creation_date, "2026-11-01");
   server.kill();
@@ -89,7 +92,7 @@ try {
   assert.equal(restarted.id, created.id);
   assert.equal(restarted.creation_date, null);
   assert.equal(restarted.completion_date, null);
-  composeEditedTask(restarted, { description: "after restart", project: "work", due: restarted.tags.due }, "2026-11-15");
+   composeEditedTask(restarted, { description: "after restart", list: "work", due: restarted.tags.due }, "2026-11-15");
   const denied = await fetch(base + "/api/raw", { method: "PUT", body: "never upload" });
   assert.equal(denied.status, 400);
   assert.equal(await readFile(join(dir, "old-tasks.txt"), "utf8"), "do not migrate\n");
@@ -97,8 +100,8 @@ try {
   const catalog = await request("/api/lists");
   assert.equal(catalog.lists.length, 2);
   const beforeMove = await request(`/api/tasks/${created.id}`);
-  const movedText = composeEditedTask(beforeMove, {description:bareDescription(beforeMove.description, [], beforeMove.contexts, beforeMove.tags), project:"todo.other", due:beforeMove.tags.due}, "2026-11-16");
-  assert.ok(movedText.includes("+work"), "legacy summary project text remains lossless");
+   const movedText = composeEditedTask(beforeMove, {description:bareDescription(beforeMove.description, [], beforeMove.contexts, beforeMove.tags), list:"todo.other", due:beforeMove.tags.due}, "2026-11-16");
+   assert.ok(movedText.includes("+work"), "summary list text remains lossless");
   assert.ok(!movedText.includes("+todo.other"), "routing must not be encoded as summary tokens");
   const moved = await request(`/api/tasks/${created.id}`, "PUT", movedText, {list_id:"todo.other", confirm_move:true, expected_source:"todo.fixture", expected_raw:beforeMove.raw});
   assert.equal(moved.id, created.id); assert.equal(moved.list_id, "todo.other");

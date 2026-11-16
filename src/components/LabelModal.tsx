@@ -1,4 +1,4 @@
-// The "+ Add project/context..." modal. Native <dialog> gives a focus trap and Escape-to-dismiss,
+// The "+ Add list/context..." modal. Native <dialog> gives a focus trap and Escape-to-dismiss,
 // plus click-outside-to-dismiss via useBackdropClose; dismissing changes nothing (the add-form
 // select was never moved off its prior value). Ported from #label-modal + app.js openLabelModal/
 // confirmLabel.

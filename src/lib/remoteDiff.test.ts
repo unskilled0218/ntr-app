@@ -3,7 +3,7 @@ import type { Task } from "../api";
 import { DIFF_WORK_BUDGET, PREVIEW_CHARACTERS, PREVIEW_ROWS, previewPage, remoteDiff, START } from "./remoteDiff";
 
 const note = (baseline: string, snapshot: string) => remoteDiff({ resource: "note", baseline, snapshot, identity: snapshot });
-const task = (id: number, raw: string): Task => ({ id, raw, description: raw, completed: false, creation_date: null, completion_date: null, projects: [], contexts: [], tags: {} });
+const task = (id: number, raw: string): Task => ({ id, raw, description: raw, completed: false, creation_date: null, completion_date: null, lists: [], contexts: [], tags: {} });
 describe("remote diff evidence", () => {
   it("uses compact typed omission metadata, not an instructional sentence", () => {
     const before = Array.from({ length: 20 }, (_, index) => `line${index}`).join("\n");

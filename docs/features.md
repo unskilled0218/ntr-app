@@ -6,7 +6,7 @@
 ## Tasks and notes
 
 - Add, edit, complete, reopen, delete, filter, and sort tasks.
-- Manage [projects](project-renaming.md); HA projects represent lists, including empty lists.
+- Manage [lists](project-renaming.md), including empty HA lists.
 - Edit Markdown notes with live preview, autosave, and conflict choices.
 - Change due dates while preserving a datetime's time and offset; see [editing](task-text.md).
 

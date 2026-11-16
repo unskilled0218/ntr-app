@@ -68,6 +68,8 @@ export function clearLegacyTodoPreferences(): void {
 
 export function getSort(): string {
   const v = localStorage.getItem(SORT_KEY);
+  // Older installations used this value; preserve the preference and direction.
+  if (v === "projects") return "lists";
   return v && v in SORTS ? v : "file";
 }
 

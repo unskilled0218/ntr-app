@@ -13,7 +13,7 @@ beforeEach(() => {
     const req = (args as {req:{url:string; method:string; body?:string}}).req;
     const path = new URL(req.url).pathname;
     calls.push({path, method:req.method, body:req.body ? JSON.parse(req.body) : undefined});
-    const body = path === "/api/capabilities" ? {task_backend:"homeassistant", raw_task_replace:false} : path === "/api/lists" ? {lists:[{id:"todo.default",name:"Default",is_default:true}],can_create:false,pending_move:null} : path === "/api/raw" ? "task\n" : {id:1,list_id:"todo.target",raw:"task",description:"task",projects:["todo.target"]};
+    const body = path === "/api/capabilities" ? {task_backend:"homeassistant", raw_task_replace:false} : path === "/api/lists" ? {lists:[{id:"todo.default",name:"Default",is_default:true}],can_create:false,pending_move:null} : path === "/api/raw" ? "task\n" : {id:1,list_id:"todo.target",raw:"task",description:"task",lists:["todo.target"]};
     return {ok:status === 200, status, status_text:"Response", body:typeof body === "string" ? body : JSON.stringify(body)};
   });
   startTransportSession(); markResourceReady("tasks", captureTransport()); finishInitialization(captureTransport());

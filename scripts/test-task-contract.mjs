@@ -14,9 +14,10 @@ const cargo = (cwd, args) => execFileSync("cargo", args, { cwd, stdio: "inherit"
 try {
   await build({ configFile: false, root, logLevel: "error", build: {
     outDir: join(dir, "client"), emptyOutDir: false,
-    lib: { entry: join(root, "src/labels.ts"), formats: ["es"], fileName: () => "labels.mjs" },
+    lib: { entry: { labels: join(root, "src/labels.ts"), listWire: join(root, "src/lib/listWire.ts") }, formats: ["es"], fileName: (_format, name) => `${name}.mjs` },
   } });
   const { composeText, composeEditedTask, bareDescription } = await import(pathToFileURL(join(dir, "client/labels.mjs")));
+  const { taskFromWire } = await import(pathToFileURL(join(dir, "client/listWire.mjs")));
   cargo(join(root, "src-tauri"), ["build", "--locked", "--example", "task_contract"]);
   const binary = resolve(process.env.CARGO_TARGET_DIR ?? join(root, "src-tauri/target"), "debug/examples/task_contract");
   const localDir = join(dir, "local");
@@ -34,7 +35,9 @@ try {
   }
 
   async function exercise(name, run, raw, old) {
-    const fields = { project: "work", due: "2026-11-01" };
+    const transport = run;
+    run = async (...args) => taskFromWire(await transport(...args));
+    const fields = { list: "work", due: "2026-11-01" };
     for (const completed of [false, true]) {
       for (const shape of ["new", "old"]) {
         for (const tokens of ["pri:A pri:B pri:A", "pri:A pri:A", "pri:A pri:B", "pri:B pri:A", "pri:C", ""]) {
@@ -43,7 +46,7 @@ try {
           let dto = await run("raw", initial);
           // Extra old response fields must not influence the authoritative raw prefix.
           if (shape === "old") dto = { ...dto, priority: "A" };
-          assert.equal(bareDescription(dto.description, dto.projects, dto.contexts, dto.tags), "call pri:A pri:B pri:A");
+          assert.equal(bareDescription(dto.description, dto.lists, dto.contexts, dto.tags), "call pri:A pri:B pri:A");
           const description = `call${tokens ? ` ${tokens}` : ""}`;
           const text = composeEditedTask(dto, { ...fields, description }, "2026-10-30");
           const saved = await run("edit", text);
@@ -63,10 +66,10 @@ try {
       }
     }
     for (const description of ["(A)call", "(a) call", "(AA) call", "(A)) call", "call (A)", "call pri:A pri:B pri:A"]) {
-      const text = composeText({ description, project: "", contexts: [], due: "" });
+      const text = composeText({ description, list: "", contexts: [], due: "" });
       const dto = await run("raw", text);
       assert.equal(dto.description, description);
-      const edited = composeEditedTask(dto, { description, project: "", due: "" }, "2026-10-30");
+      const edited = composeEditedTask(dto, { description, list: "", due: "" }, "2026-10-30");
       await run("edit", edited);
       await run("complete");
       const reopened = await run("reopen");
@@ -80,7 +83,7 @@ try {
       }
     }
     for (const description of ["(A)", "(A) call"]) {
-      assert.throws(() => composeText({ description, project: "", contexts: [], due: "" }), /reserved for legacy data/);
+      assert.throws(() => composeText({ description, list: "", contexts: [], due: "" }), /reserved for legacy data/);
     }
     // The plan's unconditional submitted-description guard also blocks existing visible leading tokens after dates.
     for (const initial of ["2026-06-01 (A) call", "x 2026-06-02 2026-06-01 (A) call"]) {

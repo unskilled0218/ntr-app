@@ -1,12 +1,12 @@
 import { destination, errMsg, isTransportCurrent, type Labels, type Task, type TransportContext } from "../api";
-import { equalLabels, removeProjectText } from "../labels";
-import { ProjectReviewRequired, type ProjectRenamePorts, type RenamePhase } from "./projectRename";
+import { equalLabels, removeListText } from "../labels";
+import { ListReviewRequired, type ListRenamePorts, type RenamePhase } from "./listRename";
 
-export interface ProjectRemovalEvent { id: number; destination: string; from: string; tasks: Task[] }
-export type ProjectRemovalPorts = Omit<ProjectRenamePorts, "staged">;
+export interface ListRemovalEvent { id: number; destination: string; from: string; tasks: Task[] }
+export type ListRemovalPorts = Omit<ListRenamePorts, "staged">;
 
 // Removal owns its own progress, not a rename with an empty target. All retries are explicit.
-export class ProjectRemoval {
+export class ListRemoval {
   phase: RenamePhase = "ready";
   error = "";
   started = false;
@@ -15,7 +15,7 @@ export class ProjectRemoval {
   readonly targetDestination: string;
   private uncertain?: { id: number; before: string; intended: string };
   private labelAttempt?: { before: Labels; intended: Labels };
-  constructor(readonly from: string, context: TransportContext, private readonly ports: ProjectRemovalPorts) {
+  constructor(readonly from: string, context: TransportContext, private readonly ports: ListRemovalPorts) {
     this.targetDestination = destination(context);
   }
   get busy() { return this.phase === "checking" || this.phase === "running"; }
@@ -38,14 +38,14 @@ export class ProjectRemoval {
         this.uncertain = undefined;
       }
       const initialLabels = await this.ports.labels(context); this.ensure(context);
-      if (!this.started && !tasks.some((task) => task.projects.includes(this.from)) && !initialLabels.project.includes(this.from)) {
-        throw new Error("The source project no longer exists. Reopen the selector and choose a current project.");
+      if (!this.started && !tasks.some((task) => task.lists.includes(this.from)) && !initialLabels.list.includes(this.from)) {
+        throw new Error("The source list no longer exists. Reopen the selector and choose a current list.");
       }
-      const plan = tasks.filter((task) => task.projects.includes(this.from)).map((task) => ({ id: task.id, before: task.raw, intended: removeProjectText(task.raw, this.from) }));
+      const plan = tasks.filter((task) => task.lists.includes(this.from)).map((task) => ({ id: task.id, before: task.raw, intended: removeListText(task.raw, this.from) }));
       this.remaining = plan.length; this.phase = "running"; this.ports.changed();
       for (const change of plan) {
         tasks = await this.ports.validate(context); this.ensure(context);
-        if (tasks.find((task) => task.id === change.id)?.raw !== change.before) throw new ProjectReviewRequired();
+        if (tasks.find((task) => task.id === change.id)?.raw !== change.before) throw new ListReviewRequired();
         this.started = true; this.uncertain = change;
         const task = await this.ports.write(change.id, change.intended, context);
         this.done.set(task.id, task); this.uncertain = undefined; this.remaining--;
@@ -53,26 +53,26 @@ export class ProjectRemoval {
         await this.ports.validate(context); this.ensure(context);
       }
       tasks = await this.ports.validate(context); this.ensure(context);
-      if (tasks.some((task) => task.projects.includes(this.from))) throw new ProjectReviewRequired();
+      if (tasks.some((task) => task.lists.includes(this.from))) throw new ListReviewRequired();
       tasksDone = true;
       let labels = await this.ports.labels(context); this.ensure(context);
       if (this.labelAttempt && !equalLabels(labels, this.labelAttempt.before) && !equalLabels(labels, this.labelAttempt.intended)) {
-        throw new Error("Remembered projects changed after an uncertain removal. Resolve labels or explicitly stop retry; completed changes remain.");
+        throw new Error("Remembered lists changed after an uncertain removal. Resolve labels or explicitly stop retry; completed changes remain.");
       }
-      const intended = { ...labels, project: labels.project.filter((name) => name !== this.from) };
+      const intended = { ...labels, list: labels.list.filter((name) => name !== this.from) };
       tasks = await this.ports.validate(context); this.ensure(context);
-      if (tasks.some((task) => task.projects.includes(this.from))) throw new ProjectReviewRequired();
+      if (tasks.some((task) => task.lists.includes(this.from))) throw new ListReviewRequired();
       if (!this.labelAttempt || !equalLabels(labels, this.labelAttempt.intended)) {
         this.labelAttempt = { before: labels, intended }; this.started = true;
         await this.ports.saveLabels(intended, context); this.ensure(context);
         labels = await this.ports.labels(context); this.ensure(context);
-        if (!equalLabels(labels, intended)) throw new Error("Could not verify project removal from remembered labels. Tasks already changed remain changed.");
+        if (!equalLabels(labels, intended)) throw new Error("Could not verify list removal from remembered labels. Tasks already changed remain changed.");
       }
       tasks = await this.ports.validate(context); this.ensure(context);
-      if (tasks.some((task) => task.projects.includes(this.from))) throw new ProjectReviewRequired();
+      if (tasks.some((task) => task.lists.includes(this.from))) throw new ListReviewRequired();
       this.phase = "completed"; this.ports.completed(labels);
     } catch (error) {
-      this.phase = error instanceof ProjectReviewRequired ? "paused-for-review" : tasksDone ? "labels-pending" : "failed";
+      this.phase = error instanceof ListReviewRequired ? "paused-for-review" : tasksDone ? "labels-pending" : "failed";
       this.error = errMsg(error);
     } finally { this.ports.changed(); }
     return this.phase === "completed" ? "completed" : this.started ? "partial" : "failed";

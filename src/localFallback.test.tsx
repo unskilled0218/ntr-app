@@ -11,7 +11,7 @@ import { deferred, settle } from "./test/deferred";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 const unavailable = { kind: "connection", message: "error sending request for url (server-url)" };
-const task = (description: string): Task => ({ id: 1, description, raw: description, projects: ["local-project"], contexts: [], tags: {}, completed: false, completion_date: null, creation_date: null });
+const task = (description: string): Task => ({ id: 1, description, raw: description, lists: ["local-list"], contexts: [], tags: {}, completed: false, completion_date: null, creation_date: null });
 let offline: boolean;
 let localNote: string;
 let localTasks: Task[];
@@ -34,7 +34,7 @@ beforeEach(() => {
     if (command === "get_note") return localNote;
     if (command === "get_raw") return localTasks.map((found) => found.raw).join("\n");
     if (command === "list_tasks") return structuredClone(localTasks);
-    if (command === "get_labels") return { project: ["local-project"], context: [] };
+    if (command === "get_labels") return { list: ["local-list"], context: [] };
     if (command === "put_note") { localNote = (args as { text: string }).text; return; }
     if (command === "put_labels") return;
     if (command === "put_raw") return;
@@ -47,7 +47,7 @@ beforeEach(() => {
       if (offline) throw unavailable;
       const req = (args as { req: { url: string; method: string } }).req;
       const path = new URL(req.url).pathname;
-      const body = path === "/api/note" ? remoteNote : path === "/api/raw" ? remoteTasks.map((found) => found.raw).join("\n") : path === "/api/tasks" ? JSON.stringify(remoteTasks) : JSON.stringify({ project: ["server-project"], context: [] });
+      const body = path === "/api/note" ? remoteNote : path === "/api/raw" ? remoteTasks.map((found) => found.raw).join("\n") : path === "/api/tasks" ? JSON.stringify(remoteTasks) : JSON.stringify({ list: ["server-list"], context: [] });
       return { ok: true, status: 200, status_text: "OK", body };
     }
   });
@@ -76,8 +76,8 @@ it.each(["ask", "server", "local"])("shows local tasks, note, labels, and mode i
   expect(localStorage.getItem("ntr.serverUrl")).toBe("http://saved-server");
   expect(canMutate("tasks")).toBe(true);
   expect(canMutate("note")).toBe(true);
-  fireEvent.click(screen.getByRole("button", { name: "Project filter" }));
-  expect(screen.getByRole("button", { name: "local-project" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "List filter" }));
+  expect(screen.getByRole("button", { name: "local-list" })).toBeTruthy();
 });
 
 it("loads empty local files as normal empty states", async () => {
@@ -269,7 +269,7 @@ it("keeps task dialog cancellation and settings available while native storage i
     return original(name, args);
   });
   const { putLabels } = await import("./api");
-  const save = putLabels({ project: ["pending backup"], context: [] });
+  const save = putLabels({ list: ["pending backup"], context: [] });
   await act(settle);
   await act(async () => { offline = true; await getLabels().catch(() => {}); await settle(); });
   expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
@@ -294,7 +294,7 @@ it("waits for an in-flight local backup before loading fallback without losing m
     return original(name, args);
   });
   const { putLabels } = await import("./api");
-  const save = putLabels({ project: ["backup"], context: [] });
+  const save = putLabels({ list: ["backup"], context: [] });
   await act(settle);
   await act(async () => { offline = true; await getNote().catch(() => {}); await settle(); });
   expect(screen.getByText("Waiting for local storage")).toBeTruthy();

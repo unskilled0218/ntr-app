@@ -6,7 +6,7 @@
 
 ## Editing safely
 
-Use Add/Edit for task content, project/list selection, and due dates. Cancel saves nothing. If a task changed remotely, review the update and reopen Edit; copy your draft rather than replaying a stale action. Invalid or inconsistent task data is rejected without a write. Follow the reported correction or upgrade the server instead of bypassing validation.
+Use Add/Edit for task content, list selection, and due dates. Cancel saves nothing. If a task changed remotely, review the update and reopen Edit; copy your draft rather than replaying a stale action. Invalid or inconsistent task data is rejected without a write. Follow the reported correction or upgrade the server instead of bypassing validation.
 
 ## Due dates
 

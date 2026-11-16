@@ -10,7 +10,7 @@ const SORT_OPTIONS: FieldOption[] = [
   { value: "file", label: "File order" },
   { value: "due", label: "Due date" },
   { value: "created", label: "Created" },
-  { value: "projects", label: "Projects" },
+  { value: "lists", label: "Lists" },
 ];
 const DIR_OPTIONS: FieldOption[] = [
   { value: "asc", label: "ASC" },
@@ -53,7 +53,7 @@ describe("SortField", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sort" }));
     const dialog = openDialog();
     // Sort keys (incl. the task-16 additions, no A-Z) ...
-    expect(dialog.getByRole("button", { name: "Projects" })).toBeTruthy();
+    expect(dialog.getByRole("button", { name: "Lists" })).toBeTruthy();
     expect(dialog.queryByRole("button", { name: "Contexts" })).toBeNull();
     expect(dialog.queryByRole("button", { name: "Priority" })).toBeNull();
     expect(dialog.queryByRole("button", { name: /^a-z$/i })).toBeNull();
@@ -74,8 +74,8 @@ describe("SortField", () => {
     const { onSort, onDir } = renderField();
     fireEvent.click(screen.getByRole("button", { name: "Sort" }));
 
-    fireEvent.click(openDialog().getByRole("button", { name: "Projects" }));
-    expect(onSort).toHaveBeenCalledWith("projects");
+    fireEvent.click(openDialog().getByRole("button", { name: "Lists" }));
+    expect(onSort).toHaveBeenCalledWith("lists");
     // Still open: the whole point of one modal is to set both choices.
     expect(isOpen()).toBe(true);
 

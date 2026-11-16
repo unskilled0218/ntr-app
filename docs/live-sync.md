@@ -17,7 +17,7 @@ The diff compares saved accepted content, not unsaved editor text. Task identity
 
 Pending note updates pause autosave, blur, and pagehide writes. Dirty notes require **Keep mine / Use theirs** after update approval. Dismissing that choice does not authorize an overwrite. IME and outstanding saves can defer application without acknowledging success.
 
-Task filters/sorts use accepted content. Own writes apply only their returned task or targeted deletion. Stale IDs require review, not replay. Review can suspend an edit draft; **Resume task draft** restores it, but a changed task needs a new Edit action. [Project operations](project-renaming.md) retain separate partial progress and explicit retry.
+Task filters/sorts use accepted content. Own writes apply only their returned task or targeted deletion. Stale IDs require review, not replay. Review can suspend an edit draft; **Resume task draft** restores it, but a changed task needs a new Edit action. [List operations](project-renaming.md) retain separate partial progress and explicit retry.
 
 ## Connection recovery
 

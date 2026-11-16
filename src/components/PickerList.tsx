@@ -1,6 +1,6 @@
 import { useId } from "react";
-import ProjectActionIcon from "./ProjectActionIcon";
-import type { ProjectAction } from "../lib/projectActions";
+import ListActionIcon from "./ListActionIcon";
+import type { ListAction } from "../lib/listActions";
 
 // One group of selectable rows inside a picker modal: a vertical <ul> of option buttons with the
 // current selection marked (aria-current), plus an optional Remove button per row (label pickers
@@ -28,7 +28,7 @@ interface Props {
   onChoose(value: string): void;
   onRemove?(value: string): void;
   onRename?(value: string): void;
-  recoveries?: { id: number; label: string; kind: ProjectAction }[];
+  recoveries?: { id: number; label: string; kind: ListAction }[];
   onRecover?(id: number): void;
 }
 
@@ -54,7 +54,7 @@ export default function PickerList({ options, value, onChoose, onRemove, onRenam
           {o.description && <span className="sr-only" id={`${id}-${index}`}>{o.description}</span>}
           {o.renamable && onRename && <button type="button" className="picker-rename" title={`Rename ${o.label}`} aria-label={`Rename ${o.label}`} aria-describedby={o.description ? `${id}-${index}` : undefined} onClick={(event) => {
             event.preventDefault(); onRename(o.value);
-          }}><ProjectActionIcon action="rename" /></button>}
+          }}><ListActionIcon action="rename" /></button>}
           {o.removable && onRemove && (
             <button
               type="button"
@@ -67,14 +67,14 @@ export default function PickerList({ options, value, onChoose, onRemove, onRenam
                 onRemove(o.value);
               }}
             >
-              <ProjectActionIcon action="remove" />
+              <ListActionIcon action="remove" />
             </button>
           )}
         </li>
       ))}
       {recoveries?.map((entry) => <li key={`recovery-${entry.id}`} className="picker-recovery"><button type="button" onClick={(event) => {
         event.preventDefault(); onRecover?.(entry.id);
-      }}><ProjectActionIcon action={entry.kind} /><span>{entry.label}</span></button></li>)}
+      }}><ListActionIcon action={entry.kind} /><span>{entry.label}</span></button></li>)}
     </ul>
   );
 }

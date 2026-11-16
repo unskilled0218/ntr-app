@@ -51,7 +51,7 @@ const TASK = {
   completion_date: null,
   creation_date: null,
   description: "test",
-  projects: [],
+  lists: [],
   contexts: [],
   tags: {},
   raw: "test",
@@ -108,6 +108,16 @@ afterEach(() => {
 });
 
 describe("listTasks (server mode)", () => {
+  it("converts an existing server task without changing literal task content", async () => {
+    const { lists: _lists, ...fields } = TASK;
+    const wire = { ...fields, description: "project planning +my-project", raw: "project planning +my-project", projects: ["my-project"] };
+    mockServer([[[wire]]]);
+    const [task] = await listTasks({ list: "my-project" });
+    expect(task).toEqual({ ...fields, description: wire.description, raw: wire.raw, lists: ["my-project"] });
+    expect(task).not.toHaveProperty("projects");
+    expect(reqOf(0).url).toContain("project=my-project");
+  });
+
   it.each(["", SERVER])("rejects an obsolete explicit task-write context before dispatch (url=%j)", async (url) => {
     localStorage.setItem("ntr.serverUrl", url);
     const owner = captureTransport();
@@ -138,7 +148,7 @@ describe("listTasks (server mode)", () => {
 
   it("appends only non-null filter params", async () => {
     mockServer([[[]]]);
-    await listTasks({ completed: false, project: "work", context: null });
+    await listTasks({ completed: false, list: "work", context: null });
     const url = reqOf(0).url;
     expect(url).toContain("completed=false");
     expect(url).toContain("project=work");
@@ -146,23 +156,33 @@ describe("listTasks (server mode)", () => {
     expect(url).not.toContain("priority=");
   });
 
-  it("project-only requests do not restrict completion or context", async () => {
+  it("list-only requests do not restrict completion or context", async () => {
     mockServer([[[]]]);
-    await listTasks({ project: "work" });
+    await listTasks({ list: "work" });
     expect(reqOf(0).url).toBe(`${SERVER}/api/tasks?project=work`);
   });
 });
 
 describe("listTasks (local mode)", () => {
-  it("project-only requests pass null completion and context restrictions", async () => {
+  it("list-only requests pass null completion and context restrictions", async () => {
     localStorage.removeItem("ntr.serverUrl");
     vi.mocked(invoke).mockResolvedValueOnce([TASK]);
-    await expect(listTasks({ project: "work" })).resolves.toEqual([TASK]);
-    expect(invoke).toHaveBeenCalledWith("list_tasks", { completed: null, project: "work", context: null });
+    await expect(listTasks({ list: "work" })).resolves.toEqual([TASK]);
+    expect(invoke).toHaveBeenCalledWith("list_tasks", { completed: null, list: "work", context: null });
   });
 });
 
 describe("createTask (server mode)", () => {
+  it.each(["create", "update", "complete", "reopen"])("converts legacy HTTP %s readback into the list domain", async (action) => {
+    const { lists: _lists, ...fields } = TASK;
+    const wire = { ...fields, projects: ["work"] };
+    mockServer([[wire], [TASK.raw + "\n"]]);
+    const result = await (action === "create" ? createTask(TASK.raw) : action === "update" ? updateTask(1, TASK.raw) : action === "complete" ? completeTask(1) : uncompleteTask(1));
+    expect(result).toEqual({ ...fields, lists: ["work"] });
+    expect(result).not.toHaveProperty("projects");
+    expect(invoke).toHaveBeenCalledWith("put_raw", { text: TASK.raw + "\n" });
+  });
+
   it("calls POST /api/tasks with a JSON body and Content-Type", async () => {
     mockServer([[TASK], [TASK.raw + "\n"]]);
     const result = await createTask("buy milk");
@@ -190,7 +210,7 @@ describe("updateTask (server mode)", () => {
 
   it("roundtrips persisted dates and backs up the server's raw line without restamping", async () => {
     const raw = "2026-10-10 Do something +cart due:2026-10-12 custom:new updated:2026-10-11";
-    const saved = { ...TASK, creation_date: "2026-10-10", description: raw.slice(11), projects: ["cart"], tags: { due: "2026-10-12", custom: "new", updated: "2026-10-11" }, raw };
+    const saved = { ...TASK, creation_date: "2026-10-10", description: raw.slice(11), lists: ["cart"], tags: { due: "2026-10-12", custom: "new", updated: "2026-10-11" }, raw };
     mockServer([[saved], [raw + "\n"]]);
     expect(await updateTask(1, raw)).toEqual(saved);
     expect(reqOf(0).body).toBe(JSON.stringify({ text: raw }));
@@ -255,7 +275,17 @@ describe("putNote (server mode)", () => {
 });
 
 describe("labels (server mode)", () => {
-  const labels = { project: ["work"], context: ["phone"] };
+  const labels = { list: ["work"], context: ["phone"] };
+
+  it("reads existing HTTP and native label keys into the list domain", async () => {
+    mockServer([[{ project: ["my-project"], context: ["phone"] }]]);
+    await expect(getLabels()).resolves.toEqual({ list: ["my-project"], context: ["phone"] });
+    localStorage.removeItem("ntr.serverUrl");
+    vi.mocked(invoke).mockResolvedValueOnce({ project: ["my-project"], context: ["phone"] });
+    await expect(getLabels()).resolves.toEqual({ list: ["my-project"], context: ["phone"] });
+    await putLabels({ list: ["my-project"], context: ["phone"] });
+    expect(invoke).toHaveBeenCalledWith("put_labels", { labels: { project: ["my-project"], context: ["phone"] } });
+  });
 
   it("gets labels as JSON", async () => {
     mockServer([[labels]]);
@@ -269,10 +299,10 @@ describe("labels (server mode)", () => {
     expect(reqOf(0)).toMatchObject({
       url: `${SERVER}/api/labels`,
       method: "PUT",
-      body: JSON.stringify(labels),
+      body: JSON.stringify({ project: ["work"], context: ["phone"] }),
       contentType: "application/json",
     });
-    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_labels", { labels });
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("put_labels", { labels: { project: ["work"], context: ["phone"] } });
   });
 });
 
@@ -499,7 +529,7 @@ describe("transport-bound deferred work", () => {
     expect(reqOf(0).url).toBe(`${SERVER}/api/note`);
     expect(vi.mocked(invoke).mock.calls).toHaveLength(1);
     expect(() => getNote(owner)).toThrow("Connection changed");
-    await expect(putLabels({ project: ["A"], context: [] }, owner)).rejects.toThrow("Connection changed");
+    await expect(putLabels({ list: ["A"], context: [] }, owner)).rejects.toThrow("Connection changed");
   });
 
   it("invalidates local contexts even when the URL stays empty", () => {

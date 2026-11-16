@@ -8,6 +8,7 @@ import TodoPane, { type TodoPaneHandle } from "./components/TodoPane";
 import { activateTransport, type Labels, type Task } from "./api";
 import { deferred, settle } from "./test/deferred";
 import { setEditorText } from "./lib/caret";
+import { labelsFromWire } from "./lib/listWire";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -15,11 +16,11 @@ function task(id: number, raw: string): Task {
   const completed = raw.startsWith("x ");
   const description = completed ? raw.slice(2) : raw;
   return { id, raw, completed, description, completion_date: null, creation_date: null,
-    projects: [...new Set(description.split(/\s+/).filter((token) => token.startsWith("+")).map((token) => token.slice(1)))], contexts: [], tags: {} };
+    lists: [...new Set(description.split(/\s+/).filter((token) => token.startsWith("+")).map((token) => token.slice(1)))], contexts: [], tags: {} };
 }
 function fixture(server = true) {
   localStorage.setItem("ntr.serverUrl", server ? "http://shared" : ""); activateTransport();
-  const data = { tasks: [task(1, "first +old"), task(2, "x second +old")], labels: { project: ["old", "other"], context: ["phone"] } as Labels, note: "base" };
+  const data = { tasks: [task(1, "first +old"), task(2, "x second +old")], labels: { list: ["old", "other"], context: ["phone"] } as Labels, note: "base" };
   let connectionId = "";
   let signal!: (event: { payload: { connectionId: string; kind: string } }) => void;
   let heldRead: Promise<Task[]> | undefined;
@@ -35,6 +36,7 @@ function fixture(server = true) {
     return data.labels;
   }
   async function writeLabels(labels: Labels) {
+    labels = labelsFromWire(labels);
     labelsWritten.push(labels);
     if (failLabel === "PUT") { failLabel = undefined; throw new Error("labels write failed"); }
     data.labels = labels; verificationPending = true;
@@ -81,10 +83,10 @@ function fixture(server = true) {
     failLabels: (stage: typeof failLabel) => { failLabel = stage; },
   };
 }
-const renameDialog = () => document.querySelector("#rename-project-dialog") as HTMLDialogElement;
+const renameDialog = () => document.querySelector("#rename-list-dialog") as HTMLDialogElement;
 async function openRename(name = "old") {
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Project filter" }));
+    fireEvent.click(screen.getByRole("button", { name: "List filter" }));
     await settle();
   });
   const picker = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
@@ -94,7 +96,7 @@ async function openRename(name = "old") {
   expect(renameDialog().open).toBe(true);
 }
 async function submitRename(name = "new") {
-  fireEvent.change(within(renameDialog()).getByRole("textbox", { name: "New project name" }), { target: { value: name } });
+  fireEvent.change(within(renameDialog()).getByRole("textbox", { name: "New list name" }), { target: { value: name } });
   await act(async () => { fireEvent.submit(renameDialog().querySelector("form")!); await settle(); });
 }
 async function clickRename(name: string) {
@@ -103,20 +105,20 @@ async function clickRename(name: string) {
 beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers(); });
 afterEach(async () => { cleanup(); await settle(); localStorage.clear(); vi.useRealTimers(); });
 
-describe("project rename through real panes and transport", () => {
+describe("list rename through real panes and transport", () => {
   it.each([false, true])("renames active/completed tasks, follows the filter, and preserves add drafts (server=%s)", async (server) => {
     const { data, writes, labelsWritten } = fixture(server);
     render(server ? <App /> : <TodoPane compact={false} />); await act(settle);
     fireEvent.change(screen.getByRole("textbox", { name: "New task" }), { target: { value: "draft +old +oldish" } });
-    fireEvent.click(screen.getByRole("button", { name: "Project filter" }));
+    fireEvent.click(screen.getByRole("button", { name: "List filter" }));
     fireEvent.click(within(document.querySelector("dialog.select-modal[open]") as HTMLElement).getByRole("button", { name: "old" }));
     await openRename(); await submitRename();
     expect(renameDialog().open).toBe(false);
     expect(writes).toEqual([1, 2]);
     expect(data.tasks.map((found) => found.raw)).toEqual(["first +new", "x second +new"]);
-    expect(data.labels).toEqual({ project: ["new", "other"], context: ["phone"] });
+    expect(data.labels).toEqual({ list: ["new", "other"], context: ["phone"] });
     expect(labelsWritten).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Project filter" }).textContent).toBe("new");
+    expect(screen.getByRole("button", { name: "List filter" }).textContent).toBe("new");
     expect((screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement).value).toBe("draft +new +oldish");
   });
   it.each(["Cancel", "Escape", "backdrop", "same-name"])("does not write for %s", async (dismiss) => {
@@ -144,7 +146,7 @@ describe("project rename through real panes and transport", () => {
     fireEvent(renameDialog(), new Event("cancel", { cancelable: true })); await act(settle);
     expect(renameDialog().open).toBe(true); expect(model.writes).toEqual([1]);
     model.holdRead(); await act(async () => { held.resolve(model.data.tasks); await settle(); });
-    expect(model.writes).toEqual([1, 2]); expect(model.data.labels.project).toEqual(["new", "other"]);
+    expect(model.writes).toEqual([1, 2]); expect(model.data.labels.list).toEqual(["new", "other"]);
   });
   it("retains partial writes and retries only the remaining task", async () => {
     const model = fixture(); render(<App />); await act(settle); await openRename(); model.failTask(2);
@@ -154,7 +156,7 @@ describe("project rename through real panes and transport", () => {
     expect((within(renameDialog()).getByRole("textbox") as HTMLInputElement).value).toBe("new");
     expect(model.writes).toEqual([1, 2]);
     await clickRename("Retry rename");
-    expect(model.writes).toEqual([1, 2, 2]); expect(model.data.labels.project).toEqual(["new", "other"]);
+    expect(model.writes).toEqual([1, 2, 2]); expect(model.data.labels.list).toEqual(["new", "other"]);
   });
   it("rejects invalid names, remembered collisions, and staged/inline draft target collisions without writes", async () => {
     const model = fixture(); render(<App />); await act(settle);
@@ -171,10 +173,10 @@ describe("project rename through real panes and transport", () => {
     await submitRename(); expect(model.writes).toEqual([]); expect(model.labelsWritten).toEqual([]);
     expect(model.data.labels.context).toEqual(["phone"]);
   });
-  it("retains unrelated task-derived project suggestions after completion", async () => {
+  it("retains unrelated task-derived list suggestions after completion", async () => {
     const model = fixture(); model.data.tasks.push(task(3, "unrelated +unremembered"));
     render(<App />); await act(settle); await openRename(); await submitRename(); expect(renameDialog().open).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Project filter" }));
+    fireEvent.click(screen.getByRole("button", { name: "List filter" }));
     expect(within(document.querySelector("dialog.select-modal[open]") as HTMLElement).getByRole("button", { name: "unremembered" })).toBeTruthy();
     expect(model.data.tasks[2].raw).toBe("unrelated +unremembered");
   });
@@ -187,8 +189,8 @@ describe("project rename through real panes and transport", () => {
     expect((screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement).value).toBe("retained +old");
     await openRename();
     await clickRename("Stop retry; keep partial changes");
-    expect(model.data.tasks[0].projects).toEqual(["new"]);
-    expect(model.data.tasks[1].projects).toEqual(["old"]);
+    expect(model.data.tasks[0].lists).toEqual(["new"]);
+    expect(model.data.tasks[1].lists).toEqual(["old"]);
     expect(screen.queryByRole("button", { name: "Review rename progress" })).toBeNull();
   });
   it("keeps pending progress and stops further writes across a transport replacement", async () => {
@@ -209,7 +211,7 @@ describe("project rename through real panes and transport", () => {
     expect(model.writes).toEqual([1, 2]);
     await openRename();
     await clickRename("Retry rename");
-    expect(model.writes).toEqual([1, 2, 2]); expect(model.data.labels.project).toEqual(["new", "other"]);
+    expect(model.writes).toEqual([1, 2, 2]); expect(model.data.labels.list).toEqual(["new", "other"]);
   });
   it("does not issue follow-up writes after unmount", async () => {
     const model = fixture(); const view = render(<App />); await act(settle); await openRename();
@@ -225,7 +227,7 @@ describe("project rename through real panes and transport", () => {
     await clickRename("Finish labels");
     expect(model.writes).toEqual([1, 2]);
     expect(model.labelsWritten).toHaveLength(stage === "VERIFY" ? 1 : 2);
-    expect(model.data.labels.project).toEqual(["new", "other"]);
+    expect(model.data.labels.list).toEqual(["new", "other"]);
   });
   it("yields a partial rename to remote review and never resumes writes without explicit retry", async () => {
     const model = fixture(); render(<App />); await act(settle); await openRename();
@@ -257,21 +259,21 @@ describe("project rename through real panes and transport", () => {
       && (args as { req: { url: string; method: string } }).req.url.endsWith("/api/note")
       && (args as { req: { method: string } }).req.method !== "GET")).toHaveLength(0);
   });
-  it("fixes multi-task project removal with a delayed post-write validation read", async () => {
+  it("fixes multi-task list removal with a delayed post-write validation read", async () => {
     const model = fixture(); render(<App />); await act(settle);
-    fireEvent.click(screen.getByRole("button", { name: "Project filter" }));
+    fireEvent.click(screen.getByRole("button", { name: "List filter" }));
     fireEvent.click(within(document.querySelector("dialog.select-modal[open]") as HTMLElement).getByRole("button", { name: "Remove old" }));
     const held = deferred<Task[]>(); model.afterWrite((id) => { if (id === 1) model.holdRead(held.promise); });
     await act(async () => { fireEvent.click(within(document.querySelector("#remove-label-dialog") as HTMLElement).getByRole("button", { name: "Remove" })); await settle(); });
     expect(model.writes).toEqual([1]); model.holdRead();
     await act(async () => { held.resolve(model.data.tasks); await settle(); });
     expect(model.writes).toEqual([1, 2]); expect(model.data.tasks.map((found) => found.raw)).toEqual(["first", "x second"]);
-    expect(model.data.labels.project).toEqual(["other"]);
+    expect(model.data.labels.list).toEqual(["other"]);
   });
-  it("stops project removal on genuine divergence without replaying old task IDs", async () => {
+  it("stops list removal on genuine divergence without replaying old task IDs", async () => {
     const model = fixture(); render(<App />); await act(settle);
     model.afterWrite((id) => { if (id === 1) model.data.tasks = [model.data.tasks[0], task(90, "reassigned +old")]; });
-    fireEvent.click(screen.getByRole("button", { name: "Project filter" }));
+    fireEvent.click(screen.getByRole("button", { name: "List filter" }));
     fireEvent.click(within(document.querySelector("dialog.select-modal[open]") as HTMLElement).getByRole("button", { name: "Remove old" }));
     await act(async () => { fireEvent.click(within(document.querySelector("#remove-label-dialog") as HTMLElement).getByRole("button", { name: "Remove" })); await settle(); });
     expect(model.writes).toEqual([1]); expect(model.labelsWritten).toEqual([]);
@@ -290,6 +292,6 @@ describe("project rename through real panes and transport", () => {
     expect((screen.getByRole("textbox", { name: "Task description" }) as HTMLInputElement).value).toBe("edited +new +oldish");
     await act(async () => { fireEvent.submit(document.querySelector("#edit-task-form")!); await settle(); });
     expect(model.data.tasks[0].raw).toContain("edited +new +oldish");
-    expect(model.data.tasks[0].projects).not.toContain("old");
+    expect(model.data.tasks[0].lists).not.toContain("old");
   });
 });

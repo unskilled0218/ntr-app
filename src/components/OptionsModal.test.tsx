@@ -40,11 +40,11 @@ describe("OptionsModal", () => {
     const onChange = vi.fn();
     render(
       <OptionsModal ariaLabel="Task options">
-        <SelectField ariaLabel="Project" value="" options={[{ value: "work", label: "work" }]} onChange={onChange} />
+        <SelectField ariaLabel="List" value="" options={[{ value: "work", label: "work" }]} onChange={onChange} />
       </OptionsModal>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Task options" }));
-    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
     const child = document.querySelector("dialog.select-modal") as HTMLDialogElement;
     if (method === "backdrop") fireEvent.click(child);
     else if (method === "native cancel") cancelDialog(child);
@@ -52,7 +52,7 @@ describe("OptionsModal", () => {
     expect(child.open).toBe(false);
     expect(isOpen()).toBe(true);
     expect(onChange).toHaveBeenCalledTimes(method === "selection" ? 1 : 0);
-    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
     expect(child.open).toBe(true);
     cancelDialog(child);
     fireEvent.click(openDialog().getByRole("button", { name: "Done" }));

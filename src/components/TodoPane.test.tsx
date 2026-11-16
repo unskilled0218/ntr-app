@@ -22,10 +22,10 @@ vi.mock("../api", async (importOriginal) => ({
 
 import { completeTask, createTask, deleteTask, getLabels, listTasks, putLabels, uncompleteTask, updateTask } from "../api";
 
-// Open the Project filter picker and click a label row's Remove button, returning once the
+// Open the List filter picker and click a label row's Remove button, returning once the
 // confirm dialog can be acted on. The picker lists labels once the mount loadLabels resolves.
 async function openRemove(name: string) {
-  fireEvent.click(await screen.findByRole("button", { name: /project filter/i }));
+  fireEvent.click(await screen.findByRole("button", { name: /list filter/i }));
   const picker = () => within(document.querySelector("dialog.select-modal[open]") as HTMLElement);
   const removeBtn = await waitFor(() => picker().getByRole("button", { name: new RegExp(`remove ${name}`, "i") }));
   fireEvent.click(removeBtn);
@@ -33,14 +33,14 @@ async function openRemove(name: string) {
 
 // The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
 
-function task(id: number, raw: string, projects: string[], contexts: string[]): Task {
+function task(id: number, raw: string, lists: string[], contexts: string[]): Task {
   return {
     id,
     completed: false,
     completion_date: null,
     creation_date: null,
     description: raw,
-    projects,
+    lists,
     contexts,
     tags: {},
     raw,
@@ -57,24 +57,24 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(listTasks).mockResolvedValue(TASKS);
   vi.mocked(updateTask).mockResolvedValue(TASKS[0]);
-  vi.mocked(getLabels).mockResolvedValue({ project: ["work", "home"], context: ["phone"] });
+  vi.mocked(getLabels).mockResolvedValue({ list: ["work", "home"], context: ["phone"] });
   vi.mocked(putLabels).mockResolvedValue();
 });
 afterEach(() => { cleanup(); localStorage.clear(); });
 
 describe("TodoPane removal glue", () => {
-  it("removing a project validates current tasks and projects only its own responses", async () => {
+  it("removing a list validates current tasks and applies only its own responses", async () => {
     let stored = [...TASKS];
     vi.mocked(listTasks).mockImplementation(async () => stored);
     vi.mocked(updateTask).mockImplementation(async (id, raw) => {
       const previous = stored.find((task) => task.id === id)!;
-      const updated = { ...previous, raw, projects: previous.projects.filter((name) => name !== "work") };
+      const updated = { ...previous, raw, lists: previous.lists.filter((name) => name !== "work") };
       stored = stored.map((task) => task.id === id ? updated : task);
       return updated;
     });
     render(<TodoPane compact={false} />);
 
-    // Open the Project filter picker and click the "work" row's Remove button.
+    // Open the List filter picker and click the "work" row's Remove button.
     await openRemove("work");
 
     // Confirm in the dialog.
@@ -87,10 +87,10 @@ describe("TodoPane removal glue", () => {
     expect(vi.mocked(updateTask)).toHaveBeenCalledWith(1, "call bank @phone", expect.objectContaining({ url: "" }));
     expect(vi.mocked(updateTask)).toHaveBeenCalledWith(3, "post", expect.objectContaining({ url: "" }));
     expect(vi.mocked(updateTask).mock.calls.some(([id]) => id === 2)).toBe(false);
-    await waitFor(() => expect(vi.mocked(putLabels)).toHaveBeenCalledWith({ project: ["home"], context: ["phone"] }, expect.objectContaining({ url: "" })));
+    await waitFor(() => expect(vi.mocked(putLabels)).toHaveBeenCalledWith({ list: ["home"], context: ["phone"] }, expect.objectContaining({ url: "" })));
 
     expect(vi.mocked(listTasks).mock.calls.length).toBeGreaterThan(callsBefore);
-    expect(stored.filter((task) => task.projects.includes("work"))).toHaveLength(0);
+    expect(stored.filter((task) => task.lists.includes("work"))).toHaveLength(0);
   });
 
   it("retains visible content when an update fails", async () => {
@@ -129,7 +129,7 @@ describe("TodoPane live recovery", () => {
 
   it("ignores a late old-target task and label read after replacement", async () => {
     const oldTasks = deferred<Task[]>();
-    const oldLabels = deferred<{ project: string[]; context: string[] }>();
+    const oldLabels = deferred<{ list: string[]; context: string[] }>();
     vi.mocked(listTasks).mockReturnValueOnce(oldTasks.promise);
     vi.mocked(getLabels).mockReturnValueOnce(oldLabels.promise);
     const ref = createRef<TodoPaneHandle>();
@@ -137,11 +137,11 @@ describe("TodoPane live recovery", () => {
     localStorage.setItem("ntr.serverUrl", "http://server-b");
     activateTransport();
     vi.mocked(listTasks).mockResolvedValue([task(20, "B task", [], [])]);
-    vi.mocked(getLabels).mockResolvedValue({ project: [], context: [] });
+    vi.mocked(getLabels).mockResolvedValue({ list: [], context: [] });
     await act(async () => { ref.current!.onTasksChanged(); await settle(); });
     await act(async () => {
       oldTasks.resolve([task(1, "A task +old", ["old"], [])]);
-      oldLabels.resolve({ project: ["old"], context: [] });
+      oldLabels.resolve({ list: ["old"], context: [] });
       await settle();
     });
     expect(container.querySelector("#tasks")!.textContent).toContain("B task");
@@ -177,14 +177,14 @@ describe("TodoPane live recovery", () => {
 });
 
 describe("TodoPane remembered labels", () => {
-  it("keeps the last task's project selected and in the picker after deletion", async () => {
+  it("keeps the last task's list selected and in the picker after deletion", async () => {
     const only = task(1, "call bank +work", ["work"], []);
     vi.mocked(listTasks).mockResolvedValue([only]);
-    vi.mocked(getLabels).mockResolvedValue({ project: ["work"], context: [] });
+    vi.mocked(getLabels).mockResolvedValue({ list: ["work"], context: [] });
     vi.mocked(deleteTask).mockResolvedValue();
     render(<TodoPane compact={false} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /project filter/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /list filter/i }));
     let picker = within(document.querySelector("dialog.select-modal[open]") as HTMLElement);
     fireEvent.click(picker.getByRole("button", { name: "work" }));
 
@@ -192,17 +192,17 @@ describe("TodoPane remembered labels", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect((screen.getByText("No tasks.") as HTMLParagraphElement).hidden).toBe(false));
 
-    const projectFilter = screen.getByRole("button", { name: /project filter/i });
-    expect(projectFilter.textContent).toBe("work");
-    fireEvent.click(projectFilter);
+    const listFilter = screen.getByRole("button", { name: /list filter/i });
+    expect(listFilter.textContent).toBe("work");
+    fireEvent.click(listFilter);
     picker = within(document.querySelector("dialog.select-modal[open]") as HTMLElement);
     expect(picker.getByRole("button", { name: "work" })).toBeTruthy();
     expect(vi.mocked(putLabels)).not.toHaveBeenCalled();
   });
 
-  it("forgets an explicitly removed project and clears its filter", async () => {
+  it("forgets an explicitly removed list and clears its filter", async () => {
     let current = [task(1, "call bank +work", ["work"], [])];
-    let remembered = { project: ["work"], context: [] as string[] };
+    let remembered = { list: ["work"], context: [] as string[] };
     vi.mocked(listTasks).mockImplementation(async () => current);
     vi.mocked(getLabels).mockImplementation(async () => remembered);
     vi.mocked(updateTask).mockImplementation(async () => {
@@ -212,14 +212,14 @@ describe("TodoPane remembered labels", () => {
     vi.mocked(putLabels).mockImplementation(async (labels) => { remembered = labels; });
     render(<TodoPane compact={false} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /project filter/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /list filter/i }));
     let picker = within(document.querySelector("dialog.select-modal[open]") as HTMLElement);
     fireEvent.click(picker.getByRole("button", { name: "work" }));
     await openRemove("work");
     fireEvent.click(within(document.getElementById("remove-label-dialog") as HTMLElement).getByRole("button", { name: /^remove$/i }));
 
-    await waitFor(() => expect(vi.mocked(putLabels)).toHaveBeenCalledWith({ project: [], context: [] }, expect.objectContaining({ url: "" })));
-    await waitFor(() => expect(screen.getByRole("button", { name: /project filter/i }).textContent).toBe("All projects"));
+    await waitFor(() => expect(vi.mocked(putLabels)).toHaveBeenCalledWith({ list: [], context: [] }, expect.objectContaining({ url: "" })));
+    await waitFor(() => expect(screen.getByRole("button", { name: /list filter/i }).textContent).toBe("All lists"));
   });
 
   it("uses task-derived labels when loading remembered labels fails", async () => {
@@ -227,7 +227,7 @@ describe("TodoPane remembered labels", () => {
     vi.mocked(listTasks).mockResolvedValue([task(1, "call +work", ["work"], [])]);
     render(<TodoPane compact={false} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /project filter/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /list filter/i }));
     const picker = within(document.querySelector("dialog.select-modal[open]") as HTMLElement);
     expect(await picker.findByRole("button", { name: "work" })).toBeTruthy();
   });
@@ -300,14 +300,14 @@ describe.each([false, true])("TodoPane simplified workflow (compact=%s)", (compa
     if (compact) fireEvent.click(screen.getByRole("button", { name: /filter options/i }));
   }
 
-  it("project filtering includes completed tasks and offers no status/context controls", async () => {
+  it("list filtering includes completed tasks and offers no status/context controls", async () => {
     const completed = { ...task(4, "finished +work @phone", ["work"], ["phone"]), completed: true };
-    vi.mocked(listTasks).mockImplementation(async (filter) => [...TASKS, completed].filter((t) => !filter.project || t.projects.includes(filter.project)));
+    vi.mocked(listTasks).mockImplementation(async (filter) => [...TASKS, completed].filter((t) => !filter.list || t.lists.includes(filter.list)));
     render(<TodoPane compact={compact} />);
     await screen.findByText("finished");
     openFilters();
     expect(screen.queryByRole("button", { name: /status filter|context filter/i })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /project filter/i }));
+    fireEvent.click(screen.getByRole("button", { name: /list filter/i }));
     fireEvent.click(within(document.querySelector("dialog.select-modal[open]")!).getByRole("button", { name: "work" }));
     await waitFor(() => expect(screen.queryByText("tidy")).toBeNull());
     const finished = screen.getByText("finished").closest("li")!;

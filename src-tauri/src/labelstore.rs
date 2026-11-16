@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Labels {
-  pub project: Vec<String>,
+  // Retain existing labels.json and IPC serialization while renaming domain code.
+  #[serde(rename = "project")]
+  pub list: Vec<String>,
   pub context: Vec<String>,
 }
 
@@ -71,10 +73,32 @@ mod tests {
   }
 
   #[test]
+  fn existing_labels_file_keeps_legacy_key_and_names_after_write() {
+    let (backend, _) = backend("legacy-key");
+    backend
+      .write(
+        paths::LABELS_FILE,
+        r#"{"project":["work","my-project"],"context":["phone"]}"#,
+      )
+      .unwrap();
+    let mut store = LabelStore::load(backend.clone(), paths::LABELS_FILE).unwrap();
+    assert_eq!(store.get().list, vec!["work", "my-project"]);
+    store.replace(store.get()).unwrap();
+    let saved: serde_json::Value =
+      serde_json::from_str(&backend.read(paths::LABELS_FILE).unwrap().unwrap()).unwrap();
+    assert_eq!(saved["project"], serde_json::json!(["work", "my-project"]));
+    assert!(saved.get("list").is_none());
+    assert_eq!(
+      LabelStore::load(backend, paths::LABELS_FILE).unwrap().get(),
+      store.get()
+    );
+  }
+
+  #[test]
   fn replace_then_get_round_trips() {
     let (backend, _) = backend("roundtrip");
     let expected = Labels {
-      project: vec!["work".into()],
+      list: vec!["work".into()],
       context: vec!["phone".into()],
     };
     let mut store = LabelStore::load(backend.clone(), paths::LABELS_FILE).unwrap();

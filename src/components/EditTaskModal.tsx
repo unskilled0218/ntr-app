@@ -1,14 +1,14 @@
 // Edit modal for an existing task. Pre-populates the same structured fields as AddForm
-// (description, due, project). Hidden task metadata is retained on save.
+// (description, due, list). Hidden task metadata is retained on save.
 // The task prop drives open/close: non-null
 // opens the dialog; null closes it. Uses the same native-<dialog> pattern as LabelModal.
 
 import { useEffect, useRef, useState } from "react";
 import { captureTransport, destination, errMsg, type Task, type TaskRouting } from "../api";
-import { ConfirmationDialog, useHaProjects } from "./HaProjects";
-import { bareDescription, composeEditedTask, removeProjectText, renameProjectNames, renameProjectText } from "../labels";
-import type { ProjectRenameEvent } from "../lib/projectRename";
-import type { ProjectRemovalEvent } from "../lib/projectRemoval";
+import { ConfirmationDialog, useHaLists } from "./HaLists";
+import { bareDescription, composeEditedTask, removeListText, renameListNames, renameListText } from "../labels";
+import type { ListRenameEvent } from "../lib/listRename";
+import type { ListRemovalEvent } from "../lib/listRemoval";
 import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
 import { useBackdropClose } from "./useBackdropClose";
@@ -19,40 +19,40 @@ interface Props {
   disabled?: boolean;
   task: Task | null;
   suspended?: boolean;
-  serverLabels: { project: string[]; context: string[] };
+  serverLabels: { list: string[]; context: string[] };
   onSave(id: number, text: string, routing?: TaskRouting): Promise<void>;
   onClose(): void;
-  rename?: ProjectRenameEvent;
-  onProjectsChange?: (names: string[]) => void;
-  removal?: ProjectRemovalEvent;
+  rename?: ListRenameEvent;
+  onListsChange?: (names: string[]) => void;
+  removal?: ListRemovalEvent;
 }
 
-export default function EditTaskModal({ task, suspended, serverLabels, onSave, onClose, rename, onProjectsChange, removal, disabled = false }: Props) {
-  const ha = useHaProjects();
+export default function EditTaskModal({ task, suspended, serverLabels, onSave, onClose, rename, onListsChange, removal, disabled = false }: Props) {
+  const ha = useHaLists();
   const [move, setMove] = useState<{text: string; routing: TaskRouting; signature: string} | null>(null);
   const [saving, setSaving] = useState(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [description, setDescription] = useState("");
   const [due, setDue] = useState("");
   const [dueTouched, setDueTouched] = useState(false);
-  const [project, setProject] = useState("");
+  const [list, setList] = useState("");
   const [staged, setStaged] = useState<string[]>([]);
-  const [modalKind, setModalKind] = useState<"project" | null>(null);
+  const [modalKind, setModalKind] = useState<"list" | null>(null);
   const [error, setError] = useState("");
   const baseline = useRef(task);
   useEffect(() => {
-    onProjectsChange?.(task ? [...new Set([...staged, project, ...description.split(/\s+/).filter((token) => token.startsWith("+")).map((token) => token.slice(1))])].filter(Boolean) : []);
-  }, [staged, project, description, task, onProjectsChange]);
+    onListsChange?.(task ? [...new Set([...staged, list, ...description.split(/\s+/).filter((token) => token.startsWith("+")).map((token) => token.slice(1))])].filter(Boolean) : []);
+  }, [staged, list, description, task, onListsChange]);
 
   useEffect(() => {
     const el = dialogRef.current;
     if (!el) return;
     if (task) {
       baseline.current = task;
-      setDescription(bareDescription(task.description, task.list_id ? [] : task.projects, task.contexts, task.tags));
+      setDescription(bareDescription(task.description, task.list_id ? [] : task.lists, task.contexts, task.tags));
       setDue(dueDateInput(task.tags.due ?? ""));
       setDueTouched(false);
-      setProject(task.list_id ?? task.projects[0] ?? "");
+      setList(task.list_id ?? task.lists[0] ?? "");
       setMove(null);
       setStaged([]);
       setModalKind(null);
@@ -63,18 +63,18 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
     if (!rename || rename.destination !== destination(captureTransport())) return;
     const previous = baseline.current;
     const updated = rename.tasks.find((found) => found.id === previous?.id);
-    if (previous && updated && renameProjectText(previous.raw, rename.from, rename.to) === updated.raw) baseline.current = updated;
-    setDescription((text) => renameProjectText(text, rename.from, rename.to));
-    setProject((name) => name === rename.from ? rename.to : name);
-    setStaged((names) => renameProjectNames(names, rename.from, rename.to));
+    if (previous && updated && renameListText(previous.raw, rename.from, rename.to) === updated.raw) baseline.current = updated;
+    setDescription((text) => renameListText(text, rename.from, rename.to));
+    setList((name) => name === rename.from ? rename.to : name);
+    setStaged((names) => renameListNames(names, rename.from, rename.to));
   }, [rename]);
   useEffect(() => {
     if (!removal || removal.destination !== destination(captureTransport())) return;
     const previous = baseline.current;
     const updated = removal.tasks.find((found) => found.id === previous?.id);
-    if (previous && updated && removeProjectText(previous.raw, removal.from) === updated.raw) baseline.current = updated;
-    setDescription((text) => removeProjectText(text, removal.from));
-    setProject((name) => name === removal.from ? "" : name);
+    if (previous && updated && removeListText(previous.raw, removal.from) === updated.raw) baseline.current = updated;
+    setDescription((text) => removeListText(text, removal.from));
+    setList((name) => name === removal.from ? "" : name);
     setStaged((names) => names.filter((name) => name !== removal.from));
   }, [removal]);
   useEffect(() => {
@@ -85,7 +85,7 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
 
   const onConfirm = (name: string) => {
     setStaged((s) => [...new Set([...s, name])]);
-    setProject(name);
+    setList(name);
     setModalKind(null);
   };
 
@@ -95,10 +95,10 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
     const current = baseline.current;
     if (!task || !current || (!description.trim() && !current.contexts.length)) return;
     try {
-      const text = composeEditedTask(current, { description, project, due: editedDue(current.tags.due ?? "", due, dueTouched) }, formatLocalTaskDate(new Date()));
+      const text = composeEditedTask(current, { description, list, due: editedDue(current.tags.due ?? "", due, dueTouched) }, formatLocalTaskDate(new Date()));
       if (!text.trim()) return;
       if (task.list_id && ha) {
-        const target = project || ha.catalog.lists.find((list) => list.is_default)?.id;
+        const target = list || ha.catalog.lists.find((list) => list.is_default)?.id;
         if (!target) throw new Error("HA default list unavailable");
         const routing = {list_id:target, expected_source:task.list_id, expected_raw:current.raw};
         if (target !== task.list_id) { setError(""); setMove({text, routing:{...routing, confirm_move:true}, signature:JSON.stringify(ha.catalog)}); return; }
@@ -149,14 +149,14 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
             {(due || (!dueTouched && task?.tags.due)) && <button type="button" onClick={() => { setDue(""); setDueTouched(true); }}>Clear due</button>}
           </label>
           <label>
-            Project
+            List
             <LabelSelect
-              kind="project"
-              value={project}
-              serverLabels={serverLabels.project}
+              kind="list"
+              value={list}
+              serverLabels={serverLabels.list}
               staged={staged}
-              onChange={setProject}
-              onAdd={() => setModalKind("project")}
+              onChange={setList}
+              onAdd={() => setModalKind("list")}
             />
           </label>
         </div>

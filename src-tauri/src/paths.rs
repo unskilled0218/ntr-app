@@ -16,7 +16,7 @@ use tauri::{AppHandle, Manager};
 pub const TODO_FILE: &str = "todo.txt";
 /// Markdown note file name within the data directory.
 pub const NOTE_FILE: &str = "Note.md";
-/// Remembered project and context labels within the data directory.
+/// Remembered list and context labels within the data directory.
 pub const LABELS_FILE: &str = "labels.json";
 /// Config file name within the fixed app-data directory.
 const CONFIG_FILE: &str = "config.json";

@@ -25,10 +25,10 @@ Reconciliation is per-resource, not a transaction. Partial/uncertain outcomes re
 
 Configure HA on [ntr server](../../server/docs/home-assistant.md), not the client. Validated `/api/capabilities` makes HA tasks authoritative regardless of the reconciliation strategy. Local/fallback task edits never upload to HA; notes retain their chosen strategy. Only capability HTTP 404 selects older-server compatibility. Other errors block initialization without reconciliation writes.
 
-Each visible HA list is a project, including empty lists. Selectors use names and disambiguate duplicates with entity IDs. Unselected creates use the default. List membership is separate from literal summary labels. Catalog refresh changes routing/display metadata and invalidates destructive confirmations, not task acceptance or drafts.
+Every visible HA list appears in selectors, including empty lists. Selectors use names and disambiguate duplicates with entity IDs. Unselected creates use the default. List membership is separate from literal summary labels. Catalog refresh changes routing/display metadata and invalidates destructive confirmations, not task acceptance or drafts.
 
 Changing lists in Edit requires move confirmation. Stop other HA writers: copy/verify/delete is not atomic. An uncertain move needs inspection of both lists and explicit **Reconcile** or **Abandon**. Reconcile repairs only proven completion; abandon retains copies with separate identities. Neither repeats HA writes.
 
-List administration requires `HA_MANAGE_LISTS=true` and an admin token. Rename changes display names; deletion requires a freshly empty Local To-do list, including completed tasks, and cannot delete the default. Stop other writers during deletion. Use trusted access or an authenticating proxy because ntr has no API authentication. Do not retry uncertain administration blindly. Catalog failures block routing rather than stage fake projects.
+List administration requires `HA_MANAGE_LISTS=true` and an admin token. Rename changes display names; deletion requires a freshly empty Local To-do list, including completed tasks, and cannot delete the default. Stop other writers during deletion. Use trusted access or an authenticating proxy because ntr has no API authentication. Do not retry uncertain administration blindly. Catalog failures block routing rather than stage fake lists.
 
 An HA outage returns an ntr HTTP error; it does not itself trigger local fallback. An unreachable ntr server does. Existing data is not automatically imported, merged, or deleted.

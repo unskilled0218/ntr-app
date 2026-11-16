@@ -22,7 +22,7 @@ beforeEach(() => {
   vi.mocked(invoke).mockImplementation(async (command, args) => {
     if (command === "get_note") return note;
     if (command === "get_raw") return raw;
-    if (command === "get_labels") return { project: ["local"], context: [] };
+    if (command === "get_labels") return { list: ["local"], context: [] };
     if (command === "list_tasks") return [];
     if (command === "put_note") { note = (args as { text: string }).text; return; }
     if (command === "put_raw") { raw = (args as { text: string }).text; return; }
@@ -35,7 +35,7 @@ beforeEach(() => {
       if (req.method !== "GET") {
         if (path === "/api/note") remoteNote = req.body;
         else remoteRaw = req.body;
-        return response(req.method === "POST" ? JSON.stringify({ id: 1, description: req.body, raw: req.body, projects: [], contexts: [], tags: {}, completed: false, completion_date: null, creation_date: null }) : "");
+        return response(req.method === "POST" ? JSON.stringify({ id: 1, description: req.body, raw: req.body, lists: [], contexts: [], tags: {}, completed: false, completion_date: null, creation_date: null }) : "");
       }
       return response(path === "/api/note" ? remoteNote : path === "/api/raw" ? remoteRaw : "[]");
     }
@@ -64,12 +64,12 @@ it("uses one whole-app local destination without deleting saved connection setti
   expect(canMutate("tasks")).toBe(false);
   await reconcileWithServer();
   expect(await getNote()).toBe("local note");
-  expect(await getLabels()).toEqual({ project: ["local"], context: [] });
+  expect(await getLabels()).toEqual({ list: ["local"], context: [] });
   expect(await listTasks({})).toEqual([]);
   markResourceReady("note", captureTransport());
   markResourceReady("tasks", captureTransport());
   await putNote("edited offline");
-  await putLabels({ project: ["offline"], context: [] });
+  await putLabels({ list: ["offline"], context: [] });
   expect(note).toBe("edited offline");
   expect(attempted.every((request) => request.startsWith("GET"))).toBe(true);
 });
@@ -87,7 +87,7 @@ it.each(["ask", "server", "local"].flatMap((strategy) => ["", "different remote 
 });
 
 it("closes all mutation entry points synchronously, even with fresh contexts", async () => {
-  const operations = [() => createTask("draft"), () => updateTask(1, "draft"), () => completeTask(1), () => uncompleteTask(1), () => deleteTask(1), () => putNote("draft"), () => putLabels({ project: [], context: [] })];
+  const operations = [() => createTask("draft"), () => updateTask(1, "draft"), () => completeTask(1), () => uncompleteTask(1), () => deleteTask(1), () => putNote("draft"), () => putLabels({ list: [], context: [] })];
   for (const operation of operations) await expect(operation()).rejects.toThrow("still loading");
   expect(vi.mocked(invoke)).not.toHaveBeenCalled();
   await readyServer();
@@ -127,7 +127,7 @@ it.each(["note", "tasks", "labels"])("drains an already-admitted native %s backu
     if (name === command) { await commit.promise; return original(name, args); }
     return original(name, args);
   });
-  const save = resource === "note" ? putNote("old backup") : resource === "labels" ? putLabels({ project: ["old"], context: [] }) : createTask("old task");
+  const save = resource === "note" ? putNote("old backup") : resource === "labels" ? putLabels({ list: ["old"], context: [] }) : createTask("old task");
   await settle();
   failPath = "/api/labels";
   await expect(getLabels()).rejects.toEqual(unavailable);

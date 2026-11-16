@@ -1,4 +1,4 @@
-// Confirmation for removing a project/context from every task that carries it. Removal is
+// Confirmation for removing a list/context from every task that carries it. Removal is
 // destructive and spans many task lines, so it is gated behind a confirm step. Native <dialog>
 // gives the focus trap, backdrop, and Escape handling; dismiss (Escape / backdrop / Cancel) is
 // non-destructive — it changes nothing. Mirrors ConflictDialog's open-driven-by-a-nullable-prop
@@ -8,13 +8,13 @@ import { useEffect, useRef } from "react";
 import { KINDS, type Kind } from "../config";
 import { useBackdropClose } from "./useBackdropClose";
 import { dialogWasDismissed, ownDialogEvent } from "./dialogEvents";
-import type { ProjectRemoval } from "../lib/projectRemoval";
+import type { ListRemoval } from "../lib/listRemoval";
 
 interface Props {
   target: { kind: Kind; name: string } | null; // null = closed
   onConfirm(): void;
   onCancel(): void; // Cancel button and the native close event (Escape / backdrop)
-  operation?: ProjectRemoval | null;
+  operation?: ListRemoval | null;
   readOnly?: boolean;
   scope?: "draft";
   id?: string;
@@ -57,7 +57,7 @@ export default function RemoveLabelDialog({ target, onConfirm, onCancel, operati
     }}>
       <h2>Remove {singular}?</h2>
       <p className="note-conflict-msg">
-        {scope === "draft" ? <>Remove staged choice <strong>{token}</strong> and its exact project references from this draft only. Stored tasks are unchanged.</> : <>Remove <strong>{token}</strong> from every task that uses it and remembered choices. Tasks themselves are not deleted. Completed changes cannot be rolled back.</>}
+        {scope === "draft" ? <>Remove staged choice <strong>{token}</strong> and its exact list references from this draft only. Stored tasks are unchanged.</> : <>Remove <strong>{token}</strong> from every task that uses it and remembered choices. Tasks themselves are not deleted. Completed changes cannot be rolled back.</>}
       </p>
       {readOnly && <p>This result belongs to {operation?.targetDestination}. Return there to retry, or explicitly stop retry.</p>}
       {operation && <p role="status">{busy ? "Working… Issued writes cannot be canceled." : operation.phase === "completed" ? "Removal completed." : `${operation.done.size} tasks updated; completed changes remain.`}</p>}

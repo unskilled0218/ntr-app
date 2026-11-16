@@ -16,7 +16,7 @@ describe("RemoveLabelDialog", () => {
 
   it("opens and names the token when given a target", () => {
     render(
-      <RemoveLabelDialog target={{ kind: "project", name: "work" }} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+      <RemoveLabelDialog target={{ kind: "list", name: "work" }} onConfirm={vi.fn()} onCancel={vi.fn()} />,
     );
     const dialog = document.getElementById("remove-label-dialog") as HTMLDialogElement;
     expect(dialog.open).toBe(true);
@@ -35,7 +35,7 @@ describe("RemoveLabelDialog", () => {
   it("calls onCancel when Cancel is clicked", () => {
     const onCancel = vi.fn();
     render(
-      <RemoveLabelDialog target={{ kind: "project", name: "work" }} onConfirm={vi.fn()} onCancel={onCancel} />,
+      <RemoveLabelDialog target={{ kind: "list", name: "work" }} onConfirm={vi.fn()} onCancel={onCancel} />,
     );
     fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
     expect(onCancel).toHaveBeenCalledOnce();
@@ -46,7 +46,7 @@ describe("RemoveLabelDialog", () => {
   it("calls onCancel when the backdrop is clicked", () => {
     const onCancel = vi.fn();
     render(
-      <RemoveLabelDialog target={{ kind: "project", name: "work" }} onConfirm={vi.fn()} onCancel={onCancel} />,
+      <RemoveLabelDialog target={{ kind: "list", name: "work" }} onConfirm={vi.fn()} onCancel={onCancel} />,
     );
     const dialog = document.getElementById("remove-label-dialog") as HTMLDialogElement;
     fireEvent.click(dialog); // e.target === dialog -> a backdrop click

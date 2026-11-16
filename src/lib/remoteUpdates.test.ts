@@ -22,9 +22,9 @@ afterEach(() => { instances.splice(0).forEach((updates) => updates.cancel()); lo
 describe("remote approval ownership", () => {
   it("offers an HA list-only task change even when numeric identity and raw text stay identical", async () => {
     const {updates, content} = setup();
-    const task = {id:1, raw:"same text", description:"same text", completed:false, creation_date:null, completion_date:null, list_id:"todo.source", projects:["todo.source"], contexts:[], tags:{}} as Task;
+    const task = {id:1, raw:"same text", description:"same text", completed:false, creation_date:null, completion_date:null, list_id:"todo.source", lists:["todo.source"], contexts:[], tags:{}} as Task;
     content.tasks = [task]; updates.register("tasks", content.tasks); await settle();
-    content.tasks = [{...task, list_id:"todo.target", projects:["todo.target"]}];
+    content.tasks = [{...task, list_id:"todo.target", lists:["todo.target"]}];
     await updates.review("tasks");
     expect(updates.state("tasks").pending?.snapshot[0].list_id).toBe("todo.target");
     expect(updates.accepted("tasks")![0].list_id).toBe("todo.source");
@@ -46,7 +46,7 @@ describe("remote approval ownership", () => {
   });
   it("captures immutable accepted and incoming task evidence rather than transport references", async () => {
     const { updates, content } = setup();
-    const original = { id: 1, raw: "old", projects: ["work"], contexts: [], tags: {} } as unknown as Task;
+    const original = { id: 1, raw: "old", lists: ["work"], contexts: [], tags: {} } as unknown as Task;
     content.tasks = [original]; updates.register("tasks", content.tasks); await settle();
     original.raw = "outside mutation";
     expect(updates.accepted("tasks")![0].raw).toBe("old");
@@ -54,7 +54,7 @@ describe("remote approval ownership", () => {
     const offer = updates.state("tasks").pending!;
     content.tasks[0].raw = "later mutation";
     expect(offer.baseline[0].raw).toBe("old"); expect(offer.snapshot[0].raw).toBe("incoming");
-    expect(Object.isFrozen(offer.baseline[0].projects)).toBe(true);
+    expect(Object.isFrozen(offer.baseline[0].lists)).toBe(true);
   });
   it("rebases a deferred preview without resurrecting its notification and rejects its old click", async () => {
     const { updates, content } = setup(); updates.register("note", "A"); await settle();

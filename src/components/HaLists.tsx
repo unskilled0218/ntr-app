@@ -5,9 +5,9 @@ import SelectField from "./SelectField";
 import { useBackdropClose } from "./useBackdropClose";
 import { ownDialogEvent } from "./dialogEvents";
 
-interface HaProjectsState { catalog: HaCatalog; disabled: boolean; open(action: "create" | "rename" | "delete", id?: string, onCreated?: (id:string) => void): void }
-const HaProjectsContext = createContext<HaProjectsState | null>(null);
-export const useHaProjects = () => useContext(HaProjectsContext);
+interface HaListsState { catalog: HaCatalog; disabled: boolean; open(action: "create" | "rename" | "delete", id?: string, onCreated?: (id:string) => void): void }
+const HaListsContext = createContext<HaListsState | null>(null);
+export const useHaLists = () => useContext(HaListsContext);
 export function haListLabel(list: HaList, lists: HaList[]) {
   return lists.filter((other) => other.name === list.name).length > 1 ? `${list.name} (${list.id})` : list.name;
 }
@@ -25,7 +25,7 @@ export function ConfirmationDialog({ title, children, onCancel, onConfirm, busy 
   </dialog>;
 }
 
-export default function HaProjects({catalog, disabled, setCatalog, beforeMutation, onChanged, onDialogChange, children}: {catalog: HaCatalog | null; disabled: boolean; setCatalog(catalog: HaCatalog): void; beforeMutation(): boolean; onChanged(): void; onDialogChange?(open:boolean): void; children: ReactNode}) {
+export default function HaLists({catalog, disabled, setCatalog, beforeMutation, onChanged, onDialogChange, children}: {catalog: HaCatalog | null; disabled: boolean; setCatalog(catalog: HaCatalog): void; beforeMutation(): boolean; onChanged(): void; onDialogChange?(open:boolean): void; children: ReactNode}) {
   const [prompt, setPrompt] = useState<{action:"create" | "rename" | "delete"; id:string; name:string; signature:string; owner:ReturnType<typeof captureTransport>; beforeIds:string[]; onCreated?: (id:string) => void} | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -66,7 +66,7 @@ export default function HaProjects({catalog, disabled, setCatalog, beforeMutatio
     finally { setBusy(false); }
   }
   const value = catalog ? {catalog, disabled:disabled || busy, open} : null;
-  return <HaProjectsContext.Provider value={value}>
+  return <HaListsContext.Provider value={value}>
     {children}
     {catalog?.pending_move && <aside role="status">Unfinished move from {catalog.pending_move.source_list} to {catalog.pending_move.target_list}. Review both lists in HA; writes to these lists are blocked.
       <button disabled={disabled || busy} onClick={() => {setError(""); setRecovery({action:"reconcile", owner:captureTransport(), signature});}}>Reconcile completed move</button>
@@ -79,18 +79,18 @@ export default function HaProjects({catalog, disabled, setCatalog, beforeMutatio
     {recovery && <ConfirmationDialog title={recovery.action === "abandon" ? "Abandon HA move" : "Reconcile HA move"} busy={busy} error={error} onCancel={() => setRecovery(null)} onConfirm={() => {void recover();}}>
       <p>{recovery.action === "abandon" ? "Clear the move block without deleting or copying anything. Any retained copies remain separate tasks. Review both lists first." : "Verify that the source is absent and the target copy is intact, then repair identity metadata. This never repeats HA copy or deletion."}</p>
     </ConfirmationDialog>}
-  </HaProjectsContext.Provider>;
+  </HaListsContext.Provider>;
 }
 
 export function HaListPicker({value, onChange, filter = false}: {value: string; onChange(value: string): void; filter?: boolean}) {
-  const ha = useHaProjects();
+  const ha = useHaLists();
   if (!ha) return null;
   const {catalog, disabled} = ha;
   const options = [
-    ...(catalog.can_create && !disabled ? [{value:"__ha_create__", label:"+ Add project..."}] : []),
-    {value:"", label:filter ? "All projects" : `Default: ${catalog.lists.find((l) => l.is_default)?.name ?? ""}`},
+    ...(catalog.can_create && !disabled ? [{value:"__ha_create__", label:"+ Add list..."}] : []),
+    {value:"", label:filter ? "All lists" : `Default: ${catalog.lists.find((l) => l.is_default)?.name ?? ""}`},
     ...catalog.lists.map((list) => ({value:list.id, label:haListLabel(list, catalog.lists), renamable:!disabled && list.can_rename, removable:!disabled && list.can_delete})),
   ];
-  return <SelectField ariaLabel={filter ? "Project filter" : "Project"} value={value} options={options} onChange={(id) => {if (id === "__ha_create__") ha.open("create", "", onChange); else onChange(id);}}
+  return <SelectField ariaLabel={filter ? "List filter" : "List"} value={value} options={options} onChange={(id) => {if (id === "__ha_create__") ha.open("create", "", onChange); else onChange(id);}}
     onRename={(id, session) => {session?.close(); ha.open("rename", id);}} onRemove={(id, session) => {session?.close(); ha.open("delete", id);}} />;
 }

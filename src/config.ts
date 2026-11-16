@@ -8,12 +8,12 @@ import type { Task } from "./api";
 // user-facing word are defined once instead of scattered across the markup and the
 // compose/populate logic.
 export const KINDS = {
-  project: { prefix: "+", singular: "project" },
+  list: { prefix: "+", singular: "list" },
   context: { prefix: "@", singular: "context" },
 } as const;
 
 export type Kind = keyof typeof KINDS;
-export const KIND_LIST: Kind[] = ["project", "context"];
+export const KIND_LIST: Kind[] = ["list", "context"];
 
 // The "add" entry value pinned at the top of each label select. It is recognised by a flag,
 // never by this value, so a real label can never be mistaken for it; the value is a
@@ -48,7 +48,7 @@ export function cmpMissingLast(a: string | null | undefined, b: string | null | 
 }
 
 // The alphabetically-first label of a task, or null when it has none — so tasks with no
-// project sort to the bottom like any other missing key. Reduces to the min rather
+// list sort to the bottom like any other missing key. Reduces to the min rather
 // than sorting a copy: no allocation, no full sort, and the task's own label array is never
 // mutated.
 function firstLabel(labels: string[]): string | null {
@@ -57,12 +57,12 @@ function firstLabel(labels: string[]): string | null {
 
 // Client-side sort orders. compare:null keeps the server's file order. Every comparator sorts
 // ascending and sends tasks missing the key to the bottom; JS's stable sort keeps file order
-// among ties. The project sort keys off the task's alphabetically-first project.
+// among ties. The list sort keys off the task's alphabetically-first list.
 export const SORTS: Record<string, { label: string; compare: ((a: Task, b: Task) => number) | null }> = {
   file: { label: "File order", compare: null },
   due: { label: "Due date", compare: (a, b) => cmpMissingLast(a.tags.due, b.tags.due) },
   created: { label: "Created", compare: (a, b) => cmpMissingLast(a.creation_date, b.creation_date) },
-  projects: { label: "Projects", compare: (a, b) => cmpMissingLast(firstLabel(a.projects), firstLabel(b.projects)) },
+  lists: { label: "Lists", compare: (a, b) => cmpMissingLast(firstLabel(a.lists), firstLabel(b.lists)) },
 };
 
 // Sort direction. asc is each comparator's natural (ascending) order; desc reverses the

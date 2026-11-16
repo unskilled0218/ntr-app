@@ -10,7 +10,7 @@ import { setEditorText } from "./lib/caret";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 function task(id: number, raw: string): Task {
-  return { id, raw, description: raw, completed: false, completion_date: null, creation_date: null, projects: ["work"], contexts: [], tags: {} };
+  return { id, raw, description: raw, completed: false, completion_date: null, creation_date: null, lists: ["work"], contexts: [], tags: {} };
 }
 function fixture() {
   const data = { note: "base", tasks: [task(1, "first +work")], localNote: "base", localRaw: "first +work\n" };
@@ -40,7 +40,7 @@ function fixture() {
     if (path === "/api/note") body = req.method === "GET" ? await (noteRead?.(++noteReads) ?? Promise.resolve(data.note)) : data.note;
     else if (path === "/api/raw") body = data.tasks.map((t) => t.raw + "\n").join("");
     else if (path === "/api/tasks") body = JSON.stringify(req.method === "POST" ? data.tasks[data.tasks.length - 1] : data.tasks);
-    else if (path === "/api/labels") body = JSON.stringify({ project: ["work"], context: [] });
+    else if (path === "/api/labels") body = JSON.stringify({ list: ["work"], context: [] });
     return { ok: true, status: 200, status_text: "OK", body };
   });
   return {
@@ -173,11 +173,11 @@ describe("approval across real panes", () => {
     expect((document.querySelector("#remote-update") as HTMLDialogElement).open).toBe(false);
   });
 
-  it("does not import declined tasks through project filtering or an own add response", async () => {
+  it("does not import declined tasks through list filtering or an own add response", async () => {
     const { data, signal } = fixture();
     render(<App />); await act(settle);
     data.tasks = [task(90, "foreign task +work")]; await signal("tasks"); await choose("Not now");
-    fireEvent.click(screen.getByRole("button", { name: "Project filter" }));
+    fireEvent.click(screen.getByRole("button", { name: "List filter" }));
     fireEvent.click(within(document.querySelector("dialog.select-modal[open]") as HTMLElement).getByRole("button", { name: /^work/ }));
     expect(document.querySelector("#tasks")!.textContent).toContain("first");
     expect(document.querySelector("#tasks")!.textContent).not.toContain("foreign");

@@ -1,18 +1,18 @@
 import { destination, errMsg, getLabels, isTransportCurrent, putLabels, updateTask, type Labels, type Task, type TransportContext } from "../api";
-import { equalLabels as sameLabels, planProjectRename, renameProjectNames } from "../labels";
+import { equalLabels as sameLabels, planListRename, renameListNames } from "../labels";
 
 export type RenamePhase = "ready" | "checking" | "running" | "paused-for-review" | "failed" | "labels-pending" | "completed";
-export interface ProjectRenameEvent {
+export interface ListRenameEvent {
   id: number;
   destination: string;
   from: string;
   to: string;
   tasks: Task[];
 }
-export class ProjectReviewRequired extends Error {
+export class ListReviewRequired extends Error {
   constructor() { super("Tasks changed. Review the update, then explicitly retry the rename."); }
 }
-export interface ProjectRenamePorts {
+export interface ListRenamePorts {
   validate(context: TransportContext): Promise<Task[]>;
   write(id: number, text: string, context: TransportContext): Promise<Task>;
   labels(context: TransportContext): Promise<Labels>;
@@ -22,11 +22,11 @@ export interface ProjectRenamePorts {
   changed(): void;
   completed(labels: Labels): void;
 }
-export const projectRenameIO = { write: updateTask, labels: getLabels, saveLabels: putLabels };
+export const listRenameIO = { write: updateTask, labels: getLabels, saveLabels: putLabels };
 
 // One operation owns provenance; each explicit run gets fresh, scoped write authority.
 // No React/DOM dependency and no retry, rollback, or remote approval hidden in this helper.
-export class ProjectRename {
+export class ListRename {
   phase: RenamePhase = "ready";
   error = "";
   started = false;
@@ -36,7 +36,7 @@ export class ProjectRename {
   private labelAttempt?: { before: Labels; intended: Labels };
   private attempt = 0;
   readonly targetDestination: string;
-  constructor(readonly from: string, readonly to: string, context: TransportContext, private readonly ports: ProjectRenamePorts) {
+  constructor(readonly from: string, readonly to: string, context: TransportContext, private readonly ports: ListRenamePorts) {
     this.targetDestination = destination(context);
   }
   get busy() { return this.phase === "checking" || this.phase === "running"; }
@@ -50,7 +50,7 @@ export class ProjectRename {
       // A user-confirmed retry after approval can resolve an uncertain task by observed content.
       const observed = tasks.find((task) => task.id === this.uncertain!.id && task.raw === this.uncertain!.text);
       if (observed) this.done.set(observed.id, observed);
-      else if (tasks.some((task) => task.id === this.uncertain!.id && task.projects.includes(this.to))) {
+      else if (tasks.some((task) => task.id === this.uncertain!.id && task.lists.includes(this.to))) {
         throw new Error("The uncertain task has an unexplained target reference. Resolve it before retrying.");
       }
       this.uncertain = undefined;
@@ -58,9 +58,9 @@ export class ProjectRename {
     for (const [id, known] of this.done) {
       if (tasks.find((task) => task.id === id)?.raw !== known.raw) throw new Error("A renamed task changed again. Resolve that task before continuing this rename.");
     }
-    if (tasks.some((task) => task.projects.includes(this.to) && this.done.get(task.id)?.raw !== task.raw)
-      || this.ports.staged().includes(this.to)) throw new Error("That project already exists. Renaming cannot merge projects.");
-    if (labels.project.includes(this.to) && !this.labelAttempt) throw new Error("That project already exists in remembered projects.");
+    if (tasks.some((task) => task.lists.includes(this.to) && this.done.get(task.id)?.raw !== task.raw)
+      || this.ports.staged().includes(this.to)) throw new Error("That list already exists. Renaming cannot merge lists.");
+    if (labels.list.includes(this.to) && !this.labelAttempt) throw new Error("That list already exists in remembered lists.");
   }
   async run(context: TransportContext) {
     if (this.busy || this.phase === "completed") return;
@@ -75,16 +75,16 @@ export class ProjectRename {
       let labels = await this.ports.labels(context);
       this.ensure(context, attempt);
       this.collision(tasks, labels);
-      if (!this.started && !tasks.some((task) => task.projects.includes(this.from)) && !labels.project.includes(this.from)) {
-        throw new Error("The source project no longer exists. Close this result and choose a current project.");
+      if (!this.started && !tasks.some((task) => task.lists.includes(this.from)) && !labels.list.includes(this.from)) {
+        throw new Error("The source list no longer exists. Close this result and choose a current list.");
       }
-      const plan = planProjectRename(tasks, this.from, this.to);
+      const plan = planListRename(tasks, this.from, this.to);
       this.remaining = plan.length;
       this.phase = "running"; this.ports.changed();
       for (const change of plan) {
         tasks = await this.ports.validate(context);
         this.ensure(context, attempt);
-        if (tasks.find((task) => task.id === change.id)?.raw !== change.expected) throw new ProjectReviewRequired();
+        if (tasks.find((task) => task.id === change.id)?.raw !== change.expected) throw new ListReviewRequired();
         this.collision(tasks, labels);
         this.started = true;
         this.uncertain = { id: change.id, text: change.text };
@@ -102,18 +102,18 @@ export class ProjectRename {
       labels = await this.ports.labels(context);
       this.ensure(context, attempt);
       this.collision(tasks, labels);
-      if (tasks.some((task) => task.projects.includes(this.from))) throw new ProjectReviewRequired();
+      if (tasks.some((task) => task.lists.includes(this.from))) throw new ListReviewRequired();
       if (this.labelAttempt) {
         if (!sameLabels(labels, this.labelAttempt.intended) && !sameLabels(labels, this.labelAttempt.before)) {
-          throw new Error("Remembered projects changed after the label write. Resolve the labels before retrying; completed tasks remain renamed.");
+          throw new Error("Remembered lists changed after the label write. Resolve the labels before retrying; completed tasks remain renamed.");
         }
       }
-      const intended = { ...labels, project: renameProjectNames(labels.project, this.from, this.to) };
-      if (!intended.project.includes(this.to)) intended.project.push(this.to);
+      const intended = { ...labels, list: renameListNames(labels.list, this.from, this.to) };
+      if (!intended.list.includes(this.to)) intended.list.push(this.to);
       tasks = await this.ports.validate(context);
       this.ensure(context, attempt);
       this.collision(tasks, labels);
-      if (tasks.some((task) => task.projects.includes(this.from))) throw new ProjectReviewRequired();
+      if (tasks.some((task) => task.lists.includes(this.from))) throw new ListReviewRequired();
       if (!this.labelAttempt || !sameLabels(labels, this.labelAttempt.intended)) {
         this.ensure(context, attempt);
         this.labelAttempt = { before: labels, intended };
@@ -122,16 +122,16 @@ export class ProjectRename {
         this.ensure(context, attempt);
         labels = await this.ports.labels(context);
         this.ensure(context, attempt);
-        if (!sameLabels(labels, intended)) throw new Error("Could not verify remembered projects. Completed tasks remain renamed; check labels and retry.");
+        if (!sameLabels(labels, intended)) throw new Error("Could not verify remembered lists. Completed tasks remain renamed; check labels and retry.");
       }
       tasks = await this.ports.validate(context);
       this.ensure(context, attempt);
       this.collision(tasks, labels);
-      if (tasks.some((task) => task.projects.includes(this.from))) throw new ProjectReviewRequired();
+      if (tasks.some((task) => task.lists.includes(this.from))) throw new ListReviewRequired();
       this.phase = "completed";
       this.ports.completed(labels);
     } catch (error) {
-      this.phase = error instanceof ProjectReviewRequired ? "paused-for-review" : tasksDone ? "labels-pending" : "failed";
+      this.phase = error instanceof ListReviewRequired ? "paused-for-review" : tasksDone ? "labels-pending" : "failed";
       this.error = errMsg(error);
     } finally { this.ports.changed(); }
   }

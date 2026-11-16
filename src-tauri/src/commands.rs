@@ -75,14 +75,14 @@ pub fn list_tasks(
   state: State<'_, AppState>,
   completed: Option<bool>,
   priority: Option<serde_json::Value>,
-  project: Option<String>,
+  list: Option<String>,
   context: Option<String>,
 ) -> Result<Vec<TaskDto>, String> {
   reject_legacy_filter(priority.as_ref())?;
   let store = state.store.lock().map_err(lock_err)?;
   let filter = Filter {
     completed,
-    project,
+    list,
     context,
   };
   Ok(

@@ -21,7 +21,7 @@ export function clickWithRemovedTargetLabelActivation(control: HTMLElement) {
 }
 
 // Observe native visibility at the replacement's opening boundary, not just after effects settle.
-export function observeProjectHandoffs() {
+export function observeListHandoffs() {
   const pickerClosedAtOpen: boolean[] = [];
   const showModal = HTMLDialogElement.prototype.showModal;
   const show = vi.spyOn(HTMLDialogElement.prototype, "showModal").mockImplementation(function (this: HTMLDialogElement) {

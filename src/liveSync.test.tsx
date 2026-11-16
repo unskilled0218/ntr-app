@@ -47,12 +47,12 @@ it("detects missed changes after reconnect, retries failures, and keeps both pan
       }
       const task: Task = {
         id: 1, completed: false, completion_date: null, creation_date: null,
-        description: taskText, projects: [], contexts: [], tags: {}, raw: taskText,
+        description: taskText, lists: [], contexts: [], tags: {}, raw: taskText,
       };
       body = JSON.stringify([task]);
     } else if (path === "/api/note") body = note;
     else if (path === "/api/raw") body = taskText + "\n";
-    else body = JSON.stringify({ project: [], context: [] });
+    else body = JSON.stringify({ list: [], context: [] });
     return { ok: true, status: 200, status_text: "OK", body };
   });
   const { container } = render(<App />);

@@ -419,7 +419,7 @@ button {
 }
 
 /* Only the "Add" submit button is accent-coloured; the field trigger buttons
-   (Priority / Projects) keep the default white .select-field look. */
+   (Priority / Lists) keep the default white .select-field look. */
 form#add-form button[type="submit"] {
   background: var(--accent);
   color: #fff;
@@ -583,8 +583,8 @@ dialog.action-modal {
 .action-modal .modal-actions { flex-wrap: wrap; }
 .action-modal :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .rename-modal input { min-width: 0; max-width: 100%; }
-.original-project { display: flex; flex-direction: column; gap: 0.25rem; }
-.original-project > span { color: var(--muted); font-size: 0.85rem; }
+.original-list { display: flex; flex-direction: column; gap: 0.25rem; }
+.original-list > span { color: var(--muted); font-size: 0.85rem; }
 .remote-modal { width: 48rem; }
 .remote-modal .preview-navigation:first-child { margin-top: 0; }
 .remote-modal .diff-meta { color: var(--muted); }

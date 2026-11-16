@@ -3,9 +3,9 @@
 // shared SelectField; removal is a store-level filter action (see task 12), so no onRemove here.
 
 import { ADD_VALUE, EMPTY_LABEL, KINDS, type Kind } from "../config";
-import { HaListPicker, useHaProjects } from "./HaProjects";
+import { HaListPicker, useHaLists } from "./HaLists";
 import SelectField, { type FieldOption } from "./SelectField";
-import { recoveryEntries, relatedRecovery, type ProjectActionRequest, type ProjectManagement, type ProjectSelectorSession } from "../lib/projectActions";
+import { recoveryEntries, relatedRecovery, type ListActionRequest, type ListManagement, type ListSelectorSession } from "../lib/listActions";
 
 interface Props {
   kind: Kind;
@@ -14,22 +14,22 @@ interface Props {
   staged: string[];
   onChange(value: string): void;
   onAdd(): void;
-  management?: ProjectManagement;
-  onProjectAction?: (request: ProjectActionRequest) => void;
-  onRecover?: (id: number, session?: ProjectSelectorSession) => void;
+  management?: ListManagement;
+  onListAction?: (request: ListActionRequest) => void;
+  onRecover?: (id: number, session?: ListSelectorSession) => void;
   revision?: number;
 }
 
-export default function LabelSelect({ kind, value, serverLabels, staged, onChange, onAdd, management, onProjectAction, onRecover, revision }: Props) {
-  const ha = useHaProjects();
-  if (ha && kind === "project") return <HaListPicker value={value} onChange={onChange} />;
+export default function LabelSelect({ kind, value, serverLabels, staged, onChange, onAdd, management, onListAction, onRecover, revision }: Props) {
+  const ha = useHaLists();
+  if (ha && kind === "list") return <HaListPicker value={value} onChange={onChange} />;
   const names = [...new Set([...serverLabels, ...staged])].sort();
   const label = KINDS[kind].singular;
 
   const options: FieldOption[] = [
     { value: ADD_VALUE, label: `+ Add ${label}...` },
     { value: "", label: EMPTY_LABEL },
-    ...names.map((name) => ({ value: name, label: name, renamable: !!onProjectAction, removable: !!onProjectAction,
+    ...names.map((name) => ({ value: name, label: name, renamable: !!onListAction, removable: !!onListAction,
       description: management ? relatedRecovery(name, management)?.summary : undefined })),
   ];
 
@@ -45,10 +45,10 @@ export default function LabelSelect({ kind, value, serverLabels, staged, onChang
       value={value}
       options={options}
       onChange={handleChange}
-      retainActions={!!onProjectAction}
+      retainActions={!!onListAction}
       revision={revision}
-      onRename={onProjectAction && management ? (name, session) => onProjectAction({ action: "rename", name, scope: serverLabels.includes(name) ? "known" : "staged", destination: management.destination, origin: "add", recoveryId: relatedRecovery(name, management)?.id, session }) : undefined}
-      onRemove={onProjectAction && management ? (name, session) => onProjectAction({ action: "remove", name, scope: serverLabels.includes(name) ? "known" : "staged", destination: management.destination, origin: "add", recoveryId: relatedRecovery(name, management)?.id, session }) : undefined}
+      onRename={onListAction && management ? (name, session) => onListAction({ action: "rename", name, scope: serverLabels.includes(name) ? "known" : "staged", destination: management.destination, origin: "add", recoveryId: relatedRecovery(name, management)?.id, session }) : undefined}
+      onRemove={onListAction && management ? (name, session) => onListAction({ action: "remove", name, scope: serverLabels.includes(name) ? "known" : "staged", destination: management.destination, origin: "add", recoveryId: relatedRecovery(name, management)?.id, session }) : undefined}
       recoveries={recoveryEntries(names, management)}
       onRecover={onRecover}
     />

@@ -5,7 +5,7 @@
 
 A desktop and Android app for tasks and Markdown notes. Use local storage or connect to ntr server.
 
-Version `0.15.34`. See [release notes](docs/releases/0.15.34.md).
+Version `0.15.35`. See [release notes](docs/releases/0.15.35.md).
 
 ## Quick start
 
@@ -21,6 +21,6 @@ Open connection settings with `[L]` or `[S]`. HA credentials belong on the serve
 ## Documentation
 
 - [Features](docs/features.md), [running and storage](docs/run.md), and [task editing](docs/task-text.md).
-- [Projects](docs/project-renaming.md), [server connections](docs/server-connection.md), and [live sync](docs/live-sync.md).
+- [Lists](docs/project-renaming.md), [server connections](docs/server-connection.md), and [live sync](docs/live-sync.md).
 - [Development](docs/development.md) and [stack](docs/stack.md).
 - [Builds](docs/release-builds.md), [Forgejo publication](docs/forgejo-publishing.md), and [Android signing](docs/android-signing.md).

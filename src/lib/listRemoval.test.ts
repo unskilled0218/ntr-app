@@ -1,36 +1,36 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { activateTransport, captureTransport, type Labels, type Task } from "../api";
-import { removeProjectText } from "../labels";
-import { ProjectReviewRequired } from "./projectRename";
-import { ProjectRemoval, type ProjectRemovalPorts } from "./projectRemoval";
+import { removeListText } from "../labels";
+import { ListReviewRequired } from "./listRename";
+import { ListRemoval, type ListRemovalPorts } from "./listRemoval";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-const task = (id: number, raw = `task${id} +work`): Task => ({ id, raw, description: raw, projects: raw.split(/\s+/).filter((token) => token.startsWith("+")).map((token) => token.slice(1)), contexts: [], tags: {}, completed: false, completion_date: null, creation_date: null });
+const task = (id: number, raw = `task${id} +work`): Task => ({ id, raw, description: raw, lists: raw.split(/\s+/).filter((token) => token.startsWith("+")).map((token) => token.slice(1)), contexts: [], tags: {}, completed: false, completion_date: null, creation_date: null });
 function fixture() {
-  const data = { tasks: [task(1), task(2)], labels: { project: ["work", "other"], context: ["phone"] } as Labels, current: true };
-  const ports: ProjectRemovalPorts = {
+  const data = { tasks: [task(1), task(2)], labels: { list: ["work", "other"], context: ["phone"] } as Labels, current: true };
+  const ports: ListRemovalPorts = {
     validate: vi.fn(async () => data.tasks), labels: vi.fn(async () => data.labels),
     write: vi.fn(async (id, raw) => { const updated = task(id, raw); data.tasks = data.tasks.map((found) => found.id === id ? updated : found); return updated; }),
     saveLabels: vi.fn(async (labels) => { data.labels = labels; }), current: () => data.current,
     completed: vi.fn(), changed: vi.fn(),
   };
   const context = captureTransport();
-  return { data, ports, context, operation: new ProjectRemoval("work", context, ports) };
+  return { data, ports, context, operation: new ListRemoval("work", context, ports) };
 }
 beforeEach(() => { localStorage.setItem("ntr.serverUrl", "http://shared"); activateTransport(); });
 afterEach(() => localStorage.clear());
 
-describe("retained project removal", () => {
-  it("removes only exact project tokens and preserves unrelated metadata", () => {
-    expect(removeProjectText("x (B) 2026-10-30 2026-01-01 task +work\t+workshop @home due:2026-11-01", "work"))
+describe("retained list removal", () => {
+  it("removes only exact list tokens and preserves unrelated metadata", () => {
+    expect(removeListText("x (B) 2026-10-30 2026-01-01 task +work\t+workshop @home due:2026-11-01", "work"))
       .toBe("x (B) 2026-10-30 2026-01-01 task +workshop @home due:2026-11-01");
-    expect(removeProjectText("  unrelated  ", "work")).toBe("  unrelated  ");
+    expect(removeListText("  unrelated  ", "work")).toBe("  unrelated  ");
   });
   it("verifies tasks and labels before publishing completion", async () => {
     const { data, ports, operation, context } = fixture();
     expect(await operation.run(context)).toBe("completed");
     expect(data.tasks.map((found) => found.raw)).toEqual(["task1", "task2"]);
-    expect(data.labels).toEqual({ project: ["other"], context: ["phone"] });
+    expect(data.labels).toEqual({ list: ["other"], context: ["phone"] });
     expect(ports.completed).toHaveBeenCalledTimes(1);
   });
   it("retains a partial write and retries only remaining tasks", async () => {
@@ -62,7 +62,7 @@ describe("retained project removal", () => {
   });
   it("does not emit completion on foreign divergence or resume without explicit retry", async () => {
     const { ports, operation, context } = fixture();
-    vi.mocked(ports.validate).mockRejectedValueOnce(new ProjectReviewRequired());
+    vi.mocked(ports.validate).mockRejectedValueOnce(new ListReviewRequired());
     await operation.run(context); expect(operation.phase).toBe("paused-for-review"); expect(ports.completed).not.toHaveBeenCalled();
     await operation.run(context); expect(operation.phase).toBe("completed");
   });
@@ -74,7 +74,7 @@ describe("retained project removal", () => {
   });
   it("stops after destination invalidation", async () => {
     const { ports, operation, context } = fixture();
-    vi.mocked(ports.labels).mockImplementationOnce(async () => { localStorage.setItem("ntr.serverUrl", "http://other"); activateTransport(); return { project: ["work"], context: [] }; });
+    vi.mocked(ports.labels).mockImplementationOnce(async () => { localStorage.setItem("ntr.serverUrl", "http://other"); activateTransport(); return { list: ["work"], context: [] }; });
     await operation.run(context); expect(ports.write).not.toHaveBeenCalled(); expect(ports.saveLabels).not.toHaveBeenCalled();
   });
 });
