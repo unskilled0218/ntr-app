@@ -3,7 +3,7 @@
   "gitea": "https://git.lan",
   "repository": "ntr/ntr-app",
   "username": "dev",
-  "token_file": "~/.config/git/token",
+  "token_file": "~/.config/token/git",
   "notes": "docs/releases/0.15.33.md",
   "targets": ["desktop", "android"],
   "android_certificate_sha256": "d7787be6cd50378516ac5bf4bd2bee92bae78372730ff1363eb0d03958d1961b"

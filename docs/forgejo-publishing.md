@@ -16,7 +16,7 @@ The checked-in Android certificate is initially `null`: no existing key was avai
 
 ## Credentials and tools
 
-Use a user-owned, readable, non-symlink token file outside the repository with mode `0600` or `0400`, default `~/.config/git/token`. `GIT_TOKEN` selects a token file path, not a token value. The configured username must match the token's `/api/v1/user` identity. The token needs user-identity read access and repository write/release rights; Git transport authentication is separate. Old `FORGEJO_TOKEN` and `FORGEJO_API_URL` overrides are refused. Tokens must not appear in Git, command arguments, logs, `.env`, or shell history.
+Use a user-owned, readable, non-symlink token file outside the repository with mode `0600` or `0400`, default `~/.config/token/git`. `GIT_TOKEN` selects a token file path, not a token value. The configured username must match the token's `/api/v1/user` identity. The token needs user-identity read access and repository write/release rights; Git transport authentication is separate. Old `FORGEJO_TOKEN` and `FORGEJO_API_URL` overrides are refused. Tokens must not appear in Git, command arguments, logs, `.env`, or shell history.
 
 Verification needs Linux/POSIX, Bash, Python 3.11+, Git, normal trusted HTTPS, and API/Git credentials. New publication additionally needs Node/npm, Rust/Cargo, the desktop bundling toolchain, and the Android SDK/NDK/JDK and `apksigner` on `PATH` for Android. The publisher does not install system tools, configure builders, or disable TLS. It runs `npm ci` from the lockfile inside an isolated source checkout. Use a trusted toolchain and a normal trusted Git configuration; unsupported transport/environment overrides are refused.
 
