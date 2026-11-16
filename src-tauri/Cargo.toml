@@ -1,6 +1,6 @@
 [package]
 name = "ntr"
-version = "0.15.32"
+version = "0.15.33"
 description = "Local-first desktop client for todo.txt tasks and a Markdown note — local files or a my-ntr-server over HTTP."
 authors = ["musty"]
 edition = "2021"
@@ -25,8 +25,8 @@ serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tokio = { version = "1", features = ["time"] }
 # Native HTTP for server mode: reaches HTTPS reverse proxies (e.g. https://ntr.lan) with
-# self-signed certs and is not subject to webview CORS. `default-tls` links the system OpenSSL
-# (present in this image) so no extra C-build tooling is needed; `stream` gives
+# self-signed certs and is not subject to webview CORS. Reqwest 0.13 `default-tls` uses
+# Rustls with platform certificate verification; `stream` gives
 # Response::bytes_stream() for the SSE bridge.
 reqwest = { version = "0.13", default-features = false, features = ["stream", "default-tls"] }
 futures-util = "0.3"

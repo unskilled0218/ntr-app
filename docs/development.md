@@ -1,5 +1,16 @@
 # Development
 
+- [Toolchain and dependency updates](#toolchain-and-dependency-updates)
+- [Checks](#checks)
+
+## Toolchain and dependency updates
+
+Use Node `^22.22.2 || ^24.15.0 || >=26.0.0`; the current dependency refresh is validated on Node 26.13.0 and Rust 1.100.0. Install the locked npm graph with `npm ci`. Run both `npm audit` and `npm audit --omit=dev` after updates: a clean production audit does not mean the test/dev toolchain is clean. Do not use forced audit upgrades or bypass peer compatibility. See [the stack and retained native pins](stack.md).
+
+Vitest 5/jsdom 31, Vite 8/React plugin 6, and TypeScript 7 are upgraded together. Preserve behavioral assertions when adapting tests to tool changes: generic fake readers use a typed object plus a spy, and remote-review buttons expose explicit accessible names rather than relying on whitespace across text/span nodes. Refresh native dependencies with Cargo, retain the vendor patch, and run locked native tests where system development libraries are available. `cargo audit` is a separate optional security tool; ordinary Cargo resolution/tests are not a vulnerability audit.
+
+## Checks
+
 Run commands from the app repository root.
 
 ```sh

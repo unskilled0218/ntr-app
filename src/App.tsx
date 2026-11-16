@@ -268,7 +268,7 @@ export default function App() {
           const state = updates.state(resource);
           return (state.pending || state.error) && <div key={resource} role="status">
             {state.error || (resource === "note" ? "Remote update pending; automatic saving paused" : "Tasks update pending")}
-            <button type="button" onClick={() => {
+            <button type="button" aria-label={`Review update for ${resource}`} onClick={() => {
               if (resource === "tasks") todoRef.current?.reviewRemote();
               void updates.review(resource);
             }}>Review update<span className="sr-only"> for {resource}</span></button>

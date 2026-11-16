@@ -8,8 +8,11 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 const instances: RemoteUpdates[] = [];
 function setup() {
   const content: Snapshots = { note: "A", tasks: [] };
-  const read = vi.fn(async <K extends Resource>(resource: K): Promise<Snapshots[K]> => content[resource]);
-  const updates = new RemoteUpdates(read);
+  const backend = {
+    async read<K extends Resource>(resource: K): Promise<Snapshots[K]> { return content[resource]; },
+  };
+  const read = vi.spyOn(backend, "read");
+  const updates = new RemoteUpdates((resource) => backend.read(resource));
   instances.push(updates);
   return { updates, read, content };
 }

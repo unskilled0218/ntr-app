@@ -5,7 +5,7 @@
 
 A local-first task manager and Markdown notes app built with Tauri, React, and TypeScript. Runs on desktop and Android, using local files or an optional `my-ntr-server` connection.
 
-Version `0.15.32` shows [Home Assistant lists as projects](docs/server-connection.md#home-assistant-tasks), with explicit routing, confirmed moves and recovery, and server-authorized list management. See [release notes](docs/releases/0.15.32.md); local validation does not publish anything.
+Version `0.15.33` refreshes React, Tauri dependencies, and the TypeScript/Vite/Vitest toolchain. Use Node `^22.22.2 || ^24.15.0 || >=26.0.0` and `npm ci` for the locked dependency graph. See [release notes](docs/releases/0.15.33.md); local validation does not publish anything.
 
 ## Quick start
 
