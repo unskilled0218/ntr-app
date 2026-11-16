@@ -20,53 +20,63 @@ interface Props {
   ariaLabel: string; // accessible name for the trigger and the dialog
   value: string;
   options: FieldOption[];
-  onChange(value: string): void;
+  onChange(value: string, session?: ListSelectorSession): void;
   onRemove?(value: string, session?: ListSelectorSession): void;
   onRename?(value: string, session?: ListSelectorSession): void;
   retainActions?: boolean;
+  retainChoices?: string[];
+  scopeKey?: string;
   revision?: number;
   recoveries?: { id: number; label: string; kind: ListAction }[];
   onRecover?(id: number, session?: ListSelectorSession): void;
 }
 
-export default function SelectField({ ariaLabel, value, options, onChange, onRemove, onRename, recoveries, onRecover, retainActions, revision = 0 }: Props) {
+export default function SelectField({ ariaLabel, value, options, onChange, onRemove, onRename, recoveries, onRecover, retainActions, retainChoices, scopeKey, revision = 0 }: Props) {
   const { dialogRef, open, setOpen, closePicker, onClose, onCancel } = usePickerDialog();
   const generation = useRef(0);
-  const [focus, setFocus] = useState<{ name: string; revision: number; generation: number } | null>(null);
+  const currentScope = useRef(scopeKey); currentScope.current = scopeKey;
+  const [focus, setFocus] = useState<{ name: string; revision: number; generation: number; scope?: string; action?: ListAction } | null>(null);
   useEffect(() => () => { generation.current++; }, []);
+  useEffect(() => { generation.current++; setFocus(null); closePicker(); }, [scopeKey]);
   useEffect(() => {
-    if (!focus || !open || focus.generation !== generation.current || revision < focus.revision) return;
+    if (!focus || !open || focus.scope !== currentScope.current || focus.generation !== generation.current || revision < focus.revision) return;
     const dialog = dialogRef.current;
     if (!dialog?.open || !dialog.isConnected) return;
     const buttons = [...dialog.querySelectorAll<HTMLButtonElement>("button")];
-    const target = buttons.find((button) => button.getAttribute("aria-label") === `Rename ${focus.name}`)
-      ?? buttons.find((button) => button.textContent === focus.name)
+    const label = options.find((option) => option.value === focus.name)?.label ?? focus.name;
+    const target = buttons.find((button) => button.getAttribute("aria-label") === `${focus.action === "remove" ? "Remove" : "Rename"} ${label}`)
+      ?? buttons.find((button) => button.textContent === label)
       ?? buttons.find((button) => button.textContent === "Cancel");
     target?.focus(); setFocus(null);
   }, [focus, open, revision, options]);
-  function session(): ListSelectorSession | undefined {
-    if (!retainActions) { closePicker(); return; }
+  function session(retain = retainActions, action?: ListAction): ListSelectorSession | undefined {
+    if (!retain) { closePicker(); return; }
     const id = generation.current;
+    const scope = scopeKey;
+    let settled = false;
+    const current = () => !settled && scope === currentScope.current && id === generation.current && !!dialogRef.current?.open && dialogRef.current.isConnected;
     return {
       close() {
-        if (id !== generation.current || !dialogRef.current?.open) return false;
-        generation.current++; closePicker(); return true;
+        if (!current()) return false;
+        settled = true; generation.current++; closePicker(); return true;
       },
       restore(name, mappedRevision = 0) {
-        if (id === generation.current && dialogRef.current?.open) setFocus({ name, revision: mappedRevision, generation: id });
+        if (!current()) return;
+        settled = true; setFocus({ name, revision: mappedRevision, generation: id, scope, action });
       },
     };
   }
 
   function choose(v: string) {
+    if (retainChoices?.includes(v)) { onChange(v, session(true)); return; }
     closePicker();
     onChange(v);
   }
 
-  function dispatch<T extends string | number>(callback: ((value: T, origin?: ListSelectorSession) => void) | undefined, value: T) {
+  function dispatch<T extends string | number>(callback: ((value: T, origin?: ListSelectorSession) => void) | undefined, value: T, action?: ListAction) {
     // Close first so a confirm dialog the parent opens from onRemove is not stacked under us.
     // Retained sessions instead let the owner choose after resolving any recovery record.
-    const origin = session();
+    const origin = session(retainActions, action);
     if (origin) callback?.(value, origin); else callback?.(value);
   }
 
@@ -91,8 +101,8 @@ export default function SelectField({ ariaLabel, value, options, onChange, onRem
               options={options}
               value={value}
               onChoose={choose}
-              onRemove={onRemove ? (value) => dispatch(onRemove, value) : undefined}
-              onRename={onRename ? (value) => dispatch(onRename, value) : undefined}
+              onRemove={onRemove ? (value) => dispatch(onRemove, value, "remove") : undefined}
+              onRename={onRename ? (value) => dispatch(onRename, value, "rename") : undefined}
               recoveries={recoveries}
               onRecover={(id) => dispatch(onRecover, id)}
             />

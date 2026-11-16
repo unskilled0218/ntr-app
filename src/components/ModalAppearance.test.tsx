@@ -113,4 +113,13 @@ describe("Settings-style modal contract", () => {
     expect(footer.getPropertyValue("background")).toBe("var(--modal-bg)");
     expect(rule("dialog.app-modal").getPropertyValue("--modal-bg")).toBe("#fff");
   });
+
+  it("reserves outline clearance inside the scroll surface and lifts only the focused row", () => {
+    expect(rule(".picker-list").getPropertyValue("padding")).toBe("4px");
+    expect(rule(".picker-list").getPropertyValue("scroll-padding")).toBe("4px");
+    expect(rule(".picker-list").getPropertyValue("overflow-y")).toBe("auto");
+    expect(rule(".picker-option:focus-within").getPropertyValue("position")).toBe("relative");
+    expect(rule(".picker-option:focus-within").getPropertyValue("z-index")).toBe("1");
+    expect(rule(".picker-recovery:focus-within").getPropertyValue("z-index")).toBe("1");
+  });
 });

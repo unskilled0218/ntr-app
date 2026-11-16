@@ -5,6 +5,8 @@ import HaLists, { HaListPicker } from "./HaLists";
 import AddForm from "./AddForm";
 import EditTaskModal from "./EditTaskModal";
 import { manageHaList, recoverHaMove, type HaCatalog, type Task } from "../api";
+import { cancelDialog } from "../test/dialog";
+import { deferred } from "../test/deferred";
 
 vi.mock("../api", async (original) => ({...await original<typeof import("../api")>(), manageHaList:vi.fn(), recoverHaMove:vi.fn()}));
 const CATALOG:HaCatalog = {can_create:true, pending_move:null, lists:[
@@ -19,6 +21,40 @@ function Wrapper({children, catalog = CATALOG}: {children:ReactNode; catalog?:Ha
 beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); vi.mocked(manageHaList).mockResolvedValue(CATALOG); vi.mocked(recoverHaMove).mockResolvedValue(CATALOG); });
 afterEach(cleanup);
 function picker() { return within(document.querySelector("dialog.select-modal[open]") as HTMLElement); }
+
+it.each([false, true].flatMap((compact) => (["create", "delete"] as const).flatMap((action) => ["Cancel", "Escape", "backdrop"].map((method) => ({ compact, action, method })))))(
+  "returns HA $action cancellation to the same picker without writes ($method, compact=$compact)", ({ compact, action, method }) => {
+    const add = vi.fn(); render(<Wrapper><AddForm compact={compact} serverLabels={{list:[],context:[]}} onAdd={add} /></Wrapper>);
+    fireEvent.change(screen.getByLabelText("New task"), {target:{value:"unsaved HA task"}});
+    if (compact) fireEvent.click(screen.getByRole("button", {name:"Task options"}));
+    fireEvent.click(screen.getByRole("button", {name:"List"})); fireEvent.click(picker().getByRole("button", {name:"Shared tasks"}));
+    fireEvent.click(screen.getByRole("button", {name:"List"}));
+    const opened = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
+    fireEvent.click(within(opened).getByRole("button", {name:action === "create" ? "+ Add list..." : "Remove Shared tasks"}));
+    const prompt = screen.getByRole("dialog", {name:action === "create" ? "Create HA list" : "Delete HA list"}) as HTMLDialogElement;
+    if (method === "Cancel") fireEvent.click(within(prompt).getByRole("button", {name:"Cancel"}));
+    else if (method === "Escape") cancelDialog(prompt); else fireEvent.click(prompt);
+    expect(opened.open).toBe(true); expect(document.querySelector("dialog.select-modal[open]")).toBe(opened);
+    expect(document.activeElement).toBe(within(opened).getByRole("button", {name:action === "create" ? "+ Add list..." : "Remove Shared tasks"}));
+    expect(within(opened).getByRole("button", {name:"Shared tasks"}).getAttribute("aria-current")).toBe("true");
+    expect((screen.getByLabelText("New task") as HTMLInputElement).value).toBe("unsaved HA task");
+    expect(manageHaList).not.toHaveBeenCalled(); expect(add).not.toHaveBeenCalled();
+  },
+);
+
+it("does not dismiss busy HA deletion or bypass its safeguards through the retained picker", async () => {
+  const pending = deferred<HaCatalog>(); vi.mocked(manageHaList).mockReturnValue(pending.promise);
+  render(<Wrapper><HaListPicker value="todo.shared" onChange={vi.fn()} /></Wrapper>);
+  fireEvent.click(screen.getByRole("button", {name:"List"})); fireEvent.click(picker().getByRole("button", {name:"Remove Shared tasks"}));
+  const prompt = screen.getByRole("dialog", {name:"Delete HA list"}) as HTMLDialogElement;
+  expect(prompt.textContent).toContain("default list is protected");
+  fireEvent.click(within(prompt).getByRole("button", {name:"Confirm"}));
+  expect((within(prompt).getByRole("button", {name:"Cancel"}) as HTMLButtonElement).disabled).toBe(true);
+  expect(cancelDialog(prompt).defaultPrevented).toBe(true); fireEvent.click(prompt);
+  expect(prompt.isConnected).toBe(true); expect(document.querySelector("dialog.select-modal[open]")).toBeTruthy();
+  pending.resolve(CATALOG); await waitFor(() => expect(prompt.isConnected).toBe(false));
+  expect(manageHaList).toHaveBeenCalledOnce(); expect(document.querySelector("dialog.select-modal[open]")).toBeNull();
+});
 
 it("HA add sends explicit list IDs without inserting list names or removing legacy tokens", async () => {
   const add = vi.fn().mockResolvedValue(true);

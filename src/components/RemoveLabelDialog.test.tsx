@@ -14,13 +14,15 @@ describe("RemoveLabelDialog", () => {
     expect(dialog?.open).toBeFalsy();
   });
 
-  it("opens and names the token when given a target", () => {
+  it("shows the literal list name in the requested minimal removal message", () => {
     render(
       <RemoveLabelDialog target={{ kind: "list", name: "work" }} onConfirm={vi.fn()} onCancel={vi.fn()} />,
     );
     const dialog = document.getElementById("remove-label-dialog") as HTMLDialogElement;
     expect(dialog.open).toBe(true);
-    expect(dialog.textContent).toContain("+work");
+    expect(screen.getByRole("heading", { name: "Remove work" })).toBeTruthy();
+    expect(dialog.textContent).not.toContain("+work");
+    expect(dialog.querySelector("p")).toBeNull();
   });
 
   it("calls onConfirm when Remove is clicked", () => {
@@ -28,6 +30,8 @@ describe("RemoveLabelDialog", () => {
     render(
       <RemoveLabelDialog target={{ kind: "context", name: "store" }} onConfirm={onConfirm} onCancel={vi.fn()} />,
     );
+    expect(screen.getByRole("heading", {name:"Remove context?"})).toBeTruthy();
+    expect(screen.getByText("@store")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^remove$/i }));
     expect(onConfirm).toHaveBeenCalledOnce();
   });

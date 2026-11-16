@@ -10,6 +10,8 @@ Every app-owned HTML dialog uses `app-modal` in `src/style.css`. Settings is the
 
 Primary/submit buttons use the accent color; destructive picker actions keep their danger color and selected rows remain highlighted. Keyboard focus stays visible. The shared backdrop dims the underlying page.
 
+Picker scroll surfaces reserve 4px inside each edge for the 2px focus outline and its 2px offset. Only focused rows receive local stacking priority, so adjacent row backgrounds cannot cover Add/Rename outlines. Scrolling and native dialog top-layer ordering remain intact.
+
 ## Content and sizing
 
 All dialogs have viewport-bounded width/height, wrapping content/actions, and vertical overflow handling. Standard dialogs cap at 36rem; conflict comparisons can use 40rem and remote updates 48rem, always within viewport gutters. Picker lists and diff/version previews retain their own scrolling.
@@ -19,5 +21,7 @@ Remote Task/Note updates remain title-free, with their accessible names and appr
 ## Behavior and verification
 
 The shared class changes appearance, not dialog ownership. Existing focus, nested-dialog handling, Escape/backdrop behavior, busy guards, confirmations, and explicit recovery choices remain in their current components. Only open dialogs receive flex layout; closed dialogs remain hidden.
+
+Add/Remove list cancellation returns to the retained originating picker. Sessions are single-use and scoped to the mounted selector/destination; ordinary selection still closes the picker. Review update explicitly closes retained picker/options stacks before approval. See [list actions](project-renaming.md).
 
 `ModalAppearance.test.tsx` checks template coverage and rendered DOM/CSS appearance. Existing component/lifecycle tests cover interactions. These checks do not replace real-browser desktop/narrow-screen layout, native top-layer focus, or Android device verification; see [development](development.md#checks).

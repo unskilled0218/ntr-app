@@ -14,7 +14,7 @@ import OptionsModal, { type OptionsModalHandle } from "./OptionsModal";
 import SelectField, { type FieldOption } from "./SelectField";
 import SortField from "./SortField";
 import { HaListPicker, useHaLists } from "./HaLists";
-import { recoveryEntries, relatedRecovery, type ListManagement } from "../lib/listActions";
+import { recoveryEntries, relatedRecovery, type ListManagement, type ListSelectorSession } from "../lib/listActions";
 
 interface Props {
   disabled?: boolean;
@@ -65,6 +65,11 @@ export default function FilterBar({
 }: Props) {
   const ha = useHaLists();
   const optionsRef = useRef<OptionsModalHandle>(null);
+  function ownSession(session?: ListSelectorSession): ListSelectorSession | undefined {
+    return session ? { restore: session.restore, close() {
+      const closed = session.close(); if (closed) optionsRef.current?.close(); return closed;
+    } } : undefined;
+  }
   // The two choosers, defined once and rendered either inline (default) or inside the compact
   // Options modal — so each chooser's props and wiring live in exactly one place.
   const fields = (
@@ -74,19 +79,25 @@ export default function FilterBar({
         {ha ? <HaListPicker value={list} onChange={onList} filter /> : <SelectField
           ariaLabel="List filter"
           value={list}
+          retainActions={!!management}
+          scopeKey={management?.destination}
           options={labelOptions(serverLabels.list).map((option) => ({ ...option, removable: !disabled && option.removable, renamable: !disabled && option.renamable, description: management ? relatedRecovery(option.value, management)?.summary : undefined }))}
           onChange={onList}
-          onRemove={(name) => {
-            if (management) { optionsRef.current?.close(); management.onAction({ action: "remove", name, scope: "known", destination: management.destination, origin: "filter", recoveryId: relatedRecovery(name, management)?.id }); }
+          onRemove={(name, session) => {
+            if (management) { management.onAction({ action: "remove", name, scope: "known", destination: management.destination, origin: "filter", recoveryId: relatedRecovery(name, management)?.id, session: ownSession(session) }); }
             else onRemove("list", name);
           }}
-          onRename={management || onRename ? (name) => {
+          onRename={management || onRename ? (name, session) => {
+            session?.close();
             optionsRef.current?.close();
             if (management) management.onAction({ action: "rename", name, scope: "known", destination: management.destination, origin: "filter", recoveryId: relatedRecovery(name, management)?.id });
             else onRename?.(name);
           } : undefined}
           recoveries={recoveryEntries(serverLabels.list, management)}
-          onRecover={(id) => { optionsRef.current?.close(); management?.onRecover(id, "filter"); }}
+          onRecover={(id, session) => {
+            if (management?.pending.find((record) => record.id === id)?.kind === "remove") management.onRecover(id, "filter", ownSession(session));
+            else { session?.close(); optionsRef.current?.close(); management?.onRecover(id, "filter"); }
+          }}
         />}
       </label>
       <label>

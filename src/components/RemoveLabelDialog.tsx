@@ -45,9 +45,6 @@ export default function RemoveLabelDialog({ target, onConfirm, onCancel, operati
   // Click outside the box dismisses it (non-destructive, same as Escape/Cancel) via onCancel below.
   useBackdropClose(dialogRef, close);
 
-  const singular = target ? KINDS[target.kind].singular : "label";
-  const token = target ? KINDS[target.kind].prefix + target.name : "";
-
   return (
     <dialog className="app-modal" id={id} ref={dialogRef} aria-label="Remove label" onCancel={(event) => {
       if (!ownDialogEvent(event)) return;
@@ -55,10 +52,10 @@ export default function RemoveLabelDialog({ target, onConfirm, onCancel, operati
     }} onClose={(event) => {
       if (dialogWasDismissed(event) && open && !busy && !handled.current) { handled.current = true; onCancel(); }
     }}>
-      <h2>Remove {singular}?</h2>
-      <p className="note-conflict-msg">
-        {scope === "draft" ? <>Remove staged choice <strong>{token}</strong> and its exact list references from this draft only. Stored tasks are unchanged.</> : <>Remove <strong>{token}</strong> from every task that uses it and remembered choices. Tasks themselves are not deleted. Completed changes cannot be rolled back.</>}
-      </p>
+      <h2>{target?.kind === "context" ? "Remove context?" : <>Remove {target?.name ?? "list"}</>}</h2>
+      {target?.kind === "context" && <p className="note-conflict-msg">
+        {scope === "draft" ? <>Remove staged choice <strong>{KINDS.context.prefix + target.name}</strong> and its exact list references from this draft only. Stored tasks are unchanged.</> : <>Remove <strong>{KINDS.context.prefix + target.name}</strong> from every task that uses it and remembered choices. Tasks themselves are not deleted. Completed changes cannot be rolled back.</>}
+      </p>}
       {readOnly && <p>This result belongs to {operation?.targetDestination}. Return there to retry, or explicitly stop retry.</p>}
       {operation && <p role="status">{busy ? "Working… Issued writes cannot be canceled." : operation.phase === "completed" ? "Removal completed." : `${operation.done.size} tasks updated; completed changes remain.`}</p>}
       {(error || operation?.error) && <p role="alert">{error || operation?.error}</p>}

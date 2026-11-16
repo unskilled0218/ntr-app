@@ -1,11 +1,12 @@
 // HA list identity is routing metadata, never a todo.txt label token.
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { captureTransport, errMsg, isTransportCurrent, manageHaList, recoverHaMove, type HaCatalog, type HaList } from "../api";
+import { captureTransport, destination, errMsg, isTransportCurrent, manageHaList, recoverHaMove, type HaCatalog, type HaList } from "../api";
+import type { ListSelectorSession } from "../lib/listActions";
 import SelectField from "./SelectField";
 import { useBackdropClose } from "./useBackdropClose";
 import { ownDialogEvent } from "./dialogEvents";
 
-interface HaListsState { catalog: HaCatalog; disabled: boolean; open(action: "create" | "rename" | "delete", id?: string, onCreated?: (id:string) => void): void }
+interface HaListsState { catalog: HaCatalog; disabled: boolean; open(action: "create" | "rename" | "delete", id?: string, onCreated?: (id:string) => void, session?: ListSelectorSession): void }
 const HaListsContext = createContext<HaListsState | null>(null);
 export const useHaLists = () => useContext(HaListsContext);
 export function haListLabel(list: HaList, lists: HaList[]) {
@@ -26,7 +27,7 @@ export function ConfirmationDialog({ title, children, onCancel, onConfirm, busy 
 }
 
 export default function HaLists({catalog, disabled, setCatalog, beforeMutation, onChanged, onDialogChange, children}: {catalog: HaCatalog | null; disabled: boolean; setCatalog(catalog: HaCatalog): void; beforeMutation(): boolean; onChanged(): void; onDialogChange?(open:boolean): void; children: ReactNode}) {
-  const [prompt, setPrompt] = useState<{action:"create" | "rename" | "delete"; id:string; name:string; signature:string; owner:ReturnType<typeof captureTransport>; beforeIds:string[]; onCreated?: (id:string) => void} | null>(null);
+  const [prompt, setPrompt] = useState<{action:"create" | "rename" | "delete"; id:string; name:string; signature:string; owner:ReturnType<typeof captureTransport>; beforeIds:string[]; onCreated?: (id:string) => void; session?: ListSelectorSession} | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -34,10 +35,17 @@ export default function HaLists({catalog, disabled, setCatalog, beforeMutation, 
   const signature = JSON.stringify(catalog);
   useEffect(() => { onDialogChange?.(!!prompt || !!recovery); }, [prompt, recovery, onDialogChange]);
   const currentSignature = useRef(signature); currentSignature.current = signature;
-  function open(action: "create" | "rename" | "delete", id = "", onCreated?: (id:string) => void) {
+  useEffect(() => () => { prompt?.session?.close(); }, [prompt?.session]);
+  function cancelPrompt() {
+    if (!prompt || busy) return;
+    setPrompt(null);
+    if (isTransportCurrent(prompt.owner)) prompt.session?.restore(prompt.action === "create" ? "__ha_create__" : prompt.id);
+    else prompt.session?.close();
+  }
+  function open(action: "create" | "rename" | "delete", id = "", onCreated?: (id:string) => void, session?: ListSelectorSession) {
     if (disabled || busy || !catalog) return;
     const list = catalog.lists.find((list) => list.id === id);
-    setPrompt({action, id, name:list?.name ?? "", signature, owner:captureTransport(), beforeIds:catalog.lists.map((list) => list.id), onCreated});
+    setPrompt({action, id, name:list?.name ?? "", signature, owner:captureTransport(), beforeIds:catalog.lists.map((list) => list.id), onCreated, session});
     setName(list?.name ?? ""); setError("");
   }
   async function confirm() {
@@ -48,7 +56,7 @@ export default function HaLists({catalog, disabled, setCatalog, beforeMutation, 
     try {
       const result = await manageHaList(prompt.action, prompt.id, name.trim(), prompt.name, prompt.owner);
       if (isTransportCurrent(prompt.owner)) {
-        setCatalog(result); setPrompt(null);
+        setCatalog(result); setPrompt(null); prompt.session?.close();
         const added = result.lists.filter((list) => !prompt.beforeIds.includes(list.id) && list.name === name.trim());
         if (prompt.action === "create" && added.length === 1) prompt.onCreated?.(added[0].id);
         onChanged();
@@ -72,7 +80,7 @@ export default function HaLists({catalog, disabled, setCatalog, beforeMutation, 
       <button disabled={disabled || busy} onClick={() => {setError(""); setRecovery({action:"reconcile", owner:captureTransport(), signature});}}>Reconcile completed move</button>
       <button disabled={disabled || busy} onClick={() => {setError(""); setRecovery({action:"abandon", owner:captureTransport(), signature});}}>Abandon move</button>
     </aside>}
-    {prompt && <ConfirmationDialog title={prompt.action === "create" ? "Create HA list" : prompt.action === "rename" ? "Rename HA list" : "Delete HA list"} busy={busy} error={error} onCancel={() => setPrompt(null)} onConfirm={() => {void confirm();}}>
+    {prompt && <ConfirmationDialog title={prompt.action === "create" ? "Create HA list" : prompt.action === "rename" ? "Rename HA list" : "Delete HA list"} busy={busy} error={error} onCancel={cancelPrompt} onConfirm={() => {void confirm();}}>
       {prompt.action === "delete" ? <p>Delete “{prompt.name}”? Only an empty Local To-do list can be deleted, including completed tasks. Stop other HA writers during deletion: HA cannot atomically check and delete. The default list is protected.</p>
         : <label>HA list name<input aria-label="HA list name" value={name} onChange={(event) => setName(event.currentTarget.value)} disabled={busy} /></label>}
     </ConfirmationDialog>}
@@ -91,6 +99,7 @@ export function HaListPicker({value, onChange, filter = false}: {value: string; 
     {value:"", label:filter ? "All lists" : `Default: ${catalog.lists.find((l) => l.is_default)?.name ?? ""}`},
     ...catalog.lists.map((list) => ({value:list.id, label:haListLabel(list, catalog.lists), renamable:!disabled && list.can_rename, removable:!disabled && list.can_delete})),
   ];
-  return <SelectField ariaLabel={filter ? "List filter" : "List"} value={value} options={options} onChange={(id) => {if (id === "__ha_create__") ha.open("create", "", onChange); else onChange(id);}}
-    onRename={(id, session) => {session?.close(); ha.open("rename", id);}} onRemove={(id, session) => {session?.close(); ha.open("delete", id);}} />;
+  return <SelectField ariaLabel={filter ? "List filter" : "List"} value={value} options={options} retainActions retainChoices={["__ha_create__"]} scopeKey={destination(captureTransport())}
+    onChange={(id, session) => {if (id === "__ha_create__") ha.open("create", "", onChange, session); else onChange(id);}}
+    onRename={(id, session) => {session?.close(); ha.open("rename", id);}} onRemove={(id, session) => {ha.open("delete", id, undefined, session);}} />;
 }

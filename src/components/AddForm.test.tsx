@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import AddForm from "./AddForm";
 import { cancelDialog, clickWithRemovedTargetLabelActivation, deferDialogCloseEvents, observeListHandoffs } from "../test/dialog";
-import { captureTransport, destination } from "../api";
+import { activateTransport, captureTransport, destination } from "../api";
 import type { ListManagement } from "../lib/listActions";
 
 // The jsdom <dialog>.showModal()/close() polyfill lives in src/test/setup.ts (vitest setupFiles).
@@ -24,6 +24,51 @@ function addLabelViaModal(kind: "list", name: string) {
 }
 
 describe("AddForm", () => {
+  it.each(["layout", "destination"])("invalidates an Add-list session on %s changes without resurrecting its picker", (change) => {
+    const onAdd = vi.fn(), props = { serverLabels:{list:["work"], context:[]}, onAdd };
+    const view = render(<AddForm {...props} compact={false} />);
+    fireEvent.change(screen.getByRole("textbox", {name:"New task"}), {target:{value:"retained draft"}});
+    fireEvent.click(screen.getByRole("button", {name:"List"}));
+    fireEvent.click(within(document.querySelector("dialog.select-modal[open]")!).getByRole("button", {name:"+ Add list..."}));
+    const label = document.getElementById("label-modal") as HTMLDialogElement;
+    try {
+      if (change === "destination") { localStorage.setItem("ntr.serverUrl", "http://new-scope"); activateTransport(); }
+      view.rerender(<AddForm {...props} compact={change === "layout"} />);
+      expect(label.open).toBe(false); expect(document.querySelector("dialog.select-modal[open]")).toBeNull();
+      expect((screen.getByRole("textbox", {name:"New task"}) as HTMLInputElement).value).toBe("retained draft");
+      if (change === "layout") fireEvent.click(screen.getByRole("button", {name:"Task options"}));
+      fireEvent.click(screen.getByRole("button", {name:"List"}));
+      const current = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
+      fireEvent.click(within(current).getByRole("button", {name:"+ Add list..."}));
+      fireEvent(label, new Event("close"));
+      expect(label.open).toBe(true); expect(current.open).toBe(true); expect(onAdd).not.toHaveBeenCalled();
+    } finally { if (change === "destination") { localStorage.removeItem("ntr.serverUrl"); activateTransport(); } }
+  });
+  it.each([false, true].flatMap((compact) => ["Cancel", "Escape", "backdrop"].map((method) => ({ compact, method }))))(
+    "returns from Add list to the same picker without changing its draft ($method, compact=$compact)", ({ compact, method }) => {
+      const onAdd = vi.fn();
+      render(<AddForm serverLabels={{ list:["work"], context:[] }} onAdd={onAdd} compact={compact} />);
+      fireEvent.change(screen.getByRole("textbox", { name:"New task" }), { target:{ value:"unsaved +literal" } });
+      if (compact) fireEvent.click(screen.getByRole("button", { name:"Task options" }));
+      fireEvent.change(screen.getByLabelText("Due date"), { target:{ value:"2026-12-01" } });
+      fireEvent.click(screen.getByRole("button", { name:"List" }));
+      fireEvent.click(within(document.querySelector("dialog.select-modal[open]")!).getByRole("button", { name:"work" }));
+      fireEvent.click(screen.getByRole("button", { name:"List" }));
+      const opened = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
+      fireEvent.click(within(opened).getByRole("button", { name:"+ Add list..." }));
+      const label = document.getElementById("label-modal") as HTMLDialogElement;
+      fireEvent.change(within(label).getByRole("textbox"), { target:{ value:"discarded" } });
+      if (method === "Cancel") fireEvent.click(within(label).getByRole("button", { name:"Cancel" }));
+      else if (method === "Escape") cancelDialog(label); else fireEvent.click(label);
+      expect(label.open).toBe(false); expect(opened.open).toBe(true);
+      expect(document.activeElement).toBe(within(opened).getByRole("button", { name:"+ Add list..." }));
+      expect(within(opened).getByRole("button", { name:"work" }).getAttribute("aria-current")).toBe("true");
+      expect(within(opened).queryByRole("button", { name:"discarded" })).toBeNull();
+      expect((screen.getByRole("textbox", { name:"New task" }) as HTMLInputElement).value).toBe("unsaved +literal");
+      expect((screen.getByLabelText("Due date") as HTMLInputElement).value).toBe("2026-12-01");
+      expect(onAdd).not.toHaveBeenCalled();
+    },
+  );
   it("refuses a staged-only confirmation if its source becomes globally known", () => {
     const onAdd = vi.fn(), onAction = vi.fn(() => false);
     const management: ListManagement = { destination: destination(captureTransport()), pending: [], onAction, onRecover: vi.fn() };
@@ -199,7 +244,7 @@ describe("AddForm", () => {
         const picker = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
         clickWithRemovedTargetLabelActivation(within(picker).getByRole("button", { name: /\+ add list/i }));
         const label = document.getElementById("label-modal") as HTMLDialogElement;
-        expect(picker.open).toBe(false);
+        expect(picker.open).toBe(true);
         expect(label.open).toBe(true);
         deferred.flush();
         expect(label.open).toBe(true);
@@ -210,8 +255,13 @@ describe("AddForm", () => {
         deferred.flush();
         expect(label.open).toBe(false);
         expect(screen.getByRole("button", { name: "List" }).textContent).toBe(action === "Cancel" ? "work" : "garden");
+        expect(picker.open).toBe(action === "Cancel");
+        if (action === "Cancel") {
+          expect(document.activeElement).toBe(within(picker).getByRole("button", { name: /\+ add list/i }));
+          fireEvent.click(within(picker).getByRole("button", { name: "Cancel" })); deferred.flush();
+        }
       }
-      expect(handoffs.pickerClosedAtOpen).toEqual([true, true]);
+      expect(handoffs.pickerClosedAtOpen).toEqual([false, false]);
       expect(description.value).toBe("unfinished task");
       expect((screen.getByLabelText("Due date") as HTMLInputElement).value).toBe("2026-12-01");
       expect(screen.queryByRole("button", { name: "Priority" })).toBeNull();

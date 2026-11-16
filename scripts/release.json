@@ -4,7 +4,7 @@
   "repository": "ntr/ntr-app",
   "username": "dev",
   "token_file": "~/.config/token/git",
-  "notes": "docs/releases/0.15.36.md",
+  "notes": "docs/releases/0.15.37.md",
   "targets": ["desktop", "android"],
   "android_certificate_sha256": "185401e07bd4bca854e7e32e4c6255bbd40a5fc99bcba8f337cee197e7357703"
 }

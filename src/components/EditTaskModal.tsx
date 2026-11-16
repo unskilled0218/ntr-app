@@ -14,6 +14,8 @@ import LabelSelect from "./LabelSelect";
 import { useBackdropClose } from "./useBackdropClose";
 import { ownDialogEvent } from "./dialogEvents";
 import { formatLocalTaskDate, dueDateInput, editedDue, isDueDatetime } from "../lib/taskDates";
+import { ADD_VALUE } from "../config";
+import type { ListSelectorSession } from "../lib/listActions";
 
 interface Props {
   disabled?: boolean;
@@ -38,6 +40,12 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
   const [list, setList] = useState("");
   const [staged, setStaged] = useState<string[]>([]);
   const [modalKind, setModalKind] = useState<"list" | null>(null);
+  const addSession = useRef<ListSelectorSession | undefined>(undefined);
+  const targetDestination = destination(captureTransport());
+  useEffect(() => {
+    setModalKind(null);
+    return () => { addSession.current?.close(); addSession.current = undefined; };
+  }, [task, suspended, targetDestination]);
   const [error, setError] = useState("");
   const baseline = useRef(task);
   useEffect(() => {
@@ -87,7 +95,12 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
     setStaged((s) => [...new Set([...s, name])]);
     setList(name);
     setModalKind(null);
+    const session = addSession.current; addSession.current = undefined; session?.close();
   };
+  function cancelAddList() {
+    setModalKind(null);
+    const session = addSession.current; addSession.current = undefined; session?.restore(ADD_VALUE);
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -156,7 +169,7 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
               serverLabels={serverLabels.list}
               staged={staged}
               onChange={setList}
-              onAdd={() => setModalKind("list")}
+              onAdd={(session) => { addSession.current = session; setModalKind("list"); }}
             />
           </label>
         </div>
@@ -166,7 +179,7 @@ export default function EditTaskModal({ task, suspended, serverLabels, onSave, o
           <button type="submit" className="primary" disabled={disabled}>Save</button>
         </div>
       </form>
-      <LabelModal kind={modalKind} onConfirm={(_, name) => onConfirm(name)} onClose={() => setModalKind(null)} />
+      <LabelModal kind={modalKind} onConfirm={(_, name) => onConfirm(name)} onClose={cancelAddList} />
     </dialog>
     {move && <ConfirmationDialog title="Move task to another HA list" busy={saving} error={error} onCancel={() => setMove(null)} onConfirm={() => {void confirmMove();}} confirmLabel="Move task">
       <p>Move from {ha?.catalog.lists.find((list) => list.id === task?.list_id)?.name ?? task?.list_id} to {ha?.catalog.lists.find((list) => list.id === move.routing.list_id)?.name ?? move.routing.list_id}? ntr copies and verifies the task before deleting its source. Stop other HA writers during the move. A failure can leave both copies and require recovery.</p>

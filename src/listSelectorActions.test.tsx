@@ -6,7 +6,7 @@ import { createRef } from "react";
 import App from "./App";
 import TodoPane, { type TodoPaneHandle } from "./components/TodoPane";
 import { activateTransport, type Task, type Labels } from "./api";
-import { settle } from "./test/deferred";
+import { deferred, settle } from "./test/deferred";
 import { setEditorText } from "./lib/caret";
 import { setCompactUi } from "./settings";
 import { deferDialogCloseEvents } from "./test/dialog";
@@ -92,8 +92,7 @@ async function picker(origin: Origin = "add") {
 async function action(kind: "Rename" | "Remove", name = "work", origin: Origin = "add") {
   const opened = await picker(origin);
   fireEvent.click(within(opened).getByRole("button", { name: `${kind} ${name}` })); await act(settle);
-  const renameOpen = dialog("rename").open || dialog("rename", true).open;
-  expect(opened.open).toBe(origin === "add" && renameOpen);
+  expect(opened.open).toBe(kind === "Remove" || origin === "add");
 }
 const dialog = (kind: "rename" | "remove", draft = false) => document.querySelector(draft ? `#draft-${kind}-list-dialog` : kind === "rename" ? "#rename-list-dialog" : "#remove-label-dialog") as HTMLDialogElement;
 async function clickDialog(kind: "rename" | "remove", name: string, draft = false) {
@@ -114,6 +113,75 @@ beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers(); });
 afterEach(async () => { cleanup(); await settle(); localStorage.clear(); vi.useRealTimers(); });
 
 describe("list selector actions", () => {
+  it("keeps busy removal and its picker owned until the issued write settles", async () => {
+    const model = fixture(false), gate = deferred<void>();
+    const dispatch = vi.mocked(invoke).getMockImplementation()!;
+    let held = false;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === "update_task" && !held) { held = true; await gate.promise; }
+      return dispatch(command, args);
+    });
+    render(<TodoPane compact />); await act(settle); await action("Remove");
+    const opened = currentPicker();
+    fireEvent.click(within(dialog("remove")).getByRole("button", { name:"Remove" })); await act(settle);
+    expect((within(dialog("remove")).getByRole("button", { name:"Close" }) as HTMLButtonElement).disabled).toBe(true);
+    const escape = new Event("cancel", { cancelable:true }); fireEvent(dialog("remove"), escape); fireEvent.click(dialog("remove")); await act(settle);
+    expect(escape.defaultPrevented).toBe(true); expect(dialog("remove").open).toBe(true); expect(currentPicker()).toBe(opened); expect(model.writes).toEqual([]);
+    await act(async () => { gate.resolve(); await settle(); });
+    expect(dialog("remove").textContent).toContain("Removal completed");
+    expect(model.writes.filter((write) => write.kind === "task").map((write) => write.id)).toEqual([1,2]);
+    await clickDialog("remove", "Close"); expect(currentPicker()).toBe(opened);
+  });
+  it.each([false, true])("closes the retained filter/removal stack before update approval (compact=%s)", async (compact) => {
+    const model = fixture(); setCompactUi(compact); render(<App />); await act(settle);
+    model.afterWrite((id) => { if (id === 1) model.data.tasks[1] = task(90, "foreign +work"); });
+    await action("Remove", "work", "filter"); await clickDialog("remove", "Remove");
+    expect(currentPicker()).toBeTruthy(); await clickDialog("remove", "Review update");
+    expect(document.querySelectorAll("dialog[open]")).toHaveLength(1);
+    const offer = document.querySelector("#remote-update") as HTMLDialogElement;
+    expect(offer.open).toBe(true); expect(offer.textContent).toContain("foreign +work");
+    await act(async () => { fireEvent.click(within(offer).getByRole("button", { name:"Update" })); await settle(); });
+    expect(model.writes.filter((write) => write.kind === "task").map((write) => write.id)).toEqual([1]);
+  });
+  it.each([false, true].flatMap((compact) => (["add", "filter"] as const).flatMap((origin) => ["Cancel", "Escape", "backdrop"].map((method) => ({ compact, origin, method })))))(
+    "returns removal cancellation to its selected picker without writes ($origin, $method, compact=$compact)", async ({ compact, origin, method }) => {
+      const model = fixture(false); render(<TodoPane compact={compact} />); await act(settle);
+      fireEvent.change(screen.getByRole("textbox", { name:"New task" }), { target:{ value:"unsaved +work" } });
+      const initial = await picker(origin);
+      fireEvent.click(within(initial).getByRole("button", { name:"work" })); await act(settle);
+      const opened = await picker(origin);
+      fireEvent.click(within(opened).getByRole("button", { name:"Remove work" })); await act(settle);
+      expect(within(dialog("remove")).getByRole("heading", { name:"Remove work" })).toBeTruthy();
+      if (method === "Cancel") await clickDialog("remove", "Cancel");
+      else if (method === "Escape") { fireEvent(dialog("remove"), new Event("cancel", { cancelable:true })); await act(settle); }
+      else { fireEvent.click(dialog("remove")); await act(settle); }
+      expect(dialog("remove").open).toBe(false); expect(currentPicker()).toBe(opened);
+      expect(document.activeElement).toBe(within(opened).getByRole("button", { name:"Remove work" }));
+      expect(within(opened).getByRole("button", { name:"work" }).getAttribute("aria-current")).toBe("true");
+      expect(document.querySelectorAll("dialog[open]")).toHaveLength(compact ? 2 : 1);
+      expect(model.writes).toEqual([]); expect(model.data.tasks.map((task) => task.raw)).toEqual(["first +work", "second +work"]);
+      expect((screen.getByRole("textbox", { name:"New task" }) as HTMLInputElement).value).toBe("unsaved +work");
+    },
+  );
+  it.each([false, true])("returns staged removal cancellation to its picker without changing the draft (compact=%s)", async (compact) => {
+    const model = fixture(false); render(<TodoPane compact={compact} />); await act(settle); await stage("scratch");
+    fireEvent.change(screen.getByRole("textbox", { name:"New task" }), { target:{ value:"draft +scratch" } });
+    const opened = await picker(); fireEvent.click(within(opened).getByRole("button", { name:"Remove scratch" })); await act(settle);
+    await clickDialog("remove", "Cancel", true);
+    expect(currentPicker()).toBe(opened); expect(document.activeElement).toBe(within(opened).getByRole("button", { name:"Remove scratch" }));
+    expect((screen.getByRole("textbox", { name:"New task" }) as HTMLInputElement).value).toBe("draft +scratch"); expect(model.writes).toEqual([]);
+  });
+  it("ignores a delayed removal close after opening a new removal on the retained picker", async () => {
+    const model = fixture(false); render(<TodoPane compact />); await act(settle); await action("Remove");
+    const opened = currentPicker(), delayed = deferDialogCloseEvents();
+    try {
+      await clickDialog("remove", "Cancel");
+      fireEvent.click(within(opened).getByRole("button", { name:"Remove other" })); await act(settle);
+      await act(async () => { delayed.flush(); await settle(); });
+      expect(dialog("remove").open).toBe(true); expect(currentPicker()).toBe(opened);
+      expect(within(dialog("remove")).getByRole("heading", { name:"Remove other" })).toBeTruthy(); expect(model.writes).toEqual([]);
+    } finally { delayed.restore(); }
+  });
   it.each([false, true].flatMap((compact) => ["Cancel", "Escape", "backdrop", "same-name"].map((method) => ({ compact, method }))))(
     "dismisses only rename and keeps its original selector usable ($method, compact=$compact)", async ({ compact, method }) => {
       const model = fixture(false); render(<TodoPane compact={compact} />); await act(settle);
@@ -234,7 +302,7 @@ describe("list selector actions", () => {
   it("renames and removes staged-only choices without native/server writes", async () => {
     const model = fixture(); render(<App />); await act(settle); await stage("draftOnly");
     fireEvent.change(screen.getByRole("textbox", { name: "New task" }), { target: { value: "draft +draftOnly +workshop" } });
-    await action("Rename", "draftOnly"); expect(dialog("rename", true).textContent).toContain("draft only");
+    await action("Rename", "draftOnly"); expect(dialog("rename", true).textContent).not.toContain("Changes this draft only.");
     await rename("draftNew", true);
     expect(model.writes).toEqual([]);
     expect((screen.getByRole("textbox", { name: "New task" }) as HTMLInputElement).value).toBe("draft +draftNew +workshop");
@@ -285,6 +353,7 @@ describe("list selector actions", () => {
   it("recovers uncertain removal labels from a selector fallback when the source row disappears", async () => {
     const model = fixture(); render(<App />); await act(settle);
     await action("Remove"); model.failLabel("committed"); await clickDialog("remove", "Remove"); await clickDialog("remove", "Close");
+    fireEvent.click(within(currentPicker()).getByRole("button", { name:"Cancel" })); await act(settle);
     // Approval of an independent task change refreshes current label choices without resolving removal.
     model.data.tasks.push(task(3, "unrelated")); await model.signal("tasks");
     await act(async () => { fireEvent.click(within(document.querySelector("#remote-update") as HTMLElement).getByRole("button", { name: "Update" })); await settle(); });

@@ -397,8 +397,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
       && text.split(/\s+/).includes(`+${operation.from}`)) throw new Error("This draft refers to an unfinished list operation. Finish it or explicitly stop retry before saving it.");
   }
   function openRecord(record: ListRecord, origin: ListOrigin, session?: ListSelectorSession) {
-    promptSession.current = record.kind === "rename" ? session : undefined;
-    if (record.kind !== "rename") session?.close();
+    promptSession.current = session;
     displayedRecord.current = record;
     promptOrigin.current = origin; promptContext.current = captureTransport();
     if (record.kind === "rename") {
@@ -430,8 +429,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
     if (request.scope === "staged") return false;
     if (!knownLabels.current.list.includes(request.name)) return reject("That list changed. Reopen the selector for a new confirmation.");
     displayedRecord.current = null;
-    promptSession.current = request.action === "rename" ? request.session : undefined;
-    if (request.action !== "rename") request.session?.close();
+    promptSession.current = request.session;
     promptContext.current = captureTransport(); promptOrigin.current = request.origin;
     setListNotice(""); setRenameOperation(null); setRemoveOperation(null);
     if (request.action === "rename") { setRemoving(null); setRenameSource(request.name); }
@@ -500,7 +498,7 @@ const TodoPane = forwardRef<TodoPaneHandle, Props>(({ compact, updates, onDialog
     const record = displayedRecord.current;
     if (record && (!record.operation.started || record.operation.phase === "completed")) records.current.delete(record.operation.targetDestination);
     if (promptSession.current) {
-      promptSession.current.restore(focusName ?? record?.operation.from ?? renameSource ?? "", revision);
+      promptSession.current.restore(focusName ?? record?.operation.from ?? renameSource ?? removing?.name ?? "", revision);
       promptSession.current = undefined;
       return;
     }

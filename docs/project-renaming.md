@@ -14,6 +14,8 @@
 
 Open a List selector, choose its pencil icon, enter a name, and confirm. Existing target names are rejected rather than merged. Cancel before submission makes no changes. Rename from the create-task selector returns to that picker; compact Task options remain underneath.
 
+Canceling Add list or Remove list returns to the originating picker, including its current selection and unsaved task fields. Escape/backdrop dismissal does the same. This applies to local Add/Edit creation, staged/global removal, and HA create/delete prompts. An obsolete destination, suspended edit, or changed layout cannot resurrect an old picker. Successful creation still selects the new list and closes its picker.
+
 For local/file-backed tasks, rename updates matching references in active/completed tasks and remembered choices without changing unrelated content. For HA, it changes the list's display name, not its identity or task text; see [HA lists](server-connection.md#home-assistant-tasks).
 
 <a id="remove-a-project"></a>
@@ -21,6 +23,8 @@ For local/file-backed tasks, rename updates matching references in active/comple
 ## Remove a list
 
 Choose its trash icon and confirm. Local removal clears references and remembered choices, never the tasks themselves. A task needs meaningful content after removal. HA deletion instead removes a confirmed empty Local To-do list; the default list is protected.
+
+The local prompt says `Remove <name>` using the literal list name. Progress, errors, and partial-operation recovery warnings remain available. Canceling before submission never writes tasks, labels, or HA data. Busy operations still cannot be dismissed.
 
 ## Staged-only choices
 

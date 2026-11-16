@@ -15,6 +15,7 @@ import RemoveLabelDialog from "./RemoveLabelDialog";
 import LabelModal from "./LabelModal";
 import LabelSelect from "./LabelSelect";
 import { useHaLists } from "./HaLists";
+import { ADD_VALUE } from "../config";
 import OptionsModal, { type OptionsModalHandle } from "./OptionsModal";
 
 interface Props {
@@ -43,7 +44,12 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onListsC
   const signature = JSON.stringify([description, list, staged]);
   const [mappedRevision, setMappedRevision] = useState(0);
   const activeSession = useRef<ListSelectorSession | undefined>(undefined);
-  useEffect(() => () => { activeSession.current?.close(); activeSession.current = undefined; }, [compact, management?.destination]);
+  const addSession = useRef<ListSelectorSession | undefined>(undefined);
+  const targetDestination = destination(captureTransport());
+  useEffect(() => {
+    setModalKind(null);
+    return () => { activeSession.current?.close(); activeSession.current = undefined; addSession.current?.close(); addSession.current = undefined; };
+  }, [compact, targetDestination]);
   useEffect(() => {
     onListsChange?.([...new Set([...staged, list, ...description.split(/\s+/).filter((token) => token.startsWith("+")).map((token) => token.slice(1))])].filter(Boolean));
   }, [staged, list, description, onListsChange]);
@@ -81,13 +87,13 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onListsC
     request = { ...request, session };
     if (management?.onAction(request)) return;
     if (request.scope !== "staged") return;
-    if (request.action === "remove") session?.close();
     setError(""); setDraftAction({ request, signature });
   }
   function closeDraftAction(name?: string) {
     const request = draftAction?.request;
+    if (activeSession.current === request?.session) activeSession.current = undefined;
     setDraftAction(null); setError("");
-    if (request?.action === "rename" && request.session) request.session.restore(name ?? request.name);
+    if (request?.session) request.session.restore(name ?? request.name);
     else restoreFocus();
   }
   function confirmDraftAction(target?: string) {
@@ -125,7 +131,12 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onListsC
     setStaged((s) => [...new Set([...s, name])]);
     setList(name);
     setModalKind(null);
+    const session = addSession.current; addSession.current = undefined; session?.close();
   };
+  function cancelAddList() {
+    setModalKind(null);
+    const session = addSession.current; addSession.current = undefined; session?.restore(ADD_VALUE);
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -169,7 +180,7 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onListsC
           serverLabels={serverLabels.list}
           staged={staged}
           onChange={setList}
-          onAdd={() => setModalKind("list")}
+          onAdd={(session) => { addSession.current = session; setModalKind("list"); }}
           management={management}
           revision={mappedRevision}
           onListAction={management && !disabled ? listAction : undefined}
@@ -199,7 +210,7 @@ export default function AddForm({ serverLabels, onAdd, compact, rename, onListsC
         </div>
         {error && <p className="modal-error" role="alert">{error}</p>}
       </form>
-      <LabelModal kind={modalKind} onConfirm={(_, name) => onConfirm(name)} onClose={() => setModalKind(null)} />
+      <LabelModal kind={modalKind} onConfirm={(_, name) => onConfirm(name)} onClose={cancelAddList} />
       <RenameListDialog id="draft-rename-list-dialog" scope="draft" source={draftAction?.request.action === "rename" ? draftAction.request.name : null}
         operation={null} error={error} onConfirm={(name) => confirmDraftAction(name)} onClose={closeDraftAction} onReview={() => {}} onAbandon={() => {}} />
       <RemoveLabelDialog id="draft-remove-list-dialog" scope="draft" target={draftAction?.request.action === "remove" ? { kind: "list", name: draftAction.request.name } : null}

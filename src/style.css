@@ -565,7 +565,8 @@ dialog.app-modal::backdrop {
 .picker-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 4px; /* Clear the 2px focus outline plus its 2px offset on every edge. */
+  scroll-padding: 4px;
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
@@ -577,6 +578,12 @@ dialog.app-modal::backdrop {
   display: flex;
   align-items: stretch;
   gap: 0.5rem;
+}
+
+.picker-option:focus-within,
+.picker-recovery:focus-within {
+  position: relative;
+  z-index: 1; /* Keep a focused row's outline above adjacent row backgrounds. */
 }
 
 /* The main choice button fills the row; the selected one is highlighted. */

@@ -4,7 +4,8 @@ import EditTaskModal from "./EditTaskModal";
 import { useState } from "react";
 import { cancelDialog, clickWithRemovedTargetLabelActivation, deferDialogCloseEvents, observeListHandoffs } from "../test/dialog";
 
-vi.mock("../api", () => ({
+vi.mock("../api", async (original) => ({
+  ...await original<typeof import("../api")>(),
   errMsg: (e: unknown) => (e instanceof Error ? e.message : String(e)),
 }));
 
@@ -249,6 +250,20 @@ describe("EditTaskModal", () => {
 });
 
 describe("EditTaskModal nested dismissal", () => {
+  it("invalidates child picker ownership on suspension while preserving the unsaved edit", () => {
+    const onSave = vi.fn(), onClose = vi.fn(), props = {task:TASK, serverLabels:SERVER_LABELS, onSave, onClose};
+    const view = render(<EditTaskModal {...props} />);
+    fireEvent.change(screen.getByRole("textbox", {name:"Task description"}), {target:{value:"suspended draft"}});
+    fireEvent.click(screen.getByRole("button", {name:"List"}));
+    fireEvent.click(within(document.querySelector("dialog.select-modal[open]")!).getByRole("button", {name:/\+ add list/i}));
+    const label = document.getElementById("label-modal") as HTMLDialogElement;
+    view.rerender(<EditTaskModal {...props} suspended />);
+    expect(label.open).toBe(false); expect(document.querySelector("dialog.select-modal[open]")).toBeNull();
+    view.rerender(<EditTaskModal {...props} suspended={false} />); fireEvent(label, new Event("close"));
+    expect(document.querySelector("dialog.select-modal[open]")).toBeNull();
+    expect((screen.getByRole("textbox", {name:"Task description"}) as HTMLInputElement).value).toBe("suspended draft");
+    expect(onSave).not.toHaveBeenCalled(); expect(onClose).not.toHaveBeenCalled();
+  });
   it.each(["List", "New label"])("retains edits after cancelling %s", (field) => {
     const onClose = vi.fn();
     const onSave = vi.fn();
@@ -276,6 +291,11 @@ describe("EditTaskModal nested dismissal", () => {
     expect(screen.getByRole("button", { name: "List" }).textContent).toBe("work");
     expect(onClose).not.toHaveBeenCalled();
     expect(onSave).not.toHaveBeenCalled();
+    if (field === "New label") {
+      const returned = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
+      expect(document.activeElement).toBe(within(returned).getByRole("button", { name:/\+ add list/i }));
+      fireEvent.click(within(returned).getByRole("button", { name:"Cancel" }));
+    }
     fireEvent.click(within(parent).getByRole("button", { name: "Cancel" }));
     expect(onClose).toHaveBeenCalledOnce();
     expect(parent.open).toBe(false);
@@ -322,7 +342,7 @@ describe("EditTaskModal nested dismissal", () => {
         const picker = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
         clickWithRemovedTargetLabelActivation(within(picker).getByRole("button", { name: /\+ add list/i }));
         const label = document.getElementById("label-modal") as HTMLDialogElement;
-        expect(picker.open).toBe(false);
+        expect(picker.open).toBe(true);
         expect(label.open).toBe(true);
         deferred.flush();
         expect(label.open).toBe(true);
@@ -334,8 +354,13 @@ describe("EditTaskModal nested dismissal", () => {
         expect(label.open).toBe(false);
         expect(parent.open).toBe(true);
         expect(screen.getByRole("button", { name: "List" }).textContent).toBe(action === "Cancel" ? "work" : "garden");
+        expect(picker.open).toBe(action === "Cancel");
+        if (action === "Cancel") {
+          expect(document.activeElement).toBe(within(picker).getByRole("button", { name: /\+ add list/i }));
+          fireEvent.click(within(picker).getByRole("button", { name: "Cancel" })); deferred.flush();
+        }
       }
-      expect(handoffs.pickerClosedAtOpen).toEqual([true, true]);
+      expect(handoffs.pickerClosedAtOpen).toEqual([false, false]);
       expect(description.value).toBe("unfinished edit");
       expect((screen.getByLabelText("Due date") as HTMLInputElement).value).toBe("2026-12-01");
       expect(screen.queryByRole("button", { name: "Priority" })).toBeNull();

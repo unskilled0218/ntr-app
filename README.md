@@ -5,7 +5,7 @@
 
 A desktop and Android app for tasks and Markdown notes. Use local storage or connect to ntr server.
 
-Version `0.15.36`. See [release notes](docs/releases/0.15.36.md).
+Version `0.15.37`. See [release notes](docs/releases/0.15.37.md).
 
 ## Quick start
 

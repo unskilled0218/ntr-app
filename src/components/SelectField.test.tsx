@@ -19,6 +19,39 @@ afterEach(() => { cleanup(); });
 const openDialog = () => within(document.querySelector("dialog.select-modal[open]") as HTMLElement);
 
 describe("SelectField", () => {
+  it("retains an Add action choice, restores its row once, and still closes ordinary selection", () => {
+    let session: ListSelectorSession | undefined;
+    const change = vi.fn((_value: string, origin?: ListSelectorSession) => { session = origin; });
+    render(<SelectField ariaLabel="List" value="work" options={[{ value: "+add", label: "+ Add list..." }, ...OPTIONS]} retainChoices={["+add"]} onChange={change} />);
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    const opened = document.querySelector("dialog.select-modal[open]") as HTMLDialogElement;
+    const add = within(opened).getByRole("button", { name: "+ Add list..." }); fireEvent.click(add);
+    expect(opened.open).toBe(true); expect(change).toHaveBeenCalledWith("+add", expect.any(Object));
+    act(() => session!.restore("+add")); expect(document.activeElement).toBe(add);
+    act(() => { expect(session!.close()).toBe(false); session!.restore("home"); });
+    expect(document.activeElement).toBe(add); expect(opened.open).toBe(true);
+    fireEvent.click(within(opened).getByRole("button", { name: "home" })); expect(opened.open).toBe(false);
+  });
+  it("invalidates an old scoped session without closing or focusing a newer picker", () => {
+    let session: ListSelectorSession | undefined;
+    const props = { ariaLabel:"List", value:"work", options:OPTIONS, retainActions:true, onChange:vi.fn(), onRemove:(_value:string, origin?:ListSelectorSession) => { session = origin; } };
+    const view = render(<SelectField {...props} scopeKey="one" />);
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    fireEvent.click(openDialog().getByRole("button", { name: "Remove work" })); const old = session!;
+    view.rerender(<SelectField {...props} scopeKey="two" />);
+    expect(document.querySelector("dialog.select-modal[open]")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    const cancel = openDialog().getByRole("button", { name: "Cancel" }); cancel.focus();
+    act(() => { old.restore("work"); expect(old.close()).toBe(false); });
+    expect(document.activeElement).toBe(cancel); expect(document.querySelector("dialog.select-modal[open]")).toBeTruthy();
+  });
+  it("restores removal focus to Remove rather than the neighboring Rename control", () => {
+    let session: ListSelectorSession | undefined;
+    render(<SelectField ariaLabel="List" value="work" options={[{ value:"work", label:"work", renamable:true, removable:true }]} onChange={vi.fn()} retainActions onRename={vi.fn()} onRemove={(_name, origin) => { session = origin; }} />);
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    const remove = openDialog().getByRole("button", { name: "Remove work" }); fireEvent.click(remove);
+    act(() => session!.restore("work")); expect(document.activeElement).toBe(remove);
+  });
   it("waits for the mapped revision before focusing and ignores an obsolete session", () => {
     let session: ListSelectorSession | undefined;
     const onRename = vi.fn((_name: string, origin?: ListSelectorSession) => { session = origin; });

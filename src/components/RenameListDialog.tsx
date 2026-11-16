@@ -16,7 +16,7 @@ interface Props {
   readOnly?: boolean;
   error?: string;
 }
-export default function RenameListDialog({ source, operation, onConfirm, onClose, onReview, onAbandon, id = "rename-list-dialog", scope, readOnly, error: externalError }: Props) {
+export default function RenameListDialog({ source, operation, onConfirm, onClose, onReview, onAbandon, id = "rename-list-dialog", readOnly, error: externalError }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
@@ -57,7 +57,6 @@ export default function RenameListDialog({ source, operation, onConfirm, onClose
     }}>
       <h2 id={`${id}-title`} className="select-modal-title">Rename list</h2>
       <div className="original-list" role="group" aria-label="Original"><span>Original</span><strong>{source}</strong></div>
-      {scope === "draft" && <p>Changes this draft only.</p>}
       {readOnly && <p role="status">This result belongs to {operation?.targetDestination}. Return to that destination to retry, or explicitly stop retry without rolling back changes.</p>}
       <label>New list name<input ref={input} aria-label="New list name" value={name} disabled={busy || operation?.started} onChange={(event) => setName(event.currentTarget.value)} /></label>
       {(busy || !!operation?.done.size) && <p role="status">{busy ? "Working… Please wait; issued writes cannot be canceled." : `${operation?.done.size} tasks renamed. Completed writes are not rolled back.`}</p>}
