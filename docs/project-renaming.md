@@ -1,51 +1,38 @@
-# Project renaming
+# Projects
 
-- [Project renaming](#project-renaming)
-  - [Rename a project](#rename-a-project)
-  - [Remove a project](#remove-a-project)
-  - [Staged-only choices](#staged-only-choices)
-  - [Partial completion and review](#partial-completion-and-review)
-  - [Drafts and connections](#drafts-and-connections)
-  - [Concurrency limits](#concurrency-limits)
+- [Rename a project](#rename-a-project)
+- [Remove a project](#remove-a-project)
+- [Staged-only choices](#staged-only-choices)
+- [Partial completion and review](#partial-completion-and-review)
+- [Drafts and connections](#drafts-and-connections)
+- [Concurrency limits](#concurrency-limits)
 
 ## Rename a project
 
-The token-rewrite workflows below apply to local/file-backed tasks. For HA, projects are native lists: rename changes HA's entity display name, and removal deletes only a confirmed empty Local To-do list with server authorization. No task tokens are rewritten. The default list is protected. See [HA list management and moves](server-connection.md#home-assistant-tasks).
+Open a Project selector, choose its pencil icon, enter a name, and confirm. Existing target names are rejected rather than merged. Cancel before submission makes no changes. Rename from the create-task selector returns to that picker; compact Task options remain underneath.
 
-Open Project filter or the create-task Project selector. In compact mode, open Filter options or Task options first. Choose the pencil icon, enter a name, and confirm Rename. Names follow the project-name rules and are case-sensitive. Existing target projects are rejected, not merged; an unchanged name causes no writes. Cancel, Escape, and backdrop dismissal before submission change nothing. Icon buttons have project-specific accessible names and tooltips.
-
-Successful completion closes rename automatically; failures and partial results remain recoverable. A rename opened from create-task returns to its still-open picker after cancellation, success, or explicit stop-retry. Task options remain underneath in compact mode. Focus returns to the related row after updated choices commit. Removal, Add project, and filter-origin actions close before their replacement opens.
-
-The app changes exact `+old` tokens in all associated active and completed tasks and updates remembered projects. Other projects, contexts, dates, legacy prefixes, task metadata, and note content are preserved. Similar names such as `+oldish` are not changed. Remembered-only projects can also be renamed. The active source filter follows the new name after successful completion.
+For local/file-backed tasks, rename updates matching references in active/completed tasks and remembered choices without changing unrelated content. For HA, it changes the list's display name, not its identity or task text; see [HA projects](server-connection.md#home-assistant-tasks).
 
 ## Remove a project
 
-Choose the trash icon beside a project in either selector, then confirm Remove. This removes the exact project token from associated tasks and removes the remembered choice; it never deletes the tasks themselves. Successful completion also retires matching selected/staged/inline draft project references while preserving unrelated text and fields. Cancel before submission leaves everything unchanged. A task whose only content is the project token may need meaningful text added before its project can be removed without creating an empty task.
-
-Removal retains task/label progress independently of its dialog. Retry removal revalidates current content and changes only remaining source references. Finish labels handles a label-only failure; uncertain successful label writes are verified before issuing another PUT. Partial or uncertain work does not emit a successful draft mapping or silently release guarded source references.
+Choose its trash icon and confirm. Local removal clears references and remembered choices, never the tasks themselves. A task needs meaningful content after removal. HA deletion instead removes a confirmed empty Local To-do list; the default list is protected.
 
 ## Staged-only choices
 
-Projects added through Add project but not yet used in stored tasks or remembered choices can be draft-local. Their pencil/trash confirmations explicitly say that only this draft changes; no native/server writes occur. Renaming changes matching staged, selected, and inline project references. Removing a staged choice clears matching project references, not the rest of the task description or due date. If the project becomes globally known before confirmation, reopen the selector for a new scope confirmation.
-
-A same-destination unfinished operation takes precedence over this classification. Its old source may still be staged after stored choices move to the target; that row's action reopens the retained global result instead of starting a fresh local mutation. Names on another destination are classified independently.
+A project used only in an unsaved draft changes only that draft. If it becomes globally known or belongs to an unfinished operation, reopen its confirmation for the current scope. Other draft fields stay intact.
 
 ## Partial completion and review
 
-Writes are sequential and are not a transaction. The dialog shows progress and cannot be dismissed while an attempt is running. A slow validation read waits instead of truncating the operation; actual remote divergence stops further writes. Successful task responses remain applied even if a later task or label write fails.
+Writes are sequential, not transactional. The dialog cannot close while a write attempt runs. Completed changes remain if a later step fails. Reopen the result through its related selector icon or `Resume unfinished rename/removal` entry.
 
-Close, Escape, or backdrop dismissal after an attempt stops hides its dialog without rolling anything back. Reopen a project selector and use the related pencil/trash action to reopen that exact result. The row's accessible description identifies unfinished work. If related project names no longer appear, the selector offers a separate Resume unfinished rename/removal action; it is not a selectable project. There is no standalone progress button outside the selectors. Retry rename/removal validates current content and writes only remaining work; Finish labels completes a label-only failure. A verified intended label result after a lost response does not cause a duplicate write. Unexplained target references remain conflicts rather than being treated as a rename's own progress.
-
-For remote task divergence, choose Review update inside the operation dialog. It releases that dialog and any retained originating picker/Task options before showing the approval diff. Approval never resumes writes or reopens the old stack. Reopen the result through a selector and explicitly confirm retry after reviewing current content. Another global project action on that destination cannot overwrite the retained result. If progress can no longer be safely reconciled, Stop retry; keep partial changes deliberately forgets retry authority and releases that result's draft restrictions. Existing changes remain; it does not merge projects or undo them.
+Retry revalidates current tasks and writes only remaining work. `Finish labels` handles a label-only failure. An uncertain label write is checked before another PUT. `Review update` closes the operation's dialog stack before remote approval; approval never resumes writes. Reopen the result and explicitly retry. `Stop retry; keep partial changes` releases retry authority without undoing accepted changes.
 
 ## Drafts and connections
 
-On full success, matching selected/staged project names and exact inline project tokens in local add/edit drafts follow the rename or removal. Other draft fields stay intact. A suspended edit draft uses only a matching verified own task response as its new persistence baseline; unrelated task changes retain stale-edit protection. During a partial operation, submitting an ambiguous source-project draft is blocked until that operation is finished or explicitly resolved. Pending remote notes and their paused autosave status are independent of task operations.
+Full success updates matching selected/staged references in add/edit drafts. Partial work keeps ambiguous source-project submissions blocked. Suspended edits adopt only verified own task responses; unrelated task changes still require a new edit action.
 
-Each attempt belongs to one captured transport and destination. Connection changes and unmount stop follow-up writes; an issued request cannot be recalled. The pane retains at most one unfinished project operation per destination and runs one write attempt at a time. A separate destination-labelled recovery entry can show an older result read-only, without hijacking the same bare project name on the current destination. Retained progress does not authorize writes elsewhere. Same-destination retry requires revalidation and explicit confirmation. Results are held in the mounted pane, not a durable operation journal across app restarts.
+Progress belongs to the captured destination and mounted pane, not a restart-persistent journal. Connection changes stop follow-up writes but cannot recall issued requests. Another destination cannot acquire an older operation's write authority. Pending note approval remains independent.
 
 ## Concurrency limits
 
-Fresh task validation and latest-label reads narrow conflicts but do not provide compare-and-swap. Another client can still write between GET and PUT. Whole-label replacement remains last-write-wins; older clients may later restore a source name from cached labels. Verification establishes observed completion, not reliable author attribution or a permanent global rename invariant. Avoid simultaneous edits when all versions must survive.
-
-Labels-only changes have no dedicated server SSE notification. Another connected client discovers a remembered-only rename on its next deliberate label read. No fake task event or note approval is used to simulate label synchronization. A user may deliberately create the old name again in a later independent action; there is no permanent alias or redirect.
+Task/label validation is not compare-and-swap. Other clients can write between reads and writes; avoid simultaneous edits when both versions must survive. Remembered-label-only changes have no dedicated event and appear on a later deliberate label read. Old names are not permanent aliases and may be created again.

@@ -1,10 +1,14 @@
 # Run
 
-Run commands from the app repository root.
+- [Start](#start)
+- [Storage](#storage)
 
-```sh
-npm install
-npm run tauri dev
-```
+## Start
 
-Data files default to the Tauri app-data directory (`todo.txt` and `Note.md`). In server mode the files live wherever the server stores them.
+From the app directory, run `npm ci` followed by `npm run tauri dev`. Toolchain requirements and checks are in [development](development.md).
+
+## Storage
+
+Local tasks, notes, and label suggestions use the Tauri app-data directory by default. Server mode uses the selected server's storage. Connection settings and drafts remain separate from saved content.
+
+Back up/export data before uninstalling the app or replacing its Android signing identity. Local fallback is not a guaranteed fresh server backup; see [connection safety](server-connection.md).

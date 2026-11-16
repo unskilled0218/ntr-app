@@ -7,38 +7,28 @@
 
 ## Connect
 
-For a server configured to use HA tasks, also read [Home Assistant tasks](#home-assistant-tasks).
-
-Click the `[L]` button in the top-right corner, enter the server URL (e.g. `http://127.0.0.1:8080`), and click **Connect**. The badge changes to `[S]`. Click it again and choose **Use local files** to switch back and clear the saved URL.
+Open `[L]`, enter the ntr URL, and choose **Connect**. `[S]` indicates server mode. **Use local files** returns to local storage and clears the saved URL. Keep certificate checks enabled; allow self-signed certificates only as an explicit trust decision.
 
 ## Local fallback
 
-A resource GET that fails to establish a connection, validate TLS, resolve DNS, or finish within its 30-second deadline automatically selects local files. The app shows `Server unavailable; using local files`, the `[L]` badge, local tasks, the local note, and local label suggestions. It keeps the configured server URL and certificate preference. It never disables certificate validation automatically. HTTP errors such as 401 or 503, invalid response data, and an SSE-only outage do not switch stores.
+A resource GET connection, DNS, TLS, or 30-second timeout failure selects local storage while keeping server settings. HTTP errors, malformed data, and SSE-only outages do not switch stores. Failed mutations are never replayed locally.
 
-Local files are the current data-directory contents, not a guaranteed fresh or per-server cache. Once initialized, local edits save locally and file watcher changes refresh both panes. Failed server mutations are never replayed locally. Unsaved note and task drafts remain available; transferring a draft to another destination requires an explicit choice. After a destination change, a retained add draft asks for another submission to confirm the new destination.
-
-Actions pause during destination loading. Existing panes and drafts remain mounted. `Waiting for local storage` means an already-issued native file operation must settle before loading/enabling the new destination. A timeout never pretends that operation was canceled. Real local read or write failures stay visible.
+Fallback uses current local data, not a fresh or per-server cache. Drafts remain available, but moving one to another destination requires an explicit choice. Actions pause until destination loading and already-issued local writes settle. `Waiting for local storage` never means a write was canceled.
 
 ## Reconnect and file safety
 
-The whole-file task reconciliation described below applies to file-backed servers. HA tasks follow the authoritative-server policy in [Home Assistant tasks](#home-assistant-tasks).
+Choose **Connect** or restart to retry the server; closing settings is not a retry. Both resources are discovered before reconciliation writes. Notes and file-backed tasks follow the selected `ask`, `server`, or `local` strategy; server strategy can deliberately adopt an empty note. A dirty draft still needs its own destination choice.
 
-Fallback lasts until app restart or explicit **Connect**, even if connectivity returns. Open settings and click **Connect** to retry the saved URL, including an unchanged URL. Merely closing settings or changing UI preferences does not reconnect. A repeated connection failure returns to local files after pending local writes settle.
-
-Reconnect reads both note and task copies before applying either reconciliation result. Failed discovery performs no reconciliation writes. After discovery, the configured strategy still applies: `ask` requests a choice, `server` overwrites local copies, and `local` uploads local copies. An empty server note can intentionally replace a nonempty local note under `server`. A dirty editor draft still requires its separate destination choice before persistence.
-
-Application is per-resource, not transactional. If one resource succeeds and the next fails, the connection status reports applied and uncertain outcomes and stops further automatic application. An uncertain result can already have committed. Click **Connect** to read actual state again; no old action is automatically replayed or rolled back. Earlier server backups already admitted to local storage may finish before fallback loading. They cannot overwrite local edits enabled afterward. There is no offline upload queue or automatic merge. See [live sync](live-sync.md) for approval and save ownership rules.
+Reconciliation is per-resource, not a transaction. Partial/uncertain outcomes remain visible. Read actual state again before deciding what to do; no automatic rollback, merge, offline upload queue, or mutation replay exists. [Live sync](live-sync.md) explains runtime approval and save ownership.
 
 ## Home Assistant tasks
 
-Configure HA only on ntr server: URL, token file, list entity, and optional private CA certificate. Clients need only the ntr URL. See [server setup](../../server/docs/home-assistant.md).
+Configure HA on [ntr server](../../server/docs/home-assistant.md), not the client. Validated `/api/capabilities` makes HA tasks authoritative regardless of the reconciliation strategy. Local/fallback task edits never upload to HA; notes retain their chosen strategy. Only capability HTTP 404 selects older-server compatibility. Other errors block initialization without reconciliation writes.
 
-Before reconnect writes, the client validates `/api/capabilities`. HA tasks always use the server copy regardless of conflict strategy; local task files and fallback edits are never uploaded to HA. Notes still follow the selected strategy. Raw task replacement is guarded on both sides. Only a 404 capability response selects older file-server compatibility; malformed responses and other errors stop initialization without reconciliation writes.
+Each visible HA list is a project, including empty lists. Selectors use names and disambiguate duplicates with entity IDs. Unselected creates use the default. List membership is separate from literal summary labels. Catalog refresh changes routing/display metadata and invalidates destructive confirmations, not task acceptance or drafts.
 
-With ntr server 0.2.12 or later, every visible HA list is a project, including empty lists. Friendly names appear in selectors; duplicate names show entity IDs. Unselected creates go to the configured default list. HA list membership is not a `+project` summary token: existing literal tokens stay intact. Local/file-backed project editing is unchanged. Catalog-only updates refresh labels/routing and invalidate destructive confirmations, without accepting changed task content or discarding drafts.
+Changing lists in Edit requires move confirmation. Stop other HA writers: copy/verify/delete is not atomic. An uncertain move needs inspection of both lists and explicit **Reconcile** or **Abandon**. Reconcile repairs only proven completion; abandon retains copies with separate identities. Neither repeats HA writes.
 
-Changing a task's list in Edit opens a separate move confirmation. ntr copies and verifies before deleting the source, preserving native description/status/due and task identity. Stop other HA writers during moves: HA has no atomic cross-list transaction. If a move fails, review both lists and the pending-move notice. Reconcile only repairs a proven-complete move; Abandon clears the block without deleting either copy. Neither action retries HA writes. Retained copies remain separate tasks.
+List administration requires `HA_MANAGE_LISTS=true` and an admin token. Rename changes display names; deletion requires a freshly empty Local To-do list, including completed tasks, and cannot delete the default. Stop other writers during deletion. Use trusted access or an authenticating proxy because ntr has no API authentication. Do not retry uncertain administration blindly. Catalog failures block routing rather than stage fake projects.
 
-Creating projects makes HA Local To-do lists only when the server administrator enables `HA_MANAGE_LISTS=true` with an admin token. Rename changes the HA entity display name, not its ID. Delete requires confirmation and a freshly empty list, including completed tasks; the default is protected and other providers cannot be deleted. Stop other writers during deletion. Never blindly retry an uncertain administrative action. The server's ntr API remains unauthenticated, so administrative opt-in requires a trusted connection or authenticating proxy. A catalog failure blocks routing instead of staging fake projects locally.
-
-An HA outage is an ntr HTTP error, not a transport failure that triggers local fallback. An unavailable ntr server still activates the existing fallback. Reconnect never replays failed mutations; uncertain writes may already have committed. Reload actual state before another change. Existing task files are not automatically imported, merged, or deleted.
+An HA outage returns an ntr HTTP error; it does not itself trigger local fallback. An unreachable ntr server does. Existing data is not automatically imported, merged, or deleted.

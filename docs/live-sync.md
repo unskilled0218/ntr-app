@@ -7,82 +7,50 @@
 - [Concurrent edits](#concurrent-edits)
 - [Verification](#verification)
 
-Clients connected to the same server receive task and note change signals through `/api/events`. Signals and reconnects detect changes without applying them. Each resource has one accepted snapshot and one coalesced pending update. Detection reads neither paint content nor write backups. Local mode still uses the file watcher and applies local file changes without a server approval prompt.
-
-A notification shows only the diff and compact inspection/approval controls, without a visible title, explanation, legend, or summary. The dialog retains an accessible Task update or Note update name and the same surface as project selectors. It previews saved accepted content against the exact incoming snapshot, never against unsaved editor text. Nothing changes in either pane until approval. Empty notes, deleted tasks, and reassigned task IDs count as changes.
+Server events detect task/note changes without applying them. Each resource keeps an accepted snapshot and one pending offer. Local mode instead applies local watcher changes directly.
 
 ## Update choices
 
-**Update** revalidates the identified snapshot. A newer version needs another choice; a failed read or application retains the preview and changes the action to **Retry update**. The exact error remains associated with that action for assistive technology rather than appearing as another visible paragraph. Retry revalidates the same offer; it does not bypass approval safety. Clean notes adopt approved text through the editor's normal write path, preserving logical selection offsets. Dirty notes require a second explicit Keep mine / Use theirs choice. Saves and IME composition can defer application without acknowledging success.
+**Update** revalidates the exact offered snapshot. Newer evidence requires another choice; errors retain the preview and offer **Retry update**. **Not now**, Escape, or backdrop dismissal changes nothing. **Review update** reopens declined evidence without another event.
 
-The read-only diff uses −/+ markers for removed/added text and = for unchanged context, without Diff/Accepted/Incoming view buttons. Notes show line changes, compact `@@ … N … @@` omission markers, and `@@ EOF − LF / + none @@` metadata when trailing-newline state differs (− is accepted, + is incoming). Empty diffs use `∅` with an accessible label instead of an empty-state sentence. Tasks match stable IDs and include raw text, completion state, and creation/completion dates; reassigned IDs appear as removed/added tasks rather than guessed renames. Order alone does not change task approval identity. Long unchanged note context is collapsed; large-change fallback blocks remain paged. Note markup remains escaped text, not rendered HTML or Markdown.
+The diff compares saved accepted content, not unsaved editor text. Task identity includes IDs and content; order alone does not require approval. Large diffs are paged and note content stays escaped text. Each page is limited to 8,000 characters and 80 newline boundaries; notes beyond 50,000 combined characters or 40,000 comparison cells use paged blocks.
 
-Previous and Next controls replace the current page rather than accumulating content, with only a numeric page indicator. Navigation is omitted when content fits on one page. Every view limits content, including diff metadata, to 8,000 characters and 80 newline boundaries per page; long lines can continue on the next page. An enabled Next control discloses continuation, while detailed remaining-character/end descriptions stay available to assistive technology without visible prose. Notes exceeding 50,000 combined input characters or a 40,000-cell line-comparison budget use paged accepted/incoming blocks instead of an unrestricted diff. Approval controls remain available while inspecting pages. A newer offer resets inspection; an own successful write rebuilds the baseline evidence without resurfacing an unchanged declined remote version. Old preview choices/tokens cannot approve replacement evidence.
+Pending note updates pause autosave, blur, and pagehide writes. Dirty notes require **Keep mine / Use theirs** after update approval. Dismissing that choice does not authorize an overwrite. IME and outstanding saves can defer application without acknowledging success.
 
-**Not now**, Escape, and backdrop dismissal leave content and drafts unchanged and never upload the local version. The same declined content does not reopen automatically. A persistent **Review update** action, also available on mobile, rechecks and reopens that version without another event or restart. A verified convergence read clears pending state. Task and note questions queue instead of stacking over settings or version-choice dialogs.
-
-While a note update is pending, the note shows “Remote update pending; automatic saving paused”. Input, autosave, blur, and pagehide cannot overwrite that remote version. Review first offers the remote update; replacing a dirty draft requires Use theirs, and only explicit Keep mine authorizes an overwrite. Dismissing that version-choice dialog also stays read-only for runtime remote updates.
-
-Project filtering and sorting use the accepted unfiltered task snapshot. Own task mutations apply only their returned task or targeted deletion, not an unrelated remote list. Unsafe edit, complete, delete, and project-removal actions reopen review rather than sending stale IDs. Reviewing can suspend a task edit dialog without discarding its fields; **Resume task draft** restores it. A changed task cannot be saved through that old action: copy the draft and choose Edit against the new task identity. Actions are never replayed automatically.
-
-[Project renaming](project-renaming.md) and project removal wait for fresh task validation between writes, including slow own-write rescans. Foreign divergence stops further stale-ID writes. A paused rename can yield its modal to Review update without losing progress, but approval does not retry it. Renames finalize remembered labels separately, keep pending note approval independent, and expose partial completion and explicit retry rather than promising a multi-resource transaction. Labels-only renames have no dedicated SSE token; other clients discover them on a deliberate label read.
-
-Pencil/trash actions in filter and create-task project selectors share these global safeguards. Staged-only choices stay draft-local unless a same-destination retained operation owns the name. Both rename and removal results reopen through related row icons or an in-selector fallback; opening a result is read-only. Partial removal retains its source guard and task/label progress until verified completion or explicit abandonment. Another destination keeps separate stopped records and cannot acquire their write authority. Create-task rename retains its originating picker and compact Task options underneath; Review update explicitly closes that entire stack before approval. Other replacement actions keep their existing close-first behavior.
-
-The app supplies one random session ID in the optional `X-Ntr-Client-Id` mutation and SSE headers. Server `0.2.9` or later filters that subscriber's own events; watcher changes and other clients still notify. The header is advisory, not authentication. Older servers retain the approval boundary and equal-content echo suppression, but cannot provide precise author attribution. Differing content is never discarded as a presumed self-event.
+Task filters/sorts use accepted content. Own writes apply only their returned task or targeted deletion. Stale IDs require review, not replay. Review can suspend an edit draft; **Resume task draft** restores it, but a changed task needs a new Edit action. [Project operations](project-renaming.md) retain separate partial progress and explicit retry.
 
 ## Connection recovery
 
-The native SSE bridge reconnects after failed connections, unsuccessful responses, stream errors, closure, or 60 seconds without incoming bytes. Retries start after one second and increase to a maximum of 30 seconds. A healthy stream resets the retry delay after 30 seconds. Connection establishment has a 15-second deadline; established streams have no total lifetime limit.
+The native event stream reconnects after errors, closure, or 60 seconds without bytes. Handshakes have a 15-second deadline; retries back off from one to 30 seconds. A healthy stream resets backoff after 30 seconds. Resource GETs have a 30-second deadline and bounded one-to-30-second retry delays until detection succeeds.
 
-Every accepted connection detects tasks and notes, including changes missed while disconnected, without adopting them. Failed detection reads retain visible content and report a retryable error. Resource GETs have a 30-second deadline and recovery retries start at one second with a 30-second cap. These retries stop after successful detection; they are not continuous polling. Replacing the connection cancels obsolete stream work, resource retries, and approval tokens while retaining same-destination accepted and deferred snapshots.
+Reconnect detects both resources, including missed changes, without accepting them. Overflow emits both resource signals and bypasses self-origin filtering. Keep-alive comments arrive every 15 seconds; proxies must forward them without buffering.
 
-If the server broadcast buffer overflows, it emits both existing `tasks` and `note` tokens before resuming retained events. These rescan signals bypass origin filtering, so lost foreign changes remain detectable even when all retained events are self-events. Equal-content rescans do not prompt. Legacy clients can parse the same tokens but may automatically refresh both panes after lag.
-
-The server sends keep-alive comments every 15 seconds. Reverse proxies must forward them promptly and avoid buffering the SSE response. Otherwise clients can repeatedly hit the inactivity deadline despite a running server. Certificate validation remains enabled unless Allow self-signed certificates is explicitly selected.
-
-First initialization and genuine destination changes retain the configured startup reconciliation strategy (`ask`, `server`, or `local`). Closing unchanged settings does not reload panes, replace the subscription, or reconcile files. UI-only settings apply independently. Certificate-policy changes for the same URL replace the transport and detect changes, but do not repeat startup reconciliation or accept a declined snapshot under any strategy. Destination identity is the effective server URL, or the local data-directory generation in deliberate local mode or fallback.
-
-Changing the destination invalidates old reads and queued side effects. Dirty note drafts stay available, but uploading an old draft to a different target requires a new explicit choice. Requests already accepted by their original destination cannot be recalled.
+Unchanged settings do not reconcile again. Changing certificate policy at the same URL replaces the transport, not approval state. A new destination invalidates old reads/tokens. Issued requests cannot be recalled, and an old dirty draft needs explicit approval before saving elsewhere.
 
 ## Local fallback
 
-Resource connection failures automatically select the local destination without clearing server settings. Both panes reload local data, switch to file watcher events, and reject stale server-ID actions. New mutations remain blocked until the destination's storage barrier, reconciliation, projection, and required choices are ready; mounted drafts remain available. HTTP response errors and SSE-only failures retain their existing retry behavior rather than triggering fallback.
+Resource connection failures select local storage and retain server settings; HTTP errors and SSE-only failures do not. Already-admitted native backups/writes settle before local edits are enabled. Obsolete server completions cannot admit new backups afterward. A never-settling local operation keeps initialization blocked.
 
-Native local writes are registered before dispatch. Already-admitted backups and local writes settle before fallback reads or reconnect discovery; a pending unrelated server PUT does not delay local use. A late obsolete server PUT cannot admit another backup. A never-settling native local operation displays `Waiting for local storage` and keeps initialization blocked. Pending-save ownership remains destination-specific and no request is replayed against a different store.
-
-Only explicit Connect or restart retries the server from fallback. Reconciliation discovers both resources before applying writes; later application is nontransactional and exposes partial or uncertain outcomes instead of promising rollback. A deliberate retry reads actual state again. See [server connection](server-connection.md) for overwrite strategies, empty content, draft transfer, and local-cache limits.
+Only **Connect** or restart retries the server. See [connection safety](server-connection.md) for reconciliation, cache limits, and HA authority.
 
 ## Note save ownership
 
-Each mounted note pane allows only one outstanding save per destination, including saves started on pagehide. Closing settings without changing the server, changing certificate policy for that URL, or switching away and back does not release a pending save's slot. Another server URL or local data-directory generation has its own slot; moving a draft there still requires the existing explicit conflict choice.
+One outstanding save is allowed per destination in the mounted pane. Switching away and back does not free that slot. A changed view waits for settlement and recovery reads before another automatic save; old completions cannot overwrite newer drafts or mark them saved.
 
-If settings invalidate a save's view while its PUT is pending, the pane waits for settlement and detects the current note before another automatic save. The obsolete completion cannot mark newer input as saved or paint over a draft. Successful writes advance only known local content in the coordinator; failed or uncertain writes retain the previous accepted snapshot. Events received during writes remain pending evidence. Mutation epochs and per-resource read generations prevent older GETs and prepared applications from rolling back a newer write.
-
-Newer undo and input remain protected even when they restore the pre-save baseline, including an empty note. Returning to that text is an editing choice, not proof that the editor stayed untouched. The pane tracks committed editing separately from the saved text, retaining that evidence through PUT settlement, pending recovery reads, retries, and repeated settings activations. This also covers edits made while the recovery GET is pending and committed IME input.
-
-If recovery finds differing text, notification approval precedes the version-choice dialog, which preserves newer baseline-return drafts. Keep mine writes the current draft, including empty text; Use theirs adopts the approved version. Only synchronous token validation, pane application, and acknowledgment advance accepted remote content. Failed, canceled, draft-blocked, and IME-deferred applications remain unresolved. A rejected PUT response does not prove that storage stayed unchanged.
-
-A request that never settles keeps its destination blocked; a timer does not free ownership while that write could still reach storage. Ownership is local to the mounted pane, not a lock across separate clients, remounted panes, or different URLs that happen to share storage.
+Undo, empty drafts, baseline-return input, and committed IME remain edits even while recovery is pending. Differing recovery text still needs update approval and **Keep mine / Use theirs**. Failed or deferred application remains unresolved. A rejected response does not prove that a write failed; a timer never releases ownership while it might commit.
 
 ## Concurrent edits
 
-Storage remains last-write-wins. This is change detection with explicit approval, not collaborative merging, persistent revision history, or transactional compare-and-swap. A write already in flight can overwrite another client's concurrent save; a validated task action can still race another write. Detection protects observed drafts and snapshots, but cannot recover overwritten server versions or detect changes while disconnected. Avoid simultaneous edits when both versions must survive.
+Storage is last-write-wins, not collaborative merge, revision history, or compare-and-swap. An in-flight write can overwrite concurrent content. Avoid simultaneous edits when both versions must survive. Pending read errors preserve drafts and block unsafe autosaves.
 
-If a remote read keeps failing with an HTTP or data error, the editor retains the draft and displays the error. Automatic saves remain blocked while a known incoming update cannot be classified. A connection failure selects local fallback and requires an explicit destination choice before saving a transferred draft. Restarting is not required; use Connect to retry the configured server.
+Session `X-Ntr-Client-Id` headers filter only proven own events, not external changes. They are advisory, not authentication. Equal-content rescans do not prompt; differing content is not discarded as a presumed echo.
 
 ## Verification
 
-Run `npm test` and `npm run build` in `app/`, and `cargo test` plus `cargo clippy --all-targets` in `app/src-tauri/`. The native suite includes loopback SSE failures, cancellation, idle detection, and heartbeat tests. The regular suite does not require a running external server.
-
-Coordinator and real-pane tests cover unchanged settings under every startup strategy, same-destination transport replacement, deferred review, pending-note save guards, task draft suspension, stale IDs, reconnect recovery, epoch-invalidated GETs, uncertain writes, equal-content rescan suppression, and concurrent foreign changes during PUTs. Existing note regressions retain IME, undo, empty-draft, destination, and single-flight ownership coverage. Run focused approval checks with `npm test -- src/lib/remoteUpdates.test.ts src/remoteApproval.test.tsx src/liveSync.test.tsx`.
-
-Run focused fallback checks with `npm test -- src/transportFallback.test.ts src/localFallback.test.tsx`. These cover native commit timing through deferred IPC fakes, discovery failure under every strategy, partial application and uncertain commits, mutation readiness, saved settings, local watcher events, StrictMode, draft ownership, IME, and explicit reconnect. Native loopback tests additionally verify the serialized connection-error category, timeout, malformed URL, and HTTP-status distinctions.
-
-For the opt-in test with two independent native bridges and a real server restart, build the server, then run from `app/src-tauri/`:
+See [development checks](development.md#checks). The opt-in restart test uses a built loopback server:
 
 ```sh
-MY_NTR_SERVER_BIN=/absolute/path/to/my-ntr-server cargo test two_clients_sync_and_recover_missed_files_after_real_server_restart -- --ignored
+MY_NTR_SERVER_BIN=/absolute/path/to/my-ntr-server cargo test --locked two_clients_sync_and_recover_missed_files_after_real_server_restart -- --ignored
 ```
 
-This check uses disposable files and a loopback port. It verifies bidirectional notifications, nearby task/note changes, and recovery of offline file edits without another mutation. It does not replace a two-window desktop/mobile check of focus, selection, IME, conflict choices, and reverse-proxy behavior.
+Run it from `src-tauri/`. It does not replace real-device/window checks of focus, IME, selection, or proxy behavior.
